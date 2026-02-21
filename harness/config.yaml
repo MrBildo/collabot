@@ -1,0 +1,45 @@
+models:
+  default: claude-sonnet-4-6
+
+categories:
+  coding:
+    inactivityTimeout: 300
+  conversational:
+    inactivityTimeout: 180
+  research:
+    inactivityTimeout: 420
+
+routing:
+  default: api-dev
+  rules:
+    - pattern: "^(plan|analyze|spec|design|feature)"
+      role: product-analyst
+    - pattern: "^(portal|frontend|ui)"
+      role: portal-dev
+    - pattern: "^(test|e2e|playwright)"
+      role: qa-dev
+    - pattern: "^(api|backend|endpoint)"
+      role: api-dev
+    - pattern: "^(app|mobile|react.native)"
+      role: app-dev
+
+slack:
+  debounceMs: 2000
+  reactions:
+    received: eyes
+    working: hammer
+    success: white_check_mark
+    failure: x
+
+pool:
+  maxConcurrent: 3
+
+mcp:
+  streamTimeout: 600000        # CLAUDE_CODE_STREAM_CLOSE_TIMEOUT (ms)
+  fullAccessCategories:         # role categories that get all tools
+    - conversational            # PM / coordinator roles
+  # All other categories get read-only tools (list_agents, list_tasks, get_task_context)
+
+ws:
+  port: 9800
+  host: 127.0.0.1

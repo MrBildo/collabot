@@ -1,0 +1,23 @@
+# Claude Code local settings
+.claude/*
+!.claude/skills/
+
+# Project manifests (local only)
+.projects/
+
+# Agent workspace (local only)
+.agents/
+
+# Node
+harness/node_modules/
+harness/dist/
+
+# .NET
+harness/tui/bin/
+harness/tui/obj/
+
+# Environment
+harness/.env
+
+# Windows oddities
+nul
