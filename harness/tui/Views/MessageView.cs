@@ -126,8 +126,8 @@ public class MessageView : View
         var msg = _messages[index];
         var text = msg.ToString();
 
-        // Banner lines are pre-formatted ASCII art — never word-wrap
-        if (msg.Type == "banner")
+        // Banner lines are pre-formatted — never word-wrap
+        if (msg.Type is "banner" or "banner-sub")
         {
             _displayLines.Add(new DisplayLine(index, text));
             return;
@@ -256,6 +256,16 @@ public class MessageView : View
                     AddStr(new string(' ', width - totalLen));
                 }
 
+                continue;
+            }
+
+            if (msg.Type == "banner-sub")
+            {
+                SetAttribute(new Attribute(new Color(140, 140, 140), bg));
+                var subText = displayLine.Text.Length > width
+                    ? displayLine.Text[..width]
+                    : displayLine.Text.PadRight(width);
+                AddStr(subText);
                 continue;
             }
 

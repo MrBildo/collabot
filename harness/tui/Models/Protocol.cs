@@ -76,7 +76,7 @@ public record ChatMessage(DateTime Timestamp, string Type, string From, string C
 {
     public override string ToString()
     {
-        if (Type == "banner") return Content;
+        if (Type is "banner" or "banner-sub") return Content;
 
         var prefix = Type switch
         {

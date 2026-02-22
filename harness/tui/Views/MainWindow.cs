@@ -131,13 +131,16 @@ public class MainWindow : Window
         AddBannerLine(" | |  | | | | |   | |     / _ \\ ", "|  _ \\| | | || |  ");
         AddBannerLine(" | |__| |_| | |___| |___ / ___ \\", "| |_) | |_| || |  ");
         AddBannerLine("  \\____\\___/|_____|_____/_/   \\_\\", "____/ \\___/ |_|  ");
-        AddSystemMessage("        the collaborative agent platform");
-        AddSystemMessage("");
-        AddSystemMessage("/help for commands, Ctrl+Q quit, Ctrl+L clear");
+        AddBannerSubLine("        the collaborative agent platform");
+        AddBannerSubLine("");
+        AddBannerSubLine("/help for commands, Ctrl+Q quit, Ctrl+L clear");
     }
 
     private void AddBannerLine(string cyanPart, string orangePart) =>
         _messageView.AddMessage(new ChatMessage(DateTime.Now, "banner", "", cyanPart + "\t" + orangePart));
+
+    private void AddBannerSubLine(string text) =>
+        _messageView.AddMessage(new ChatMessage(DateTime.Now, "banner-sub", "", text));
 
     private async Task StartConnectionAsync()
     {
