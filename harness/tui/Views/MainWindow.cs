@@ -1,9 +1,13 @@
 using Terminal.Gui.App;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
 using Collabot.Tui.Models;
 using Collabot.Tui.Services;
+using Attribute = Terminal.Gui.Drawing.Attribute;
+using Color = Terminal.Gui.Drawing.Color;
 
 namespace Collabot.Tui.Views;
 
@@ -11,7 +15,10 @@ public class MainWindow : Window
 {
     private readonly HarnessConnection _connection;
     private readonly MessageView _messageView;
-    private readonly TextField _inputField;
+    private readonly Line _topSeparator;
+    private readonly Line _bottomSeparator;
+    private readonly TextView _inputField;
+    private readonly Label _inputPrompt;
 
     private string? _currentRole;
     private string? _currentTask;
@@ -29,6 +36,8 @@ public class MainWindow : Window
     private string _historyStash = "";
 
     private const int _maxHistorySize = 50;
+    private int _inputLineCount = 1;
+    private const int MaxInputLines = 10;
 
     public MainWindow()
     {
@@ -43,29 +52,50 @@ public class MainWindow : Window
         _connection.DraftStatusReceived += OnDraftStatus;
         _connection.ContextCompactedReceived += OnContextCompacted;
 
+        // Layout from bottom up: StatusBar(1) | BottomSep(1) | Input(1+) | TopSep(1) | Messages(fill)
+        // Initial bottom reservation = 1 input + 2 separators + 1 statusbar = 4 rows
         _messageView = new MessageView
         {
             X = 0,
             Y = 0,
             Width = Dim.Fill(),
-            Height = Dim.Fill(2)
+            Height = Dim.Fill(4)
         };
 
-        var inputPrompt = new Label
+        _topSeparator = new Line
         {
-            Text = "> ",
+            Orientation = Orientation.Horizontal,
             X = 0,
-            Y = Pos.Bottom(_messageView)
-        };
-
-        _inputField = new TextField
-        {
-            X = 2,
-            Y = Pos.Bottom(_messageView),
+            Y = Pos.AnchorEnd(4),
             Width = Dim.Fill()
         };
-        _inputField.Accepting += OnInputAccepted;
+
+        _inputPrompt = new Label
+        {
+            Text = "> ",
+            X = 1,
+            Y = Pos.AnchorEnd(3)
+        };
+
+        _inputField = new TextView
+        {
+            X = 3,
+            Y = Pos.AnchorEnd(3),
+            Width = Dim.Fill(1),
+            Height = 1,
+            WordWrap = true,
+            TabKeyAddsTab = false
+        };
         _inputField.KeyDown += OnInputKeyDown;
+        _inputField.ContentsChanged += OnInputContentsChanged;
+
+        _bottomSeparator = new Line
+        {
+            Orientation = Orientation.Horizontal,
+            X = 0,
+            Y = Pos.AnchorEnd(2),
+            Width = Dim.Fill()
+        };
 
         var statusBar = new StatusBar(
         [
@@ -74,13 +104,14 @@ public class MainWindow : Window
             new Shortcut(Key.Q.WithCtrl, "Quit", () => App?.RequestStop())
         ]);
 
-        Add(_messageView, inputPrompt, _inputField, statusBar);
+        Add(_messageView, _topSeparator, _inputPrompt, _inputField, _bottomSeparator, statusBar);
 
         Initialized += OnWindowInitialized;
     }
 
     private async void OnWindowInitialized(object? sender, EventArgs e)
     {
+        ApplyInputStyling();
         _inputField.SetFocus();
         ShowStartupBanner();
         await StartConnectionAsync();
@@ -249,10 +280,8 @@ public class MainWindow : Window
         });
     }
 
-    private async void OnInputAccepted(object? sender, CommandEventArgs e)
+    private async void SubmitInput()
     {
-        e.Handled = true;
-
         try
         {
             var text = _inputField.Text?.Trim();
@@ -281,16 +310,96 @@ public class MainWindow : Window
 
     private void OnInputKeyDown(object? sender, Key e)
     {
-        if (e == Key.CursorUp)
+        if (e == Key.Enter)
+        {
+            SubmitInput();
+            e.Handled = true;
+        }
+        else if (e == Key.Enter.WithShift)
+        {
+            _inputField.InvokeCommand(Command.NewLine);
+            e.Handled = true;
+        }
+        else if (e == Key.CursorUp && IsOnFirstLine())
         {
             NavigateHistory(-1);
             e.Handled = true;
         }
-        else if (e == Key.CursorDown)
+        else if (e == Key.CursorDown && IsOnLastLine())
         {
             NavigateHistory(1);
             e.Handled = true;
         }
+    }
+
+    private void OnInputContentsChanged(object? sender, ContentsChangedEventArgs e)
+    {
+        UpdateInputLayout();
+    }
+
+    private void UpdateInputLayout()
+    {
+        var lineCount = GetInputLineCount();
+        var newHeight = Math.Clamp(lineCount, 1, MaxInputLines);
+
+        if (newHeight != _inputLineCount)
+        {
+            _inputLineCount = newHeight;
+            // Bottom reservation = input + 2 separators + 1 statusbar
+            var bottomRows = _inputLineCount + 3;
+            _inputField.Height = _inputLineCount;
+            _topSeparator.Y = Pos.AnchorEnd(bottomRows);
+            _inputPrompt.Y = Pos.AnchorEnd(bottomRows - 1);
+            _inputField.Y = Pos.AnchorEnd(bottomRows - 1);
+            // _bottomSeparator.Y stays at AnchorEnd(2)
+            _messageView.Height = Dim.Fill(bottomRows);
+            SetNeedsLayout();
+            SetNeedsDraw();
+        }
+    }
+
+    private int GetInputLineCount()
+    {
+        var text = _inputField.Text;
+        if (string.IsNullOrEmpty(text)) return 1;
+        var count = 1;
+        foreach (var c in text)
+            if (c == '\n') count++;
+        return count;
+    }
+
+    private bool IsOnFirstLine() => _inputField.CurrentRow == 0;
+
+    private bool IsOnLastLine() => _inputField.CurrentRow >= GetInputLineCount() - 1;
+
+    private void ApplyInputStyling()
+    {
+        // Block cursor for the input field
+        _inputField.Cursor = new Cursor { Style = CursorStyle.SteadyBlock };
+
+        // Force the input to use the window's Normal background for ALL visual roles
+        // (otherwise Focus/Editable roles swap to a black background)
+        var windowScheme = GetScheme();
+        var bg = windowScheme.Normal.Background;
+        var fg = windowScheme.Normal.Foreground;
+        var attr = new Attribute(fg, bg);
+        var inputScheme = new Scheme
+        {
+            Normal = attr,
+            Focus = attr,
+            Editable = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Disabled = attr
+        };
+        _inputField.SetScheme(inputScheme);
+        _inputPrompt.SetScheme(inputScheme);
+
+        // Dim separators
+        var sepAttr = new Attribute(new Color(60, 60, 60), bg);
+        var sepScheme = new Scheme { Normal = sepAttr };
+        _topSeparator.SetScheme(sepScheme);
+        _bottomSeparator.SetScheme(sepScheme);
     }
 
     private void AddToHistory(string text)
@@ -730,7 +839,7 @@ public class MainWindow : Window
         AddSystemMessage("  /help            Show this help");
         AddSystemMessage("  /quit            Exit");
         AddSystemMessage("");
-        AddSystemMessage("Shortcuts: Ctrl+Q quit, Ctrl+L clear, Up/Down input history");
+        AddSystemMessage("Shortcuts: Ctrl+Q quit, Ctrl+L clear, Up/Down history, Shift+Enter newline");
         AddSystemMessage("Type anything else to send as a prompt to the active draft session.");
     }
 
@@ -822,8 +931,8 @@ public class MainWindow : Window
             _connection.PoolStatusReceived -= OnPoolStatus;
             _connection.DraftStatusReceived -= OnDraftStatus;
             _connection.ContextCompactedReceived -= OnContextCompacted;
-            _inputField.Accepting -= OnInputAccepted;
             _inputField.KeyDown -= OnInputKeyDown;
+            _inputField.ContentsChanged -= OnInputContentsChanged;
             _connection.Dispose();
         }
 
