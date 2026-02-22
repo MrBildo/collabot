@@ -232,6 +232,7 @@ public class HarnessConnection : IDisposable
     {
         _reconnecting = true;
         _reconnectCts?.Cancel();
+        _reconnectCts?.Dispose();
         _reconnectCts = new CancellationTokenSource();
         var token = _reconnectCts.Token;
 

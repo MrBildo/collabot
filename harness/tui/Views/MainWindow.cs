@@ -218,10 +218,10 @@ public class MainWindow : Window
 
     private void OnChannelMessage(object? sender, ChannelMessageNotification e)
     {
+        if (!PassesFilter(e.Type)) return;
+
         App?.Invoke(() =>
         {
-            if (!PassesFilter(e.Type)) return;
-
             var timestamp = DateTime.TryParse(e.Timestamp, out var ts) ? ts : DateTime.Now;
             _messageView.AddMessage(new ChatMessage(timestamp, e.Type, e.From, e.Content));
         });

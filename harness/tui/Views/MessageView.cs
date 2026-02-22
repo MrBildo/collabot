@@ -17,6 +17,9 @@ public class MessageView : View
 
     private const int TimestampIndent = 11; // "[HH:mm:ss] "
 
+    /// <summary>Maximum messages to retain. 0 = unlimited. When exceeded, oldest 20% are pruned.</summary>
+    public int MaxMessages { get; set; } = 10_000;
+
     private record DisplayLine(int MessageIndex, string Text);
 
     public MessageView()
@@ -66,6 +69,12 @@ public class MessageView : View
         _messages.Add(message);
         var width = GetWrapWidth();
         WrapMessage(_messages.Count - 1, width);
+
+        if (MaxMessages > 0 && _messages.Count > MaxMessages)
+        {
+            PruneOldMessages();
+        }
+
         UpdateContentSize();
 
         if (_autoScroll)
@@ -84,6 +93,16 @@ public class MessageView : View
         _autoScroll = true;
         UpdateContentSize();
         SetNeedsDraw();
+    }
+
+    private void PruneOldMessages()
+    {
+        var targetCount = (int)(MaxMessages * 0.8);
+        var removeCount = _messages.Count - targetCount;
+        if (removeCount <= 0) return;
+
+        _messages.RemoveRange(0, removeCount);
+        RewrapAll();
     }
 
     private int GetWrapWidth() => Viewport.Width > 0 ? Viewport.Width : 80;

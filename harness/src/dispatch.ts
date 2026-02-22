@@ -337,6 +337,7 @@ export async function dispatch(
               const toolResultBlock = block as Record<string, unknown>;
               const toolUseId = typeof toolResultBlock.tool_use_id === "string" ? toolResultBlock.tool_use_id : "";
               const pending = pendingToolCalls.get(toolUseId);
+              if (pending) pendingToolCalls.delete(toolUseId);
               const tool = pending?.tool ?? "unknown";
               const target = pending?.target ?? "";
 
