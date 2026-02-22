@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Terminal.Gui" Version="2.0.0-develop.5027" />
+    <PackageReference Include="Terminal.Gui" Version="2.0.0-develop.5039" />
     <PackageReference Include="StreamJsonRpc" Version="2.24.84" />
   </ItemGroup>
 </Project>

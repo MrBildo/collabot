@@ -25,7 +25,7 @@ public class MessageView : View
     public MessageView()
     {
         CanFocus = true;
-        VerticalScrollBar.AutoShow = true;
+        ViewportSettings |= ViewportSettingsFlags.HasVerticalScrollBar;
 
         KeyBindings.Add(Key.CursorUp, Command.ScrollUp);
         KeyBindings.Add(Key.CursorDown, Command.ScrollDown);
@@ -216,6 +216,7 @@ public class MessageView : View
 
         _lastWrapWidth = width;
 
+        var bg = GetAttributeForRole(VisualRole.Normal).Background;
         var startIndex = Viewport.Y;
 
         for (var row = 0; row < Viewport.Height; row++)
@@ -239,12 +240,12 @@ public class MessageView : View
                 var cyanPart = parts[0];
                 var orangePart = parts.Length > 1 ? parts[1] : "";
 
-                SetAttribute(new Attribute(new Color(0, 180, 255), Color.Black));
+                SetAttribute(new Attribute(new Color(0, 180, 255), bg));
                 AddStr(cyanPart);
 
                 if (orangePart.Length > 0)
                 {
-                    SetAttribute(new Attribute(new Color(255, 160, 0), Color.Black));
+                    SetAttribute(new Attribute(new Color(255, 160, 0), bg));
                     AddStr(orangePart);
                 }
 
@@ -258,7 +259,7 @@ public class MessageView : View
                 continue;
             }
 
-            SetAttribute(GetMessageAttribute(msg.Type));
+            SetAttribute(GetMessageAttribute(msg.Type, bg));
 
             var lineText = displayLine.Text;
 
@@ -277,21 +278,21 @@ public class MessageView : View
         return true;
     }
 
-    private static Attribute GetMessageAttribute(string type)
+    private static Attribute GetMessageAttribute(string type, Color bg)
     {
         return type.ToLowerInvariant() switch
         {
-            "lifecycle" => new Attribute(Color.Cyan, Color.Black),
-            "result" => new Attribute(Color.Green, Color.Black),
-            "chat" => new Attribute(new Color(255, 160, 0), Color.Black),
-            "question" => new Attribute(Color.BrightYellow, Color.Black),
-            "warning" => new Attribute(Color.Yellow, Color.Black),
-            "error" => new Attribute(Color.Red, Color.Black),
-            "tool_use" => new Attribute(Color.DarkGray, Color.Black),
-            "thinking" => new Attribute(Color.DarkGray, Color.Black),
-            "user" => new Attribute(new Color(0, 180, 255), Color.Black),
-            "system" => new Attribute(Color.Gray, Color.Black),
-            _ => new Attribute(Color.White, Color.Black)
+            "lifecycle" => new Attribute(Color.Cyan, bg),
+            "result" => new Attribute(Color.Green, bg),
+            "chat" => new Attribute(new Color(255, 160, 0), bg),
+            "question" => new Attribute(Color.BrightYellow, bg),
+            "warning" => new Attribute(Color.Yellow, bg),
+            "error" => new Attribute(Color.Red, bg),
+            "tool_use" => new Attribute(Color.DarkGray, bg),
+            "thinking" => new Attribute(Color.DarkGray, bg),
+            "user" => new Attribute(new Color(0, 180, 255), bg),
+            "system" => new Attribute(Color.Gray, bg),
+            _ => new Attribute(Color.White, bg)
         };
     }
 }

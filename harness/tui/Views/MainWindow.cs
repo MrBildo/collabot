@@ -365,6 +365,12 @@ public class MainWindow : Window
 
     private async Task HandlePromptAsync(string text)
     {
+        if (!_draftActive)
+        {
+            AddSystemMessage("No active draft session. Use /draft <role> to start one.");
+            return;
+        }
+
         AddMessage("user", "you", text);
 
         if (_connection.ConnectionState != ConnectionState.Connected)
@@ -725,7 +731,7 @@ public class MainWindow : Window
         AddSystemMessage("  /quit            Exit");
         AddSystemMessage("");
         AddSystemMessage("Shortcuts: Ctrl+Q quit, Ctrl+L clear, Up/Down input history");
-        AddSystemMessage("Type anything else to send as a prompt to the harness.");
+        AddSystemMessage("Type anything else to send as a prompt to the active draft session.");
     }
 
     private void UpdateTitle()
@@ -743,39 +749,56 @@ public class MainWindow : Window
             _ => _connection.ConnectionState.ToString()
         };
 
-        var parts = new List<string> { $"{indicator} {stateName}" };
+        var leftParts = new List<string>();
+        var rightParts = new List<string> { $"{indicator} {stateName}" };
 
         if (_draftActive && _draftRole is not null)
         {
-            parts.Add($"Draft: {_draftRole}");
-            parts.Add($"Context: {_draftContextPct}%");
-            parts.Add($"Turns: {_draftTurnCount}");
-            parts.Add($"${_draftCostUsd:F2}");
+            leftParts.Add($"Draft: {_draftRole}");
+            leftParts.Add($"Context: {_draftContextPct}%");
+            leftParts.Add($"Turns: {_draftTurnCount}");
+            leftParts.Add($"${_draftCostUsd:F2}");
         }
         else
         {
             if (_agentCount > 0)
             {
-                parts.Add($"Agents: {_agentCount}");
+                leftParts.Add($"Agents: {_agentCount}");
             }
 
             if (_currentRole is not null)
             {
-                parts.Add($"Role: {_currentRole}");
+                leftParts.Add($"Role: {_currentRole}");
             }
 
             if (_currentTask is not null)
             {
-                parts.Add($"Task: {_currentTask}");
+                leftParts.Add($"Task: {_currentTask}");
             }
         }
 
         if (_filterLevel != FilterLevel.Feedback)
         {
-            parts.Add($"Filter: {_filterLevel.ToString().ToLowerInvariant()}");
+            leftParts.Add($"Filter: {_filterLevel.ToString().ToLowerInvariant()}");
         }
 
-        Title = $"Collabot — {string.Join(" — ", parts)}";
+        var left = leftParts.Count > 0
+            ? $"Collabot — {string.Join(" — ", leftParts)}"
+            : "Collabot";
+        var right = string.Join(" — ", rightParts);
+
+        // Pad so connection status is right-aligned in the title bar
+        var frameWidth = Frame.Width;
+        var minWidth = left.Length + right.Length + 4; // 4 = border chars + spacing
+        if (frameWidth > minWidth)
+        {
+            var gap = frameWidth - left.Length - right.Length - 4;
+            Title = $"{left}{new string(' ', gap)}{right}";
+        }
+        else
+        {
+            Title = $"{left} — {right}";
+        }
     }
 
     private void AddSystemMessage(string content) =>
