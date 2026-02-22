@@ -230,7 +230,7 @@ public class MainWindow : Window
     private bool PassesFilter(string type) => _filterLevel switch
     {
         FilterLevel.Minimal => type is "result",
-        FilterLevel.Feedback => type is not "tool_use" and not "thinking" and not "warning",
+        FilterLevel.Feedback => type is not "tool_use" and not "thinking" and not "warning" and not "lifecycle",
         FilterLevel.Verbose => true,
         _ => true
     };
@@ -781,8 +781,11 @@ public class MainWindow : Window
     private void AddSystemMessage(string content) =>
         AddMessage("system", "", content);
 
-    private void AddMessage(string type, string from, string content) =>
+    private void AddMessage(string type, string from, string content)
+    {
+        if (!PassesFilter(type)) return;
         _messageView.AddMessage(new ChatMessage(DateTime.Now, type, from, content));
+    }
 
     protected override void Dispose(bool disposing)
     {

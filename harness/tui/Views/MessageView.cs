@@ -220,7 +220,7 @@ public class MessageView : View
                 var cyanPart = parts[0];
                 var orangePart = parts.Length > 1 ? parts[1] : "";
 
-                SetAttribute(new Attribute(Color.Cyan, Color.Black));
+                SetAttribute(new Attribute(new Color(0, 180, 255), Color.Black));
                 AddStr(cyanPart);
 
                 if (orangePart.Length > 0)
@@ -264,13 +264,13 @@ public class MessageView : View
         {
             "lifecycle" => new Attribute(Color.Cyan, Color.Black),
             "result" => new Attribute(Color.Green, Color.Black),
-            "chat" => new Attribute(Color.Magenta, Color.Black),
+            "chat" => new Attribute(new Color(255, 160, 0), Color.Black),
             "question" => new Attribute(Color.BrightYellow, Color.Black),
             "warning" => new Attribute(Color.Yellow, Color.Black),
             "error" => new Attribute(Color.Red, Color.Black),
             "tool_use" => new Attribute(Color.DarkGray, Color.Black),
             "thinking" => new Attribute(Color.DarkGray, Color.Black),
-            "user" => new Attribute(Color.White, Color.Black),
+            "user" => new Attribute(new Color(0, 180, 255), Color.Black),
             "system" => new Attribute(Color.Gray, Color.Black),
             _ => new Attribute(Color.White, Color.Black)
         };
