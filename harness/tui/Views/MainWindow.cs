@@ -14,6 +14,7 @@ namespace Collabot.Tui.Views;
 public class MainWindow : Window
 {
     private readonly HarnessConnection _connection;
+    private readonly StatusHeaderView _statusHeader;
     private readonly MessageView _messageView;
     private readonly Line _topSeparator;
     private readonly Line _bottomSeparator;
@@ -41,7 +42,7 @@ public class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Collabot — ○ Disconnected";
+        Title = "";
 
         _connection = new HarnessConnection();
         _connection.ConnectionStateChanged += OnConnectionStateChanged;
@@ -52,12 +53,18 @@ public class MainWindow : Window
         _connection.DraftStatusReceived += OnDraftStatus;
         _connection.ContextCompactedReceived += OnContextCompacted;
 
-        // Layout from bottom up: StatusBar(1) | BottomSep(1) | Input(1+) | TopSep(1) | Messages(fill)
+        // Layout: Header(3) | Messages(fill) | TopSep(1) | Input(1+) | BottomSep(1) | StatusBar(1)
         // Initial bottom reservation = 1 input + 2 separators + 1 statusbar = 4 rows
+        _statusHeader = new StatusHeaderView
+        {
+            X = 0,
+            Y = 0
+        };
+
         _messageView = new MessageView
         {
             X = 0,
-            Y = 0,
+            Y = Pos.Bottom(_statusHeader),
             Width = Dim.Fill(),
             Height = Dim.Fill(4)
         };
@@ -104,7 +111,7 @@ public class MainWindow : Window
             new Shortcut(Key.Q.WithCtrl, "Quit", () => App?.RequestStop())
         ]);
 
-        Add(_messageView, _topSeparator, _inputPrompt, _inputField, _bottomSeparator, statusBar);
+        Add(_statusHeader, _messageView, _topSeparator, _inputPrompt, _inputField, _bottomSeparator, statusBar);
 
         Initialized += OnWindowInitialized;
     }
@@ -148,7 +155,7 @@ public class MainWindow : Window
     {
         App?.Invoke(() =>
         {
-            UpdateTitle();
+            UpdateStatusHeader();
 
             var message = state switch
             {
@@ -184,7 +191,7 @@ public class MainWindow : Window
             App?.Invoke(() =>
             {
                 _agentCount = result.Agents.Length;
-                UpdateTitle();
+                UpdateStatusHeader();
             });
         }
         catch
@@ -217,7 +224,7 @@ public class MainWindow : Window
                     _draftContextPct = 0;
                 }
 
-                UpdateTitle();
+                UpdateStatusHeader();
             });
         }
         catch
@@ -235,7 +242,7 @@ public class MainWindow : Window
             _draftTurnCount = e.TurnCount;
             _draftCostUsd = e.CostUsd;
             _draftContextPct = e.ContextPct;
-            UpdateTitle();
+            UpdateStatusHeader();
         });
     }
 
@@ -276,7 +283,7 @@ public class MainWindow : Window
         App?.Invoke(() =>
         {
             _agentCount = e.Agents.Length;
-            UpdateTitle();
+            UpdateStatusHeader();
         });
     }
 
@@ -697,7 +704,7 @@ public class MainWindow : Window
                 _draftContextPct = 0;
                 _currentRole = null;
                 _currentTask = null;
-                UpdateTitle();
+                UpdateStatusHeader();
                 AddMessage("lifecycle", "system", $"Drafted {roleName} — task: {result.TaskSlug}");
                 AddSystemMessage("Type messages to converse. /undraft to end session.");
             });
@@ -726,7 +733,7 @@ public class MainWindow : Window
                 _draftTurnCount = 0;
                 _draftCostUsd = 0;
                 _draftContextPct = 0;
-                UpdateTitle();
+                UpdateStatusHeader();
 
                 var duration = TimeSpan.FromMilliseconds(result.DurationMs);
                 var durationStr = duration.TotalMinutes >= 1
@@ -782,7 +789,7 @@ public class MainWindow : Window
             AddSystemMessage($"Role set to: {role}");
         }
 
-        UpdateTitle();
+        UpdateStatusHeader();
     }
 
     private void HandleTaskCommand(string? task)
@@ -798,7 +805,7 @@ public class MainWindow : Window
             AddSystemMessage($"Task set to: {task}");
         }
 
-        UpdateTitle();
+        UpdateStatusHeader();
     }
 
     private void HandleFilterCommand(string? level)
@@ -814,7 +821,7 @@ public class MainWindow : Window
         {
             _filterLevel = parsed;
             AddSystemMessage($"Filter set to: {_filterLevel.ToString().ToLowerInvariant()}");
-            UpdateTitle();
+            UpdateStatusHeader();
         }
         else
         {
@@ -843,15 +850,8 @@ public class MainWindow : Window
         AddSystemMessage("Type anything else to send as a prompt to the active draft session.");
     }
 
-    private void UpdateTitle()
+    private void UpdateStatusHeader()
     {
-        var indicator = _connection.ConnectionState switch
-        {
-            ConnectionState.Connected => "●",
-            ConnectionState.Connecting => "◌",
-            ConnectionState.Reconnecting => "◌",
-            _ => "○"
-        };
         var stateName = _connection.ConnectionState switch
         {
             ConnectionState.Reconnecting => "Reconnecting",
@@ -859,7 +859,6 @@ public class MainWindow : Window
         };
 
         var leftParts = new List<string>();
-        var rightParts = new List<string> { $"{indicator} {stateName}" };
 
         if (_draftActive && _draftRole is not null)
         {
@@ -892,22 +891,10 @@ public class MainWindow : Window
         }
 
         var left = leftParts.Count > 0
-            ? $"Collabot — {string.Join(" — ", leftParts)}"
+            ? $"Collabot \u2014 {string.Join(" \u2014 ", leftParts)}"
             : "Collabot";
-        var right = string.Join(" — ", rightParts);
 
-        // Pad so connection status is right-aligned in the title bar
-        var frameWidth = Frame.Width;
-        var minWidth = left.Length + right.Length + 4; // 4 = border chars + spacing
-        if (frameWidth > minWidth)
-        {
-            var gap = frameWidth - left.Length - right.Length - 4;
-            Title = $"{left}{new string(' ', gap)}{right}";
-        }
-        else
-        {
-            Title = $"{left} — {right}";
-        }
+        _statusHeader.Update(left, stateName, _connection.ConnectionState);
     }
 
     private void AddSystemMessage(string content) =>
