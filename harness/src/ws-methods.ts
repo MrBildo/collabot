@@ -9,10 +9,13 @@ import type { RoleDefinition, DispatchResult } from './types.js';
 import type { McpServers } from './core.js';
 import { buildTaskContext } from './context.js';
 import { logger } from './logger.js';
+import { getActiveDraft, createDraft, closeDraft, resumeDraft } from './draft.js';
 
 const WS_ERROR_TASK_NOT_FOUND = -32000;
 const WS_ERROR_AGENT_NOT_FOUND = -32001;
 const WS_ERROR_ROLE_NOT_FOUND = -32002;
+const WS_ERROR_DRAFT_ALREADY_ACTIVE = -32004;
+const WS_ERROR_NO_ACTIVE_DRAFT = -32005;
 
 export type WsMethodDeps = {
   wsAdapter: WsAdapter;
@@ -53,7 +56,7 @@ function listTasks(tasksDir: string): Array<{ slug: string; created: string; des
 
 export function registerWsMethods(deps: WsMethodDeps): void {
 
-  // submit_prompt — fire-and-forget dispatch, returns threadId immediately
+  // submit_prompt — routes to draft session if active, otherwise fire-and-forget dispatch
   deps.wsAdapter.addMethod('submit_prompt', (params: unknown) => {
     const p = params as Record<string, unknown>;
     const content = p['content'];
@@ -64,6 +67,57 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException('content is required and must be a non-empty string', -32602);
     }
 
+    // Draft session routing — takes priority over autonomous dispatch
+    const draft = getActiveDraft();
+    if (draft) {
+      const draftRole = deps.roles.get(draft.role);
+      let mcpServer;
+      if (deps.mcpServers && draftRole) {
+        const isFullAccess = deps.config.mcp.fullAccessCategories.includes(draftRole.category);
+        mcpServer = isFullAccess
+          ? deps.mcpServers.createFull(draft.taskSlug, draft.taskDir)
+          : deps.mcpServers.readonly;
+      }
+
+      // Fire-and-forget resume
+      resumeDraft(content, deps.wsAdapter, deps.roles, deps.config, deps.pool, {
+        mcpServer,
+        onCompaction: (event) => {
+          deps.wsAdapter.broadcastNotification('context_compacted', {
+            sessionId: draft.sessionId, ...event,
+          });
+        },
+      })
+        .then(() => {
+          const updated = getActiveDraft();
+          if (updated) {
+            deps.wsAdapter.broadcastNotification('draft_status', {
+              sessionId: updated.sessionId,
+              role: updated.role,
+              turnCount: updated.turnCount,
+              costUsd: updated.cumulativeCostUsd,
+              contextPct: updated.contextWindow > 0
+                ? Math.round((updated.lastInputTokens / updated.contextWindow) * 100) : 0,
+              lastActivity: updated.lastActivityAt,
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          deps.wsAdapter.broadcastNotification('channel_message', {
+            id: `msg-${Date.now()}`,
+            channelId: draft.channelId,
+            from: 'system',
+            timestamp: new Date().toISOString(),
+            type: 'error',
+            content: `Draft turn failed: ${errMsg}`,
+          });
+        });
+
+      return { threadId: `draft-${draft.sessionId}`, taskSlug: draft.taskSlug };
+    }
+
+    // Existing autonomous dispatch path
     if (role !== undefined && !deps.roles.has(role)) {
       throw new JSONRPCErrorException(`Role "${role}" not found`, WS_ERROR_ROLE_NOT_FOUND);
     }
@@ -84,6 +138,78 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       });
 
     return { threadId, taskSlug: taskSlug ?? null };
+  });
+
+  // draft — start a conversational draft session
+  deps.wsAdapter.addMethod('draft', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const roleName = p['role'];
+
+    if (typeof roleName !== 'string') {
+      throw new JSONRPCErrorException('role must be a string', -32602);
+    }
+
+    const role = deps.roles.get(roleName);
+    if (!role) {
+      throw new JSONRPCErrorException(`Role "${roleName}" not found`, WS_ERROR_ROLE_NOT_FOUND);
+    }
+
+    if (getActiveDraft()) {
+      throw new JSONRPCErrorException('Draft already active. Use undraft first.', WS_ERROR_DRAFT_ALREADY_ACTIVE);
+    }
+
+    const channelId = `draft-${Date.now()}`;
+    const session = createDraft({
+      role,
+      tasksDir: deps.tasksDir,
+      channelId,
+      pool: deps.pool,
+    });
+
+    return { sessionId: session.sessionId, taskSlug: session.taskSlug };
+  });
+
+  // undraft — close the active draft session
+  deps.wsAdapter.addMethod('undraft', (_params: unknown) => {
+    if (!getActiveDraft()) {
+      throw new JSONRPCErrorException('No active draft', WS_ERROR_NO_ACTIVE_DRAFT);
+    }
+
+    const summary = closeDraft(deps.pool);
+    return {
+      sessionId: summary.sessionId,
+      taskSlug: summary.taskSlug,
+      turns: summary.turns,
+      cost: summary.costUsd,
+      durationMs: summary.durationMs,
+    };
+  });
+
+  // get_draft_status — return current draft state + metrics
+  deps.wsAdapter.addMethod('get_draft_status', (_params: unknown) => {
+    const draft = getActiveDraft();
+    if (!draft) {
+      return { active: false };
+    }
+
+    const contextPct = draft.contextWindow > 0
+      ? Math.round((draft.lastInputTokens / draft.contextWindow) * 100)
+      : 0;
+
+    return {
+      active: true,
+      session: {
+        sessionId: draft.sessionId,
+        role: draft.role,
+        taskSlug: draft.taskSlug,
+        turnCount: draft.turnCount,
+        costUsd: draft.cumulativeCostUsd,
+        contextPct,
+        lastInputTokens: draft.lastInputTokens,
+        contextWindow: draft.contextWindow,
+        lastActivity: draft.lastActivityAt,
+      },
+    };
   });
 
   // kill_agent — abort a running agent

@@ -1,4 +1,8 @@
-import type { ToolCall, LoopDetection, ErrorTriplet, NonRetryableDetection } from './types.js';
+import type { ToolCall, LoopDetection, LoopDetectionThresholds, ErrorTriplet, NonRetryableDetection } from './types.js';
+
+const DEFAULT_THRESHOLDS: LoopDetectionThresholds = {
+  repeatWarn: 3, repeatKill: 5, pingPongWarn: 3, pingPongKill: 4,
+};
 
 /**
  * Detects whether an agent is stuck in a tool-call loop.
@@ -6,15 +10,20 @@ import type { ToolCall, LoopDetection, ErrorTriplet, NonRetryableDetection } fro
  *
  * Checks for two patterns:
  * 1. Generic repeat: same "tool::target" appears N+ times in the window
- *    - 5+ → kill, 3+ → warning
+ *    - repeatKill+ → kill, repeatWarn+ → warning
  * 2. Ping-pong: last N calls alternate between exactly 2 patterns (A,B,A,B,...)
- *    - 4 alternations (8 calls) → kill, 3 alternations (6 calls) → warning
+ *    - pingPongKill alternations → kill, pingPongWarn alternations → warning
  *
+ * Threshold of 0 = unlimited (skip that check).
  * Returns the first detection exceeding a threshold, or null if no loop.
  */
-export function detectErrorLoop(recentCalls: ToolCall[]): LoopDetection | null {
+export function detectErrorLoop(
+  recentCalls: ToolCall[],
+  thresholds?: LoopDetectionThresholds,
+): LoopDetection | null {
   if (recentCalls.length === 0) return null;
 
+  const t = thresholds ?? DEFAULT_THRESHOLDS;
   let best: LoopDetection | null = null;
 
   // --- Generic repeat detection ---
@@ -24,24 +33,29 @@ export function detectErrorLoop(recentCalls: ToolCall[]): LoopDetection | null {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  // Kill threshold (5+) takes priority
-  for (const [pattern, count] of counts) {
-    if (count >= 5) {
-      return { type: 'genericRepeat', pattern, count, severity: 'kill' };
+  // Kill threshold takes priority (0 = unlimited, skip)
+  if (t.repeatKill > 0) {
+    for (const [pattern, count] of counts) {
+      if (count >= t.repeatKill) {
+        return { type: 'genericRepeat', pattern, count, severity: 'kill' };
+      }
     }
   }
 
-  // Warning threshold (3+) — store as candidate
-  for (const [pattern, count] of counts) {
-    if (count >= 3) {
-      best = { type: 'genericRepeat', pattern, count, severity: 'warning' };
-      break;
+  // Warning threshold — store as candidate (0 = unlimited, skip)
+  if (t.repeatWarn > 0) {
+    for (const [pattern, count] of counts) {
+      if (count >= t.repeatWarn) {
+        best = { type: 'genericRepeat', pattern, count, severity: 'warning' };
+        break;
+      }
     }
   }
 
   // --- Ping-pong detection ---
   // Check if the tail of recentCalls alternates between exactly 2 patterns
-  if (recentCalls.length >= 6) {
+  const pingPongEnabled = t.pingPongWarn > 0 || t.pingPongKill > 0;
+  if (pingPongEnabled && recentCalls.length >= 6) {
     const keyOf = (c: ToolCall) => c.target ? `${c.tool}::${c.target}` : c.tool;
 
     const last = recentCalls.length - 1;
@@ -70,7 +84,7 @@ export function detectErrorLoop(recentCalls: ToolCall[]): LoopDetection | null {
 
       // alternations counts how many times A appeared in the sequence
       // Pattern A,B,A,B,A,B = 3 alternations of A (6 calls total)
-      if (alternations >= 4) {
+      if (t.pingPongKill > 0 && alternations >= t.pingPongKill) {
         // Ping-pong kill always wins over genericRepeat warning
         return {
           type: 'pingPong',
@@ -79,7 +93,7 @@ export function detectErrorLoop(recentCalls: ToolCall[]): LoopDetection | null {
           severity: 'kill',
         };
       }
-      if (alternations >= 3 && best === null) {
+      if (t.pingPongWarn > 0 && alternations >= t.pingPongWarn && best === null) {
         best = {
           type: 'pingPong',
           pattern: `${keyB} ↔ ${keyA}`,

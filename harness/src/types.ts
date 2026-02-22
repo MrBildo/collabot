@@ -24,6 +24,17 @@ export type RoleDefinition = {
   prompt: string;
 };
 
+export type UsageMetrics = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  contextWindow: number;     // modelUsage[model].contextWindow
+  maxOutputTokens: number;   // modelUsage[model].maxOutputTokens
+  numTurns: number;
+  durationApiMs: number;
+};
+
 export type DispatchResult = {
   status: 'completed' | 'aborted' | 'crashed';
   result?: string;              // raw text (fallback)
@@ -33,6 +44,7 @@ export type DispatchResult = {
   duration_ms?: number;
   journalFile?: string;         // journal filename (e.g., 'api-dev.md') — set by dispatch()
   model?: string;               // resolved model used for this dispatch
+  usage?: UsageMetrics;
 };
 
 export type JournalOptions = {
@@ -51,6 +63,13 @@ export type ToolCall = {
   tool: string;
   target: string;
   timestamp: number;
+};
+
+export type LoopDetectionThresholds = {
+  repeatWarn: number;    // 0 = unlimited
+  repeatKill: number;    // 0 = unlimited
+  pingPongWarn: number;  // 0 = unlimited (alternation count)
+  pingPongKill: number;  // 0 = unlimited (alternation count)
 };
 
 export type LoopDetection = {
@@ -94,4 +113,33 @@ export type DispatchOptions = {
   onEvent?: (event: AgentEvent) => void; // SDK event stream forwarding (chat, tool_use, thinking)
   abortController?: AbortController; // Milestone E: external abort control (pool.kill() propagation)
   mcpServers?: Record<string, McpServerConfig>; // Milestone F: MCP servers to inject into child agent
+  onCompaction?: (event: { trigger: string; preTokens: number }) => void;
+  loopDetectionThresholds?: LoopDetectionThresholds;
+};
+
+export type DraftSession = {
+  sessionId: string;
+  agentId: string;
+  role: string;
+  taskSlug: string;
+  taskDir: string;
+  channelId: string;
+  startedAt: string;       // ISO
+  lastActivityAt: string;  // ISO
+  turnCount: number;
+  status: 'active' | 'closed';
+  sessionInitialized: boolean;  // true after first query() starts — SDK session files exist on disk
+  cumulativeCostUsd: number;
+  lastInputTokens: number;
+  lastOutputTokens: number;
+  contextWindow: number;
+  maxOutputTokens: number;
+};
+
+export type DraftSummary = {
+  sessionId: string;
+  taskSlug: string;
+  turns: number;
+  costUsd: number;
+  durationMs: number;
 };

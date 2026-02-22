@@ -13,6 +13,7 @@ import { createHarnessServer, DispatchTracker } from './mcp.js';
 import { CliAdapter } from './adapters/cli.js';
 import { WsAdapter } from './adapters/ws.js';
 import { registerWsMethods } from './ws-methods.js';
+import { loadActiveDraft } from './draft.js';
 import type { DraftAgentFn } from './mcp.js';
 import type { FSWatcher } from 'chokidar';
 import type { App } from '@slack/bolt';
@@ -73,8 +74,9 @@ const roleNames = [...roles.keys()].join(', ');
 // Initialize agent pool
 const pool = new AgentPool(config.pool.maxConcurrent);
 
-// Initialize MCP servers — shared tracker and draftFn for lifecycle tools
 const TASKS_DIR = path.join(HUB_ROOT, '.agents', 'tasks');
+
+// Initialize MCP servers — shared tracker and draftFn for lifecycle tools
 const tracker = new DispatchTracker();
 // draftFn wraps core.draftAgent with a headless adapter for MCP-initiated dispatches
 const headlessAdapter = new CliAdapter();
@@ -115,6 +117,7 @@ const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
 console.log([
   '',
+  '',
   cyan('   ____ ___  _     _        _    ') + orange('____   ___ _____ '),
   cyan('  / ___/ _ \\| |   | |      / \\  ') + orange('| __ ) / _ \\_   _|'),
   cyan(' | |  | | | | |   | |     / _ \\ ') + orange('|  _ \\| | | || |  '),
@@ -131,6 +134,13 @@ console.log([
   `  interfaces: ${interfaceList}`,
   '',
 ].join('\n'));
+
+// Recover active draft session (if harness was restarted mid-draft)
+// Runs after the banner so its log lines appear below the header.
+const recoveredDraft = loadActiveDraft(TASKS_DIR, pool);
+if (recoveredDraft) {
+  console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
+}
 
 logger.info({ defaultModel, categoryCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');

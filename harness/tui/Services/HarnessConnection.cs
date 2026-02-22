@@ -40,6 +40,8 @@ public class HarnessConnection : IDisposable
     public event EventHandler<ChannelMessageNotification>? ChannelMessageReceived;
     public event EventHandler<StatusUpdateNotification>? StatusUpdateReceived;
     public event EventHandler<PoolStatusNotification>? PoolStatusReceived;
+    public event EventHandler<DraftStatusNotification>? DraftStatusReceived;
+    public event EventHandler<ContextCompactedNotification>? ContextCompactedReceived;
 
     public HarnessConnection(string? serverUrl = null)
     {
@@ -133,6 +135,26 @@ public class HarnessConnection : IDisposable
         return await _rpc!.InvokeWithParameterObjectAsync<GetTaskContextResult>(
             "get_task_context",
             new GetTaskContextParams(slug));
+    }
+
+    public async Task<DraftResult> DraftAsync(string role)
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeWithParameterObjectAsync<DraftResult>(
+            "draft",
+            new DraftParams(role));
+    }
+
+    public async Task<UndraftResult> UndraftAsync()
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeAsync<UndraftResult>("undraft");
+    }
+
+    public async Task<DraftStatusResult> GetDraftStatusAsync()
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeAsync<DraftStatusResult>("get_draft_status");
     }
 
     private void EnsureConnected()
@@ -288,6 +310,12 @@ public class HarnessConnection : IDisposable
     internal void RaisePoolStatus(PoolStatusNotification notification) =>
         PoolStatusReceived?.Invoke(this, notification);
 
+    internal void RaiseDraftStatus(DraftStatusNotification notification) =>
+        DraftStatusReceived?.Invoke(this, notification);
+
+    internal void RaiseContextCompacted(ContextCompactedNotification notification) =>
+        ContextCompactedReceived?.Invoke(this, notification);
+
     public void Dispose()
     {
         _intentionalDisconnect = true;
@@ -320,5 +348,13 @@ public class HarnessConnection : IDisposable
         [JsonRpcMethod("pool_status", UseSingleObjectParameterDeserialization = true)]
         public void OnPoolStatus(PoolStatusNotification notification) =>
             connection.RaisePoolStatus(notification);
+
+        [JsonRpcMethod("draft_status", UseSingleObjectParameterDeserialization = true)]
+        public void OnDraftStatus(DraftStatusNotification notification) =>
+            connection.RaiseDraftStatus(notification);
+
+        [JsonRpcMethod("context_compacted", UseSingleObjectParameterDeserialization = true)]
+        public void OnContextCompacted(ContextCompactedNotification notification) =>
+            connection.RaiseContextCompacted(notification);
     }
 }

@@ -18,6 +18,8 @@ public record KillAgentParams(string AgentId);
 
 public record GetTaskContextParams(string Slug);
 
+public record DraftParams(string Role);
+
 // --- Response Types ---
 
 public record SubmitPromptResult(string ThreadId, string TaskSlug);
@@ -34,6 +36,17 @@ public record ListTasksResult(TaskInfo[] Tasks);
 
 public record GetTaskContextResult(string Context);
 
+public record DraftResult(string SessionId, string TaskSlug);
+
+public record UndraftResult(string SessionId, string TaskSlug, int Turns, double Cost, long DurationMs);
+
+public record DraftStatusResult(bool Active, DraftSessionInfo? Session);
+
+public record DraftSessionInfo(
+    string SessionId, string Role, string TaskSlug,
+    int TurnCount, double CostUsd, int ContextPct,
+    int LastInputTokens, int ContextWindow, string LastActivity);
+
 // --- Notification Params ---
 
 public record ChannelMessageNotification(string Id, string ChannelId, string From, string Timestamp, string Type, string Content, object? Metadata);
@@ -41,6 +54,12 @@ public record ChannelMessageNotification(string Id, string ChannelId, string Fro
 public record StatusUpdateNotification(string ChannelId, string Status);
 
 public record PoolStatusNotification(AgentInfo[] Agents);
+
+public record DraftStatusNotification(
+    string SessionId, string Role, int TurnCount,
+    double CostUsd, int ContextPct, string LastActivity);
+
+public record ContextCompactedNotification(string SessionId, int PreTokens, string Trigger);
 
 // --- Filter ---
 

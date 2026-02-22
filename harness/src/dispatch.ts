@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { query, AbortError } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "./logger.js";
-import type { DispatchResult, DispatchOptions, RoleDefinition, ToolCall, ErrorTriplet, AgentEvent } from "./types.js";
+import type { DispatchResult, DispatchOptions, RoleDefinition, ToolCall, ErrorTriplet, AgentEvent, UsageMetrics } from "./types.js";
 import { AgentResultSchema } from "./types.js";
 import type { Config } from "./config.js";
 import { createJournal, appendJournal, updateJournalStatus, extractToolTarget } from "./journal.js";
@@ -43,7 +43,7 @@ const HUB_ROOT = fileURLToPath(new URL("../../", import.meta.url));
  *    Windows backslashes; cli.js validates via execSync(dir "<path>") which
  *    fails with forward slashes.
  */
-function buildChildEnv(streamTimeoutMs?: number): NodeJS.ProcessEnv {
+export function buildChildEnv(streamTimeoutMs?: number): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => k !== "CLAUDECODE"),
   );
@@ -61,6 +61,26 @@ function buildChildEnv(streamTimeoutMs?: number): NodeJS.ProcessEnv {
   // to accommodate long-running tool calls. Defaults to 10 minutes.
   env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = String(streamTimeoutMs ?? 600000);
   return env;
+}
+
+export function extractUsageMetrics(resultMsg: SDKResultMessage): UsageMetrics | undefined {
+  if (!resultMsg.usage || !resultMsg.modelUsage) return undefined;
+  const modelKey = Object.keys(resultMsg.modelUsage)[0];
+  const md = modelKey ? resultMsg.modelUsage[modelKey] : undefined;
+  const inputTokens = resultMsg.usage.input_tokens ?? 0;
+  const cacheRead = resultMsg.usage.cache_read_input_tokens ?? 0;
+  const cacheCreation = resultMsg.usage.cache_creation_input_tokens ?? 0;
+
+  return {
+    inputTokens: inputTokens + cacheRead + cacheCreation,
+    outputTokens: resultMsg.usage.output_tokens ?? 0,
+    cacheReadInputTokens: cacheRead,
+    cacheCreationInputTokens: cacheCreation,
+    contextWindow: md?.contextWindow ?? 0,
+    maxOutputTokens: md?.maxOutputTokens ?? 0,
+    numTurns: resultMsg.num_turns,
+    durationApiMs: resultMsg.duration_api_ms,
+  };
 }
 
 // TODO: maxTurns strategy needs PM review. error_max_turns may not be a meaningful
@@ -281,7 +301,7 @@ export async function dispatch(
             toolCallWindow.push({ tool: block.name, target, timestamp: Date.now() });
             if (toolCallWindow.length > 10) toolCallWindow.shift();
 
-            const loopDetection = detectErrorLoop(toolCallWindow);
+            const loopDetection = detectErrorLoop(toolCallWindow, options.loopDetectionThresholds);
             if (loopDetection) {
               if (loopDetection.severity === 'kill' && !humanRespondedSinceWarning) {
                 abortReason = 'error_loop';
@@ -358,6 +378,10 @@ export async function dispatch(
         }
       } else if (msg.type === "system" && msg.subtype === "compact_boundary") {
         logger.warn({ sessionId }, "context compacted");
+        options.onCompaction?.({
+          trigger: (msg as any).compact_metadata?.trigger ?? 'auto',
+          preTokens: (msg as any).compact_metadata?.pre_tokens ?? 0,
+        });
       } else if (msg.type === "result") {
         resultMsg = msg;
         logger.info({
@@ -387,6 +411,7 @@ export async function dispatch(
             duration_ms: Date.now() - startTime,
             journalFile: journalFileName,
             model: resolvedModel,
+            usage: extractUsageMetrics(resultMsg),
           };
         }
         logger.warn({ input: capturedStructuredOutput }, "StructuredOutput tool input failed schema validation, using raw text");
@@ -405,6 +430,7 @@ export async function dispatch(
               duration_ms: Date.now() - startTime,
               journalFile: journalFileName,
               model: resolvedModel,
+              usage: extractUsageMetrics(resultMsg),
             };
           }
           logger.warn({ result: resultMsg.result.slice(0, 200) }, "structured output validation failed, using raw text");
@@ -418,10 +444,11 @@ export async function dispatch(
           duration_ms: Date.now() - startTime,
           journalFile: journalFileName,
           model: resolvedModel,
+          usage: extractUsageMetrics(resultMsg),
         };
       }
 
-      return { status: "completed", cost: resultMsg.total_cost_usd, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel };
+      return { status: "completed", cost: resultMsg.total_cost_usd, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel, usage: extractUsageMetrics(resultMsg) };
     }
 
     if (resultMsg) {
@@ -444,6 +471,7 @@ export async function dispatch(
         duration_ms: Date.now() - startTime,
         journalFile: journalFileName,
         model: resolvedModel,
+        usage: extractUsageMetrics(resultMsg),
       };
     }
 
@@ -475,7 +503,7 @@ export async function dispatch(
           } catch { /* non-fatal */ }
         }
       }
-      return { status: "aborted", cost: resultMsg?.total_cost_usd, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel };
+      return { status: "aborted", cost: resultMsg?.total_cost_usd, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel, usage: resultMsg ? extractUsageMetrics(resultMsg) : undefined };
     }
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err, message }, "agent crashed");

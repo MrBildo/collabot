@@ -18,6 +18,12 @@ public class MainWindow : Window
     private int _agentCount;
     private FilterLevel _filterLevel = FilterLevel.Feedback;
 
+    private bool _draftActive;
+    private string? _draftRole;
+    private int _draftTurnCount;
+    private double _draftCostUsd;
+    private int _draftContextPct;
+
     private readonly List<string> _commandHistory = [];
     private int _historyIndex = -1;
     private string _historyStash = "";
@@ -34,6 +40,8 @@ public class MainWindow : Window
         _connection.ChannelMessageReceived += OnChannelMessage;
         _connection.StatusUpdateReceived += OnStatusUpdate;
         _connection.PoolStatusReceived += OnPoolStatus;
+        _connection.DraftStatusReceived += OnDraftStatus;
+        _connection.ContextCompactedReceived += OnContextCompacted;
 
         _messageView = new MessageView
         {
@@ -127,6 +135,7 @@ public class MainWindow : Window
             if (state == ConnectionState.Connected)
             {
                 _ = RefreshPoolStatusAsync();
+                _ = RefreshDraftStatusAsync();
             }
         });
     }
@@ -153,6 +162,60 @@ public class MainWindow : Window
         }
     }
 
+    private async Task RefreshDraftStatusAsync()
+    {
+        try
+        {
+            var result = await _connection.GetDraftStatusAsync();
+            App?.Invoke(() =>
+            {
+                if (result.Active && result.Session is not null)
+                {
+                    _draftActive = true;
+                    _draftRole = result.Session.Role;
+                    _draftTurnCount = result.Session.TurnCount;
+                    _draftCostUsd = result.Session.CostUsd;
+                    _draftContextPct = result.Session.ContextPct;
+                }
+                else
+                {
+                    _draftActive = false;
+                    _draftRole = null;
+                    _draftTurnCount = 0;
+                    _draftCostUsd = 0;
+                    _draftContextPct = 0;
+                }
+
+                UpdateTitle();
+            });
+        }
+        catch
+        {
+            // Best-effort refresh
+        }
+    }
+
+    private void OnDraftStatus(object? sender, DraftStatusNotification e)
+    {
+        App?.Invoke(() =>
+        {
+            _draftActive = true;
+            _draftRole = e.Role;
+            _draftTurnCount = e.TurnCount;
+            _draftCostUsd = e.CostUsd;
+            _draftContextPct = e.ContextPct;
+            UpdateTitle();
+        });
+    }
+
+    private void OnContextCompacted(object? sender, ContextCompactedNotification e)
+    {
+        App?.Invoke(() =>
+        {
+            AddMessage("lifecycle", "system", $"Context auto-compacted (was {e.PreTokens:N0} tokens)");
+        });
+    }
+
     private void OnChannelMessage(object? sender, ChannelMessageNotification e)
     {
         App?.Invoke(() =>
@@ -167,7 +230,7 @@ public class MainWindow : Window
     private bool PassesFilter(string type) => _filterLevel switch
     {
         FilterLevel.Minimal => type is "result",
-        FilterLevel.Feedback => type is not "tool_use" and not "thinking",
+        FilterLevel.Feedback => type is not "tool_use" and not "thinking" and not "warning",
         FilterLevel.Verbose => true,
         _ => true
     };
@@ -346,10 +409,30 @@ public class MainWindow : Window
                 await HandleKillCommandAsync(arg);
                 break;
 
+            case "/draft":
+                if (arg is null)
+                {
+                    AddSystemMessage("Usage: /draft <role>");
+                    break;
+                }
+                await HandleDraftCommandAsync(arg);
+                break;
+
+            case "/undraft":
+                await HandleUndraftCommandAsync();
+                break;
+
             case "/context":
                 if (arg is null)
                 {
-                    AddSystemMessage("Usage: /context <slug>");
+                    if (_draftActive)
+                    {
+                        await HandleDraftContextCommandAsync();
+                    }
+                    else
+                    {
+                        AddSystemMessage("Usage: /context <slug>");
+                    }
                     break;
                 }
                 await HandleContextCommandAsync(arg);
@@ -479,6 +562,98 @@ public class MainWindow : Window
         }
     }
 
+    private async Task HandleDraftCommandAsync(string roleName)
+    {
+        if (_draftActive)
+        {
+            AddMessage("error", "system", "Draft already active. Use /undraft first.");
+            return;
+        }
+
+        try
+        {
+            var result = await _connection.DraftAsync(roleName);
+            App?.Invoke(() =>
+            {
+                _draftActive = true;
+                _draftRole = roleName;
+                _draftTurnCount = 0;
+                _draftCostUsd = 0;
+                _draftContextPct = 0;
+                _currentRole = null;
+                _currentTask = null;
+                UpdateTitle();
+                AddMessage("lifecycle", "system", $"Drafted {roleName} — task: {result.TaskSlug}");
+                AddSystemMessage("Type messages to converse. /undraft to end session.");
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to draft: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleUndraftCommandAsync()
+    {
+        if (!_draftActive)
+        {
+            AddSystemMessage("No active draft");
+            return;
+        }
+
+        try
+        {
+            var result = await _connection.UndraftAsync();
+            App?.Invoke(() =>
+            {
+                _draftActive = false;
+                _draftRole = null;
+                _draftTurnCount = 0;
+                _draftCostUsd = 0;
+                _draftContextPct = 0;
+                UpdateTitle();
+
+                var duration = TimeSpan.FromMilliseconds(result.DurationMs);
+                var durationStr = duration.TotalMinutes >= 1
+                    ? $"{duration.TotalMinutes:F1}m"
+                    : $"{duration.TotalSeconds:F0}s";
+                AddMessage("lifecycle", "system",
+                    $"Draft ended — {result.Turns} turns, ${result.Cost:F2}, {durationStr}");
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to undraft: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleDraftContextCommandAsync()
+    {
+        try
+        {
+            var result = await _connection.GetDraftStatusAsync();
+            App?.Invoke(() =>
+            {
+                if (!result.Active || result.Session is null)
+                {
+                    AddSystemMessage("No active draft");
+                    return;
+                }
+
+                var s = result.Session;
+                AddSystemMessage($"Draft: {s.Role} — task: {s.TaskSlug}");
+                AddSystemMessage($"  Turns: {s.TurnCount}");
+                AddSystemMessage($"  Cost: ${s.CostUsd:F2}");
+                AddSystemMessage($"  Context: {s.ContextPct}% ({s.LastInputTokens:N0} / {s.ContextWindow:N0} tokens)");
+                AddSystemMessage($"  Last activity: {s.LastActivity}");
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to get draft status: {ex.Message}"));
+        }
+    }
+
     private void HandleRoleCommand(string? role)
     {
         if (string.IsNullOrWhiteSpace(role))
@@ -535,10 +710,12 @@ public class MainWindow : Window
     private void ShowHelp()
     {
         AddSystemMessage("Available commands:");
+        AddSystemMessage("  /draft <role>    Draft an agent for conversation");
+        AddSystemMessage("  /undraft         End the active draft session");
+        AddSystemMessage("  /context         Show draft context metrics (or /context <slug> for task)");
         AddSystemMessage("  /agents          List active agents");
         AddSystemMessage("  /tasks           List tasks");
         AddSystemMessage("  /kill <id>       Kill an agent");
-        AddSystemMessage("  /context <slug>  Show task context");
         AddSystemMessage("  /role <name>     Set default role (empty to clear)");
         AddSystemMessage("  /task <slug>     Set default task slug (empty to clear)");
         AddSystemMessage("  /filter <level>  Set filter (minimal|feedback|verbose)");
@@ -568,19 +745,29 @@ public class MainWindow : Window
 
         var parts = new List<string> { $"{indicator} {stateName}" };
 
-        if (_agentCount > 0)
+        if (_draftActive && _draftRole is not null)
         {
-            parts.Add($"Agents: {_agentCount}");
+            parts.Add($"Draft: {_draftRole}");
+            parts.Add($"Context: {_draftContextPct}%");
+            parts.Add($"Turns: {_draftTurnCount}");
+            parts.Add($"${_draftCostUsd:F2}");
         }
-
-        if (_currentRole is not null)
+        else
         {
-            parts.Add($"Role: {_currentRole}");
-        }
+            if (_agentCount > 0)
+            {
+                parts.Add($"Agents: {_agentCount}");
+            }
 
-        if (_currentTask is not null)
-        {
-            parts.Add($"Task: {_currentTask}");
+            if (_currentRole is not null)
+            {
+                parts.Add($"Role: {_currentRole}");
+            }
+
+            if (_currentTask is not null)
+            {
+                parts.Add($"Task: {_currentTask}");
+            }
         }
 
         if (_filterLevel != FilterLevel.Feedback)
@@ -607,6 +794,8 @@ public class MainWindow : Window
             _connection.ChannelMessageReceived -= OnChannelMessage;
             _connection.StatusUpdateReceived -= OnStatusUpdate;
             _connection.PoolStatusReceived -= OnPoolStatus;
+            _connection.DraftStatusReceived -= OnDraftStatus;
+            _connection.ContextCompactedReceived -= OnContextCompacted;
             _inputField.Accepting -= OnInputAccepted;
             _inputField.KeyDown -= OnInputKeyDown;
             _connection.Dispose();

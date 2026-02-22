@@ -76,7 +76,7 @@ function formatResult(result: DispatchResult): string {
   }
 }
 
-function makeChannelMessage(
+export function makeChannelMessage(
   channelId: string,
   from: string,
   type: ChannelMessage['type'],
