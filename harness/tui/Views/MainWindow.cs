@@ -320,7 +320,12 @@ public class MainWindow : Window
 
     private void OnInputKeyDown(object? sender, Key e)
     {
-        if (e == Key.Enter)
+        if (e == Key.L.WithCtrl)
+        {
+            ClearMessages();
+            e.Handled = true;
+        }
+        else if (e == Key.Enter)
         {
             SubmitInput();
             e.Handled = true;
