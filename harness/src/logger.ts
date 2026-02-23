@@ -1,4 +1,4 @@
 import pino from 'pino';
 
-const verbose = process.env.HARNESS_VERBOSE === 'true';
+export const verbose = process.env.HARNESS_VERBOSE === 'true' || process.argv.includes('--verbose');
 export const logger = pino({ level: verbose ? 'debug' : 'info' }, pino.destination({ sync: true }));

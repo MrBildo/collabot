@@ -51,7 +51,7 @@ export class WsAdapter implements CommAdapter {
 
       wss.on('connection', (socket) => {
         this.clients.add(socket);
-        logger.debug({ clientCount: this.clients.size }, 'WS client connected');
+        logger.info({ clientCount: this.clients.size }, 'WS client connected');
 
         socket.on('message', async (data) => {
           const text = data.toString();
@@ -63,7 +63,7 @@ export class WsAdapter implements CommAdapter {
 
         socket.on('close', () => {
           this.clients.delete(socket);
-          logger.debug({ clientCount: this.clients.size }, 'WS client disconnected');
+          logger.info({ clientCount: this.clients.size }, 'WS client disconnected');
         });
 
         socket.on('error', (err) => {

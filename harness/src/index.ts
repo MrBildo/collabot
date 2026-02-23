@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger } from './logger.js';
+import { logger, verbose } from './logger.js';
 import { startSlackApp } from './slack.js';
 import { loadConfig } from './config.js';
 import { loadRoles } from './roles.js';
@@ -25,8 +25,6 @@ const version = pkg.version;
 
 // Platform root: harness/src/index.ts → ../../ = collabot root
 const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-
-const verbose = process.env.HARNESS_VERBOSE === 'true';
 
 // Load config (fail fast before any connections)
 let config;
