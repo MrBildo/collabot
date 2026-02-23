@@ -325,6 +325,7 @@ export async function resumeDraft(
           if (block.type === 'text' && typeof (block as Record<string, unknown>).text === 'string') {
             const text = (block as Record<string, unknown>).text as string;
             if (text.trim()) {
+              logger.info({ sessionId: session.sessionId, text: text.slice(0, 200) }, 'agent text');
               await filteredSend(adapter, makeChannelMessage(
                 session.channelId, role.displayName, 'chat', text,
               ));
@@ -335,6 +336,7 @@ export async function resumeDraft(
           if (block.type === 'thinking' && typeof (block as Record<string, unknown>).thinking === 'string') {
             const thinking = (block as Record<string, unknown>).thinking as string;
             if (thinking.trim()) {
+              logger.info({ sessionId: session.sessionId, thinking: thinking.slice(0, 200) }, 'agent thinking');
               await filteredSend(adapter, makeChannelMessage(
                 session.channelId, role.displayName, 'thinking', thinking,
               ));
@@ -343,6 +345,10 @@ export async function resumeDraft(
 
           if (block.type === 'tool_use') {
             const target = extractToolTarget(block.name, block.input);
+
+            if (block.name !== 'StructuredOutput') {
+              logger.info({ sessionId: session.sessionId, tool: block.name, target }, 'tool use');
+            }
 
             // Emit tool_use event (skip StructuredOutput — SDK internal)
             if (block.name !== 'StructuredOutput') {

@@ -231,6 +231,7 @@ export async function dispatch(
           if (block.type === "text" && typeof (block as Record<string, unknown>).text === "string") {
             const text = (block as Record<string, unknown>).text as string;
             if (text.trim()) {
+              logger.info({ sessionId, text: text.slice(0, 200) }, "agent text");
               options.onEvent?.({ type: 'chat', content: text });
             }
           }
@@ -239,13 +240,14 @@ export async function dispatch(
           if (block.type === "thinking" && typeof (block as Record<string, unknown>).thinking === "string") {
             const thinking = (block as Record<string, unknown>).thinking as string;
             if (thinking.trim()) {
+              logger.info({ sessionId, thinking: thinking.slice(0, 200) }, "agent thinking");
               options.onEvent?.({ type: 'thinking', content: thinking });
             }
           }
 
           if (block.type === "tool_use") {
             const inputSummary = JSON.stringify(block.input as Record<string, unknown>).slice(0, 100);
-            logger.debug({ sessionId, tool: block.name, input: inputSummary }, "tool use");
+            logger.debug({ sessionId, tool: block.name, input: inputSummary }, "tool use (full)");
 
             // Capture structured output directly from the StructuredOutput tool
             // input — the SDK injects this tool when outputFormat is set, but
@@ -256,6 +258,10 @@ export async function dispatch(
             }
 
             const target = extractToolTarget(block.name, block.input);
+
+            if (block.name !== "StructuredOutput") {
+              logger.info({ sessionId, tool: block.name, target }, "tool use");
+            }
 
             // Emit tool_use event (skip StructuredOutput — SDK internal)
             if (block.name !== "StructuredOutput") {

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger, verbose } from './logger.js';
+import { logger, logTier } from './logger.js';
 import { startSlackApp } from './slack.js';
 import { loadConfig } from './config.js';
 import { loadRoles } from './roles.js';
@@ -135,7 +135,7 @@ console.log([
   cyan('  \\____\\___/|_____|_____/_/   \\_\\') + orange('____/ \\___/ |_|  '),
   dim('        the collaborative agent platform'),
   '',
-  `  v${version} | Node ${process.version} | ${process.platform} | verbose=${verbose ? 'on' : 'off'}`,
+  `  v${version} | Node ${process.version} | ${process.platform} | log=${logTier}`,
   `  config: OK (${categoryCount} categories) | model: ${defaultModel}`,
   `  projects: ${projectCount} (${projectNames || 'none'})`,
   `  roles: ${roleCount} (${roleNames})`,
@@ -191,9 +191,9 @@ const journalWatcher: FSWatcher = watchJournals(
   usePolling,
 );
 
-// Heartbeat — debug log every 60s, gated on HARNESS_VERBOSE
+// Heartbeat — debug log every 60s, gated on verbose tier
 let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
-if (verbose) {
+if (logTier === 'verbose') {
   heartbeatInterval = setInterval(() => {
     logger.debug({ uptime_s: Math.floor(process.uptime()), agents_active: pool.size, agents_total: 0 }, 'heartbeat');
   }, 60_000);
