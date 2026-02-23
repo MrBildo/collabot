@@ -101,12 +101,12 @@ public class HarnessConnection : IDisposable
         ConnectionState = ConnectionState.Disconnected;
     }
 
-    public async Task<SubmitPromptResult> SubmitPromptAsync(string content, string? role = null, string? taskSlug = null)
+    public async Task<SubmitPromptResult> SubmitPromptAsync(string content, string? role = null, string? taskSlug = null, string? project = null)
     {
         EnsureConnected();
         return await _rpc!.InvokeWithParameterObjectAsync<SubmitPromptResult>(
             "submit_prompt",
-            new SubmitPromptParams(content, role, taskSlug));
+            new SubmitPromptParams(content, role, taskSlug, project));
     }
 
     public async Task<ListAgentsResult> ListAgentsAsync()
@@ -115,10 +115,12 @@ public class HarnessConnection : IDisposable
         return await _rpc!.InvokeAsync<ListAgentsResult>("list_agents");
     }
 
-    public async Task<ListTasksResult> ListTasksAsync()
+    public async Task<ListTasksResult> ListTasksAsync(string project)
     {
         EnsureConnected();
-        return await _rpc!.InvokeAsync<ListTasksResult>("list_tasks");
+        return await _rpc!.InvokeWithParameterObjectAsync<ListTasksResult>(
+            "list_tasks",
+            new ListTasksParams(project));
     }
 
     public async Task<KillAgentResult> KillAgentAsync(string agentId)
@@ -129,20 +131,20 @@ public class HarnessConnection : IDisposable
             new KillAgentParams(agentId));
     }
 
-    public async Task<GetTaskContextResult> GetTaskContextAsync(string slug)
+    public async Task<GetTaskContextResult> GetTaskContextAsync(string slug, string project)
     {
         EnsureConnected();
         return await _rpc!.InvokeWithParameterObjectAsync<GetTaskContextResult>(
             "get_task_context",
-            new GetTaskContextParams(slug));
+            new GetTaskContextParams(slug, project));
     }
 
-    public async Task<DraftResult> DraftAsync(string role)
+    public async Task<DraftResult> DraftAsync(string role, string project, string? task = null)
     {
         EnsureConnected();
         return await _rpc!.InvokeWithParameterObjectAsync<DraftResult>(
             "draft",
-            new DraftParams(role));
+            new DraftParams(role, project, task));
     }
 
     public async Task<UndraftResult> UndraftAsync()
@@ -155,6 +157,42 @@ public class HarnessConnection : IDisposable
     {
         EnsureConnected();
         return await _rpc!.InvokeAsync<DraftStatusResult>("get_draft_status");
+    }
+
+    public async Task<ListProjectsResult> ListProjectsAsync()
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeAsync<ListProjectsResult>("list_projects");
+    }
+
+    public async Task<CreateProjectResult> CreateProjectAsync(string name, string description, string[] roles)
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeWithParameterObjectAsync<CreateProjectResult>(
+            "create_project",
+            new CreateProjectParams(name, description, roles));
+    }
+
+    public async Task<ListProjectsResult> ReloadProjectsAsync()
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeAsync<ListProjectsResult>("reload_projects");
+    }
+
+    public async Task<CreateTaskResult> CreateTaskAsync(string project, string name, string? description = null)
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeWithParameterObjectAsync<CreateTaskResult>(
+            "create_task",
+            new CreateTaskParams(project, name, description));
+    }
+
+    public async Task<CloseTaskResult> CloseTaskAsync(string project, string slug)
+    {
+        EnsureConnected();
+        return await _rpc!.InvokeWithParameterObjectAsync<CloseTaskResult>(
+            "close_task",
+            new CloseTaskParams(project, slug));
     }
 
     private void EnsureConnected()

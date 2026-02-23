@@ -4,7 +4,7 @@ import { logger } from './logger.js';
 import { dispatch } from './dispatch.js';
 import { buildTaskContext } from './context.js';
 import { getTask, createTask, findTaskByThread, recordDispatch, nextJournalFile } from './task.js';
-import { getProject, getProjectTasksDir } from './project.js';
+import { getProject, getProjectTasksDir, projectHasPaths } from './project.js';
 import type { Project } from './project.js';
 import type { TaskManifest } from './task.js';
 import type { DispatchResult, RoleDefinition, AgentEvent } from './types.js';
@@ -119,6 +119,12 @@ export async function handleTask(
   }
 
   const project = getProject(projects, projectName);
+
+  // Guard: project must have paths configured for dispatch
+  if (!projectHasPaths(project)) {
+    throw new Error(`Project has no paths configured. Edit .projects/${project.name.toLowerCase()}/project.yaml to add repo paths.`);
+  }
+
   const tasksDir = getProjectTasksDir(projectsDir, project.name);
 
   // Role is required (adapter provides it)
@@ -178,6 +184,24 @@ export async function handleTask(
     }
   } catch {
     // If manifest read fails, proceed without context reconstruction
+  }
+
+  // Preflight checks (warn-only, never block dispatch)
+  if (!fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
+    logger.warn({ cwd }, `No CLAUDE.md found in ${cwd} — agent will have no project context`);
+    await adapter.send(makeChannelMessage(
+      message.metadata?.['channelId'] as string ?? message.threadId,
+      'Collabot', 'warning',
+      `No CLAUDE.md found in ${cwd} — agent will have no project context`,
+    ));
+  }
+  if (!fs.existsSync(path.join(cwd, '.agents', 'kb'))) {
+    logger.warn({ cwd }, `No .agents/kb/ found in ${cwd} — agent will have no knowledge base`);
+    await adapter.send(makeChannelMessage(
+      message.metadata?.['channelId'] as string ?? message.threadId,
+      'Collabot', 'warning',
+      `No .agents/kb/ found in ${cwd} — agent will have no knowledge base`,
+    ));
   }
 
   const persona = role.displayName;

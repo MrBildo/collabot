@@ -7,7 +7,7 @@ import type { AgentPool } from './pool.js';
 import type { Config } from './config.js';
 import type { RoleDefinition, DispatchResult, Project } from './types.js';
 import type { McpServers } from './core.js';
-import { getProject, getProjectTasksDir } from './project.js';
+import { getProject, getProjectTasksDir, createProject, loadProjects } from './project.js';
 import { buildTaskContext } from './context.js';
 import { listTasks, createTask, closeTask, getTask } from './task.js';
 import { logger } from './logger.js';
@@ -52,6 +52,55 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
   // list_projects — return all loaded projects
   deps.wsAdapter.addMethod('list_projects', (_params: unknown) => {
+    const projectList = [...deps.projects.values()].map((p) => ({
+      name: p.name,
+      description: p.description,
+      paths: p.paths,
+      roles: p.roles,
+    }));
+    return { projects: projectList };
+  });
+
+  // create_project — scaffold a new project manifest
+  deps.wsAdapter.addMethod('create_project', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const name = p['name'] as string | undefined;
+    const description = p['description'] as string | undefined;
+    const roles = p['roles'] as string[] | undefined;
+
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new JSONRPCErrorException('name is required and must be a non-empty string', -32602);
+    }
+
+    // Check for duplicate
+    if (deps.projects.has(name.toLowerCase())) {
+      throw new JSONRPCErrorException(`Project "${name}" already exists`, -32602);
+    }
+
+    const rolesList = Array.isArray(roles) ? roles : [...deps.roles.keys()];
+
+    try {
+      const project = createProject(
+        deps.projectsDir,
+        { name, description: description ?? name, roles: rolesList },
+        deps.roles,
+      );
+      deps.projects.set(project.name.toLowerCase(), project);
+      return { name: project.name, paths: project.paths, roles: project.roles };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new JSONRPCErrorException(msg, -32602);
+    }
+  });
+
+  // reload_projects — re-read all projects from disk
+  deps.wsAdapter.addMethod('reload_projects', (_params: unknown) => {
+    const reloaded = loadProjects(deps.projectsDir, deps.roles);
+    // Replace contents of live registry
+    deps.projects.clear();
+    for (const [key, project] of reloaded) {
+      deps.projects.set(key, project);
+    }
     const projectList = [...deps.projects.values()].map((p) => ({
       name: p.name,
       description: p.description,

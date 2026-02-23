@@ -103,14 +103,12 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('list_tasks', 'List tasks for a project', {
-      project: z.string().optional().describe('Project name. If omitted, uses parent project.'),
-    },
-      async ({ project: projectName }) => {
-        const resolvedName = projectName ?? options.parentProject;
+    tool('list_tasks', 'List tasks for the current project', {},
+      async () => {
+        const resolvedName = options.parentProject;
         if (!resolvedName) {
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Project name required (no parent project context)' }) }],
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No parent project context' }) }],
             isError: true,
           };
         }
@@ -131,13 +129,12 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
 
     tool('get_task_context', 'Get reconstructed context for a task (history of prior dispatches)', {
       taskSlug: z.string(),
-      project: z.string().optional().describe('Project name. If omitted, uses parent project.'),
     },
-      async ({ taskSlug, project: projectName }) => {
-        const resolvedName = projectName ?? options.parentProject;
+      async ({ taskSlug }) => {
+        const resolvedName = options.parentProject;
         if (!resolvedName) {
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Project name required' }) }],
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No parent project context' }) }],
             isError: true,
           };
         }
@@ -164,16 +161,27 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('list_projects', 'List all registered projects', {},
+    tool('list_projects', 'Get info about the current project', {},
       async () => {
-        const projectList = [...projects.values()].map((p) => ({
-          name: p.name,
-          description: p.description,
-          paths: p.paths,
-          roles: p.roles,
-        }));
+        const resolvedName = options.parentProject;
+        if (!resolvedName) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ projects: [] }) }],
+          };
+        }
+        const proj = projects.get(resolvedName.toLowerCase());
+        if (!proj) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ projects: [] }) }],
+          };
+        }
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ projects: projectList }) }],
+          content: [{ type: 'text' as const, text: JSON.stringify({ projects: [{
+            name: proj.name,
+            description: proj.description,
+            paths: proj.paths,
+            roles: proj.roles,
+          }] }) }],
         };
       },
     ),

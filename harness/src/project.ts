@@ -9,7 +9,7 @@ import type { RoleDefinition } from './types.js';
 export const ProjectManifestSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
-  paths: z.array(z.string()).min(1),
+  paths: z.array(z.string()),
   roles: z.array(z.string()).min(1),
 });
 
@@ -76,6 +76,47 @@ export function loadProjects(
   }
 
   return projects;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+export function projectHasPaths(project: Project): boolean {
+  return project.paths.length > 0;
+}
+
+/**
+ * Scaffold a new project manifest on disk and return the Project.
+ * Creates `.projects/<name>/project.yaml` with `paths: []`.
+ */
+export function createProject(
+  projectsDir: string,
+  manifest: { name: string; description: string; roles: string[] },
+  roles: Map<string, RoleDefinition>,
+): Project {
+  // Validate roles exist
+  for (const roleName of manifest.roles) {
+    if (!roles.has(roleName)) {
+      const available = [...roles.keys()].join(', ');
+      throw new Error(`Role "${roleName}" not found. Available: ${available}`);
+    }
+  }
+
+  const projectDir = path.join(projectsDir, manifest.name.toLowerCase());
+
+  // Ensure .projects/ and project dir exist
+  fs.mkdirSync(projectDir, { recursive: true });
+
+  const project: Project = {
+    name: manifest.name,
+    description: manifest.description,
+    paths: [],
+    roles: manifest.roles,
+  };
+
+  const yamlContent = yaml.dump(project, { lineWidth: -1 });
+  fs.writeFileSync(path.join(projectDir, 'project.yaml'), yamlContent, 'utf-8');
+
+  return project;
 }
 
 // ── Lookup helpers ───────────────────────────────────────────────

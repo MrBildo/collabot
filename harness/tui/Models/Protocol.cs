@@ -12,13 +12,21 @@ public enum ConnectionState
 
 // --- Request Params ---
 
-public record SubmitPromptParams(string Content, string? Role, string? TaskSlug);
+public record SubmitPromptParams(string Content, string? Role, string? TaskSlug, string? Project);
 
 public record KillAgentParams(string AgentId);
 
-public record GetTaskContextParams(string Slug);
+public record GetTaskContextParams(string Slug, string Project);
 
-public record DraftParams(string Role);
+public record DraftParams(string Role, string Project, string? Task);
+
+public record ListTasksParams(string Project);
+
+public record CreateTaskParams(string Project, string Name, string? Description);
+
+public record CloseTaskParams(string Project, string Slug);
+
+public record CreateProjectParams(string Name, string Description, string[] Roles);
 
 // --- Response Types ---
 
@@ -30,22 +38,32 @@ public record AgentInfo(string Id, string Role, string TaskSlug, string StartedA
 
 public record ListAgentsResult(AgentInfo[] Agents);
 
-public record TaskInfo(string Slug, string Created, string Description, int DispatchCount);
+public record TaskInfo(string Slug, string Name, string Status, string Created, string? Description, int DispatchCount);
 
 public record ListTasksResult(TaskInfo[] Tasks);
 
 public record GetTaskContextResult(string Context);
 
-public record DraftResult(string SessionId, string TaskSlug);
+public record DraftResult(string SessionId, string TaskSlug, string Project);
 
 public record UndraftResult(string SessionId, string TaskSlug, int Turns, double Cost, long DurationMs);
 
 public record DraftStatusResult(bool Active, DraftSessionInfo? Session);
 
 public record DraftSessionInfo(
-    string SessionId, string Role, string TaskSlug,
+    string SessionId, string Role, string Project, string TaskSlug,
     int TurnCount, double CostUsd, int ContextPct,
     int LastInputTokens, int ContextWindow, string LastActivity);
+
+public record ProjectInfo(string Name, string Description, string[] Paths, string[] Roles);
+
+public record ListProjectsResult(ProjectInfo[] Projects);
+
+public record CreateProjectResult(string Name, string[] Paths, string[] Roles);
+
+public record CreateTaskResult(string Slug, string TaskDir);
+
+public record CloseTaskResult(bool Success);
 
 // --- Notification Params ---
 
@@ -56,7 +74,7 @@ public record StatusUpdateNotification(string ChannelId, string Status);
 public record PoolStatusNotification(AgentInfo[] Agents);
 
 public record DraftStatusNotification(
-    string SessionId, string Role, int TurnCount,
+    string SessionId, string Role, string Project, int TurnCount,
     double CostUsd, int ContextPct, string LastActivity);
 
 public record ContextCompactedNotification(string SessionId, int PreTokens, string Trigger);

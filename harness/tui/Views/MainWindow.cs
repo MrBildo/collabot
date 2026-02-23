@@ -21,6 +21,7 @@ public class MainWindow : Window
     private readonly TextView _inputField;
     private readonly Label _inputPrompt;
 
+    private string? _currentProject;
     private string? _currentRole;
     private string? _currentTask;
     private int _agentCount;
@@ -28,6 +29,7 @@ public class MainWindow : Window
 
     private bool _draftActive;
     private string? _draftRole;
+    private string? _draftProject;
     private int _draftTurnCount;
     private double _draftCostUsd;
     private int _draftContextPct;
@@ -177,8 +179,33 @@ public class MainWindow : Window
             {
                 _ = RefreshPoolStatusAsync();
                 _ = RefreshDraftStatusAsync();
+                _ = ShowProjectsOnConnectAsync();
             }
         });
+    }
+
+    private async Task ShowProjectsOnConnectAsync()
+    {
+        try
+        {
+            var result = await _connection.ListProjectsAsync();
+            App?.Invoke(() =>
+            {
+                if (result.Projects.Length > 0)
+                {
+                    var names = string.Join(", ", result.Projects.Select(p => p.Name));
+                    AddSystemMessage($"Projects: {names}");
+                }
+                else
+                {
+                    AddSystemMessage("No projects loaded. Use /project init <name> to create one.");
+                }
+            });
+        }
+        catch
+        {
+            // Best-effort
+        }
     }
 
     private void OnReconnectingIn(object? sender, int seconds)
@@ -214,6 +241,7 @@ public class MainWindow : Window
                 {
                     _draftActive = true;
                     _draftRole = result.Session.Role;
+                    _draftProject = result.Session.Project;
                     _draftTurnCount = result.Session.TurnCount;
                     _draftCostUsd = result.Session.CostUsd;
                     _draftContextPct = result.Session.ContextPct;
@@ -222,6 +250,7 @@ public class MainWindow : Window
                 {
                     _draftActive = false;
                     _draftRole = null;
+                    _draftProject = null;
                     _draftTurnCount = 0;
                     _draftCostUsd = 0;
                     _draftContextPct = 0;
@@ -242,6 +271,7 @@ public class MainWindow : Window
         {
             _draftActive = true;
             _draftRole = e.Role;
+            _draftProject = e.Project;
             _draftTurnCount = e.TurnCount;
             _draftCostUsd = e.CostUsd;
             _draftContextPct = e.ContextPct;
@@ -491,6 +521,12 @@ public class MainWindow : Window
     {
         if (!_draftActive)
         {
+            if (_currentProject is null)
+            {
+                AddSystemMessage("No project selected. Use /project <name>");
+                return;
+            }
+
             AddSystemMessage("No active draft session. Use /draft <role> to start one.");
             return;
         }
@@ -505,8 +541,8 @@ public class MainWindow : Window
 
         try
         {
-            var result = await _connection.SubmitPromptAsync(text, _currentRole, _currentTask);
-            App?.Invoke(() => AddMessage("lifecycle", "system", $"Submitted → task: {result.TaskSlug}, thread: {result.ThreadId}"));
+            var result = await _connection.SubmitPromptAsync(text, _currentRole, _currentTask, _currentProject);
+            App?.Invoke(() => AddMessage("lifecycle", "system", $"Submitted \u2192 task: {result.TaskSlug}, thread: {result.ThreadId}"));
         }
         catch (Exception ex)
         {
@@ -527,7 +563,7 @@ public class MainWindow : Window
                 break;
 
             case "/tasks":
-                await HandleTasksCommandAsync();
+                await HandleTaskSubcommandAsync("list");
                 break;
 
             case "/kill":
@@ -568,12 +604,16 @@ public class MainWindow : Window
                 await HandleContextCommandAsync(arg);
                 break;
 
+            case "/project":
+                await HandleProjectCommandAsync(arg);
+                break;
+
             case "/role":
                 HandleRoleCommand(arg);
                 break;
 
             case "/task":
-                HandleTaskCommand(arg);
+                await HandleTaskCommandAsync(arg);
                 break;
 
             case "/filter":
@@ -602,6 +642,300 @@ public class MainWindow : Window
         }
     }
 
+    private async Task HandleProjectCommandAsync(string? arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            // Show current project or list available
+            if (_currentProject is not null)
+            {
+                AddSystemMessage($"Current project: {_currentProject}");
+            }
+            else
+            {
+                try
+                {
+                    var result = await _connection.ListProjectsAsync();
+                    App?.Invoke(() =>
+                    {
+                        if (result.Projects.Length > 0)
+                        {
+                            var names = string.Join(", ", result.Projects.Select(p => p.Name));
+                            AddSystemMessage($"No project selected. Available: {names}");
+                        }
+                        else
+                        {
+                            AddSystemMessage("No project selected. No projects loaded. Use /project init <name>");
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    App?.Invoke(() => AddMessage("error", "system", $"Failed to list projects: {ex.Message}"));
+                }
+            }
+            return;
+        }
+
+        var subParts = arg.Split(' ', 2);
+        var subcommand = subParts[0].ToLowerInvariant();
+
+        switch (subcommand)
+        {
+            case "init":
+                {
+                    var name = subParts.Length > 1 ? subParts[1].Trim() : null;
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        AddSystemMessage("Usage: /project init <name>");
+                        return;
+                    }
+                    await HandleProjectInitAsync(name);
+                }
+                break;
+
+            case "reload":
+                await HandleProjectReloadAsync();
+                break;
+
+            default:
+                // Treat as project name selection
+                await HandleProjectSelectAsync(arg);
+                break;
+        }
+    }
+
+    private async Task HandleProjectSelectAsync(string name)
+    {
+        try
+        {
+            var result = await _connection.ListProjectsAsync();
+            App?.Invoke(() =>
+            {
+                var match = result.Projects.FirstOrDefault(
+                    p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                if (match is null)
+                {
+                    var available = result.Projects.Length > 0
+                        ? string.Join(", ", result.Projects.Select(p => p.Name))
+                        : "(none)";
+                    AddSystemMessage($"Project \"{name}\" not found. Available: {available}");
+                }
+                else
+                {
+                    _currentProject = match.Name;
+                    UpdateStatusHeader();
+                    AddSystemMessage($"Project set to: {match.Name}");
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to list projects: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleProjectInitAsync(string name)
+    {
+        try
+        {
+            var result = await _connection.CreateProjectAsync(name, name, []);
+            App?.Invoke(() =>
+            {
+                AddSystemMessage($"Project \"{result.Name}\" scaffolded with roles: {string.Join(", ", result.Roles)}");
+                AddSystemMessage($"Edit .projects/{result.Name.ToLowerInvariant()}/project.yaml to add paths, then /project reload.");
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to create project: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleProjectReloadAsync()
+    {
+        try
+        {
+            var result = await _connection.ReloadProjectsAsync();
+            App?.Invoke(() =>
+            {
+                if (result.Projects.Length > 0)
+                {
+                    var names = string.Join(", ", result.Projects.Select(p => p.Name));
+                    AddSystemMessage($"Projects reloaded: {names}");
+                }
+                else
+                {
+                    AddSystemMessage("Projects reloaded: (none)");
+                }
+
+                // Clear current project if it no longer exists
+                if (_currentProject is not null &&
+                    !result.Projects.Any(p => p.Name.Equals(_currentProject, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _currentProject = null;
+                    AddSystemMessage("Current project no longer exists after reload — cleared.");
+                }
+
+                UpdateStatusHeader();
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to reload projects: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleTaskCommandAsync(string? arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            // Show current task
+            if (_currentTask is not null)
+            {
+                AddSystemMessage($"Current task: {_currentTask}");
+            }
+            else
+            {
+                AddSystemMessage("No task selected");
+            }
+            return;
+        }
+
+        var subParts = arg.Split(' ', 2);
+        var subcommand = subParts[0].ToLowerInvariant();
+
+        switch (subcommand)
+        {
+            case "list":
+                await HandleTaskSubcommandAsync("list");
+                break;
+
+            case "create":
+                {
+                    var name = subParts.Length > 1 ? subParts[1].Trim() : null;
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        AddSystemMessage("Usage: /task create <name>");
+                        return;
+                    }
+                    await HandleTaskCreateAsync(name);
+                }
+                break;
+
+            case "close":
+                {
+                    var slug = subParts.Length > 1 ? subParts[1].Trim() : _currentTask;
+                    if (string.IsNullOrWhiteSpace(slug))
+                    {
+                        AddSystemMessage("Usage: /task close [slug] (or set a current task first)");
+                        return;
+                    }
+                    await HandleTaskCloseAsync(slug);
+                }
+                break;
+
+            case "clear":
+                _currentTask = null;
+                AddSystemMessage("Task cleared");
+                UpdateStatusHeader();
+                break;
+
+            default:
+                // Treat as slug selection
+                _currentTask = arg;
+                AddSystemMessage($"Task set to: {arg}");
+                UpdateStatusHeader();
+                break;
+        }
+    }
+
+    private async Task HandleTaskSubcommandAsync(string _)
+    {
+        if (_currentProject is null)
+        {
+            AddSystemMessage("No project selected. Use /project <name> first.");
+            return;
+        }
+
+        try
+        {
+            var result = await _connection.ListTasksAsync(_currentProject);
+
+            App?.Invoke(() =>
+            {
+                if (result.Tasks.Length == 0)
+                {
+                    AddSystemMessage("No tasks");
+                }
+                else
+                {
+                    AddSystemMessage($"Tasks ({result.Tasks.Length}):");
+                    foreach (var task in result.Tasks)
+                    {
+                        AddSystemMessage($"  [{task.Status}] {task.Slug} \u2014 {task.Name} \u2014 {task.DispatchCount} dispatches \u2014 {task.Created}");
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to list tasks: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleTaskCreateAsync(string name)
+    {
+        if (_currentProject is null)
+        {
+            AddSystemMessage("No project selected. Use /project <name> first.");
+            return;
+        }
+
+        try
+        {
+            var result = await _connection.CreateTaskAsync(_currentProject, name);
+            App?.Invoke(() =>
+            {
+                _currentTask = result.Slug;
+                UpdateStatusHeader();
+                AddSystemMessage($"Task created: {result.Slug}");
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to create task: {ex.Message}"));
+        }
+    }
+
+    private async Task HandleTaskCloseAsync(string slug)
+    {
+        if (_currentProject is null)
+        {
+            AddSystemMessage("No project selected. Use /project <name> first.");
+            return;
+        }
+
+        try
+        {
+            await _connection.CloseTaskAsync(_currentProject, slug);
+            App?.Invoke(() =>
+            {
+                AddSystemMessage($"Task closed: {slug}");
+                if (_currentTask == slug)
+                {
+                    _currentTask = null;
+                    UpdateStatusHeader();
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            App?.Invoke(() => AddMessage("error", "system", $"Failed to close task: {ex.Message}"));
+        }
+    }
+
     private async Task HandleAgentsCommandAsync()
     {
         try
@@ -619,7 +953,7 @@ public class MainWindow : Window
                     AddSystemMessage($"Active agents ({result.Agents.Length}):");
                     foreach (var agent in result.Agents)
                     {
-                        AddSystemMessage($"  {agent.Id} — {agent.Role} — {agent.TaskSlug} — since {agent.StartedAt}");
+                        AddSystemMessage($"  {agent.Id} \u2014 {agent.Role} \u2014 {agent.TaskSlug} \u2014 since {agent.StartedAt}");
                     }
                 }
             });
@@ -627,34 +961,6 @@ public class MainWindow : Window
         catch (Exception ex)
         {
             App?.Invoke(() => AddMessage("error", "system", $"Failed to list agents: {ex.Message}"));
-        }
-    }
-
-    private async Task HandleTasksCommandAsync()
-    {
-        try
-        {
-            var result = await _connection.ListTasksAsync();
-
-            App?.Invoke(() =>
-            {
-                if (result.Tasks.Length == 0)
-                {
-                    AddSystemMessage("No tasks");
-                }
-                else
-                {
-                    AddSystemMessage($"Tasks ({result.Tasks.Length}):");
-                    foreach (var task in result.Tasks)
-                    {
-                        AddSystemMessage($"  {task.Slug} — {task.Description} — {task.DispatchCount} dispatches — {task.Created}");
-                    }
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            App?.Invoke(() => AddMessage("error", "system", $"Failed to list tasks: {ex.Message}"));
         }
     }
 
@@ -673,9 +979,15 @@ public class MainWindow : Window
 
     private async Task HandleContextCommandAsync(string slug)
     {
+        if (_currentProject is null)
+        {
+            AddSystemMessage("No project selected. Use /project <name> first.");
+            return;
+        }
+
         try
         {
-            var result = await _connection.GetTaskContextAsync(slug);
+            var result = await _connection.GetTaskContextAsync(slug, _currentProject);
 
             App?.Invoke(() =>
             {
@@ -700,20 +1012,26 @@ public class MainWindow : Window
             return;
         }
 
+        if (_currentProject is null)
+        {
+            AddMessage("error", "system", "No project selected. Use /project <name> first.");
+            return;
+        }
+
         try
         {
-            var result = await _connection.DraftAsync(roleName);
+            var result = await _connection.DraftAsync(roleName, _currentProject, _currentTask);
             App?.Invoke(() =>
             {
                 _draftActive = true;
                 _draftRole = roleName;
+                _draftProject = result.Project;
                 _draftTurnCount = 0;
                 _draftCostUsd = 0;
                 _draftContextPct = 0;
                 _currentRole = null;
-                _currentTask = null;
                 UpdateStatusHeader();
-                AddMessage("lifecycle", "system", $"Drafted {roleName} — task: {result.TaskSlug}");
+                AddMessage("lifecycle", "system", $"Drafted {roleName} @ {result.Project} \u2014 task: {result.TaskSlug}");
                 AddSystemMessage("Type messages to converse. /undraft to end session.");
             });
         }
@@ -738,6 +1056,7 @@ public class MainWindow : Window
             {
                 _draftActive = false;
                 _draftRole = null;
+                _draftProject = null;
                 _draftTurnCount = 0;
                 _draftCostUsd = 0;
                 _draftContextPct = 0;
@@ -748,7 +1067,7 @@ public class MainWindow : Window
                     ? $"{duration.TotalMinutes:F1}m"
                     : $"{duration.TotalSeconds:F0}s";
                 AddMessage("lifecycle", "system",
-                    $"Draft ended — {result.Turns} turns, ${result.Cost:F2}, {durationStr}");
+                    $"Draft ended \u2014 {result.Turns} turns, ${result.Cost:F2}, {durationStr}");
             });
         }
         catch (Exception ex)
@@ -771,7 +1090,7 @@ public class MainWindow : Window
                 }
 
                 var s = result.Session;
-                AddSystemMessage($"Draft: {s.Role} — task: {s.TaskSlug}");
+                AddSystemMessage($"Draft: {s.Role} @ {s.Project} \u2014 task: {s.TaskSlug}");
                 AddSystemMessage($"  Turns: {s.TurnCount}");
                 AddSystemMessage($"  Cost: ${s.CostUsd:F2}");
                 AddSystemMessage($"  Context: {s.ContextPct}% ({s.LastInputTokens:N0} / {s.ContextWindow:N0} tokens)");
@@ -795,22 +1114,6 @@ public class MainWindow : Window
         {
             _currentRole = role;
             AddSystemMessage($"Role set to: {role}");
-        }
-
-        UpdateStatusHeader();
-    }
-
-    private void HandleTaskCommand(string? task)
-    {
-        if (string.IsNullOrWhiteSpace(task))
-        {
-            _currentTask = null;
-            AddSystemMessage("Task cleared");
-        }
-        else
-        {
-            _currentTask = task;
-            AddSystemMessage($"Task set to: {task}");
         }
 
         UpdateStatusHeader();
@@ -840,19 +1143,26 @@ public class MainWindow : Window
     private void ShowHelp()
     {
         AddSystemMessage("Available commands:");
-        AddSystemMessage("  /draft <role>    Draft an agent for conversation");
-        AddSystemMessage("  /undraft         End the active draft session");
-        AddSystemMessage("  /context         Show draft context metrics (or /context <slug> for task)");
-        AddSystemMessage("  /agents          List active agents");
-        AddSystemMessage("  /tasks           List tasks");
-        AddSystemMessage("  /kill <id>       Kill an agent");
-        AddSystemMessage("  /role <name>     Set default role (empty to clear)");
-        AddSystemMessage("  /task <slug>     Set default task slug (empty to clear)");
-        AddSystemMessage("  /filter <level>  Set filter (minimal|feedback|verbose)");
-        AddSystemMessage("  /clear           Clear messages (or Ctrl+L)");
-        AddSystemMessage("  /reconnect       Force reconnect");
-        AddSystemMessage("  /help            Show this help");
-        AddSystemMessage("  /quit            Exit");
+        AddSystemMessage("  /project [name]       Set active project (empty to show current)");
+        AddSystemMessage("  /project init <name>  Scaffold a new project (edit YAML to add paths)");
+        AddSystemMessage("  /project reload       Reload projects from disk");
+        AddSystemMessage("  /draft <role>         Draft an agent (requires project)");
+        AddSystemMessage("  /undraft              End the active draft session");
+        AddSystemMessage("  /context              Show draft metrics (or /context <slug>)");
+        AddSystemMessage("  /agents               List active agents");
+        AddSystemMessage("  /task                 Show current task");
+        AddSystemMessage("  /task <slug>          Set active task");
+        AddSystemMessage("  /task list            List tasks in project");
+        AddSystemMessage("  /task create <name>   Create a task in project");
+        AddSystemMessage("  /task close [slug]    Close a task");
+        AddSystemMessage("  /task clear           Clear current task");
+        AddSystemMessage("  /kill <id>            Kill an agent");
+        AddSystemMessage("  /role <name>          Set default role (empty to clear)");
+        AddSystemMessage("  /filter <level>       Set filter (minimal|feedback|verbose)");
+        AddSystemMessage("  /clear                Clear messages (or Ctrl+L)");
+        AddSystemMessage("  /reconnect            Force reconnect");
+        AddSystemMessage("  /help                 Show this help");
+        AddSystemMessage("  /quit                 Exit");
         AddSystemMessage("");
         AddSystemMessage("Shortcuts: Ctrl+Q quit, Ctrl+L clear, Up/Down history, Shift+Enter newline");
         AddSystemMessage("Type anything else to send as a prompt to the active draft session.");
@@ -870,13 +1180,21 @@ public class MainWindow : Window
 
         if (_draftActive && _draftRole is not null)
         {
-            leftParts.Add($"Draft: {_draftRole}");
+            var draftLabel = _draftProject is not null
+                ? $"Draft: {_draftRole} @ {_draftProject}"
+                : $"Draft: {_draftRole}";
+            leftParts.Add(draftLabel);
             leftParts.Add($"Context: {_draftContextPct}%");
             leftParts.Add($"Turns: {_draftTurnCount}");
             leftParts.Add($"${_draftCostUsd:F2}");
         }
         else
         {
+            if (_currentProject is not null)
+            {
+                leftParts.Add($"Project: {_currentProject}");
+            }
+
             if (_agentCount > 0)
             {
                 leftParts.Add($"Agents: {_agentCount}");
