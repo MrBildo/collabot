@@ -47,12 +47,11 @@ body here
   );
 });
 
-test('product-analyst role parses with cwd and category', () => {
+test('product-analyst role parses without cwd', () => {
   const content = `---
 name: product-analyst
 displayName: Product Analyst
 category: conversational
-cwd: ../
 ---
 You are the Product Analyst.
 `;
@@ -61,6 +60,6 @@ You are the Product Analyst.
   assert.strictEqual(fm['name'], 'product-analyst');
   assert.strictEqual(fm['displayName'], 'Product Analyst');
   assert.strictEqual(fm['category'], 'conversational');
-  assert.strictEqual(fm['cwd'], '../');
+  assert.strictEqual(fm['cwd'], undefined);
   assert.ok(body.includes('Product Analyst'));
 });

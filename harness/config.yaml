@@ -9,20 +9,6 @@ categories:
   research:
     inactivityTimeout: 420
 
-routing:
-  default: api-dev
-  rules:
-    - pattern: "^(plan|analyze|spec|design|feature)"
-      role: product-analyst
-    - pattern: "^(portal|frontend|ui)"
-      role: portal-dev
-    - pattern: "^(test|e2e|playwright)"
-      role: qa-dev
-    - pattern: "^(api|backend|endpoint)"
-      role: api-dev
-    - pattern: "^(app|mobile|react.native)"
-      role: app-dev
-
 slack:
   debounceMs: 2000
   reactions:

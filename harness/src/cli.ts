@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { logger } from './logger.js';
 import { loadConfig } from './config.js';
 import { loadRoles } from './roles.js';
+import { loadProjects, getProject, getProjectTasksDir } from './project.js';
 import { handleTask, draftAgent } from './core.js';
 import { buildTaskContext } from './context.js';
+import { listTasks } from './task.js';
 import { CliAdapter } from './adapters/cli.js';
 import { AgentPool } from './pool.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
@@ -15,78 +17,27 @@ import type { DraftAgentFn } from './mcp.js';
 import type { InboundMessage } from './comms.js';
 
 const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const TASKS_DIR = path.join(HUB_ROOT, '.agents', 'tasks');
+const PROJECTS_DIR = path.join(HUB_ROOT, '.projects');
 
 const { values, positionals } = parseArgs({
   options: {
     role: { type: 'string', short: 'r' },
+    project: { type: 'string', short: 'p' },
     cwd: { type: 'string' },
     task: { type: 'string', short: 't' },
     'list-tasks': { type: 'boolean' },
+    'list-projects': { type: 'boolean' },
   },
   allowPositionals: true,
   strict: false,
 });
 
 const role = values['role'] as string | undefined;
+const projectName = values['project'] as string | undefined;
 const cwdOverride = values['cwd'] as string | undefined;
 const taskSlug = values['task'] as string | undefined;
-const listTasks = values['list-tasks'] as boolean | undefined;
-
-// --list-tasks: show task inventory and exit
-if (listTasks) {
-  if (!fs.existsSync(TASKS_DIR)) {
-    console.log('No tasks found.');
-    process.exit(0);
-  }
-
-  const dirs = fs.readdirSync(TASKS_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory());
-
-  if (dirs.length === 0) {
-    console.log('No tasks found.');
-    process.exit(0);
-  }
-
-  console.log('Tasks:\n');
-  for (const dir of dirs) {
-    const manifestPath = path.join(TASKS_DIR, dir.name, 'task.json');
-    if (!fs.existsSync(manifestPath)) continue;
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-      const desc = manifest.description
-        ? manifest.description.slice(0, 60) + (manifest.description.length > 60 ? '...' : '')
-        : '(no description)';
-      const dispatches = Array.isArray(manifest.dispatches) ? manifest.dispatches.length : 0;
-      console.log(`  ${manifest.slug}`);
-      console.log(`    Created: ${manifest.created}`);
-      console.log(`    Description: ${desc}`);
-      console.log(`    Dispatches: ${dispatches}`);
-      console.log('');
-    } catch {
-      // Skip corrupt manifests
-    }
-  }
-  process.exit(0);
-}
-
-if (!role) {
-  console.error('Usage: npm run cli -- --role <role> [--cwd <path>] [--task <slug>] "prompt"');
-  console.error('       npm run cli -- --list-tasks');
-  console.error('');
-  console.error('  --role, -r       Role name (required for dispatch)');
-  console.error('  --cwd            Working directory override (optional, falls back to role default)');
-  console.error('  --task, -t       Attach to existing task by slug (context reconstruction)');
-  console.error('  --list-tasks     List existing tasks and exit');
-  process.exit(1);
-}
-
-const prompt = positionals.join(' ').trim();
-if (!prompt) {
-  console.error('Error: No prompt provided. Pass the prompt as a positional argument.');
-  console.error('Usage: npm run cli -- --role <role> "Your prompt here"');
-  process.exit(1);
-}
+const showListTasks = values['list-tasks'] as boolean | undefined;
+const showListProjects = values['list-projects'] as boolean | undefined;
 
 // Load config
 let config;
@@ -109,7 +60,103 @@ try {
   process.exit(1);
 }
 
-// Validate role exists
+// Load projects
+let projects;
+try {
+  projects = loadProjects(PROJECTS_DIR, roles);
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  logger.error({ msg }, 'project load failed');
+  process.exit(1);
+}
+
+// --list-projects: show projects and exit
+if (showListProjects) {
+  if (projects.size === 0) {
+    console.log('No projects found.');
+    process.exit(0);
+  }
+  console.log('Projects:\n');
+  for (const p of projects.values()) {
+    console.log(`  ${p.name}`);
+    console.log(`    ${p.description}`);
+    console.log(`    Paths: ${p.paths.join(', ')}`);
+    console.log(`    Roles: ${p.roles.join(', ')}`);
+    console.log('');
+  }
+  process.exit(0);
+}
+
+// --list-tasks: show task inventory and exit
+if (showListTasks) {
+  if (!projectName) {
+    console.error('Error: --project is required with --list-tasks');
+    process.exit(1);
+  }
+
+  let project;
+  try {
+    project = getProject(projects, projectName);
+  } catch {
+    console.error(`Error: Project "${projectName}" not found.`);
+    process.exit(1);
+  }
+
+  const tasksDir = getProjectTasksDir(PROJECTS_DIR, project.name);
+  const tasks = listTasks(tasksDir);
+
+  if (tasks.length === 0) {
+    console.log(`No tasks found for project "${project.name}".`);
+    process.exit(0);
+  }
+
+  console.log(`Tasks for ${project.name}:\n`);
+  for (const t of tasks) {
+    const desc = t.description
+      ? t.description.slice(0, 60) + (t.description.length > 60 ? '...' : '')
+      : '(no description)';
+    console.log(`  ${t.slug} [${t.status}]`);
+    console.log(`    Created: ${t.created}`);
+    console.log(`    Name: ${t.name}`);
+    console.log(`    Description: ${desc}`);
+    console.log(`    Dispatches: ${t.dispatchCount}`);
+    console.log('');
+  }
+  process.exit(0);
+}
+
+if (!role || !projectName) {
+  console.error('Usage: npm run cli -- --project <name> --role <role> [--cwd <path>] [--task <slug>] "prompt"');
+  console.error('       npm run cli -- --list-projects');
+  console.error('       npm run cli -- --project <name> --list-tasks');
+  console.error('');
+  console.error('  --project, -p    Project name (required)');
+  console.error('  --role, -r       Role name (required for dispatch)');
+  console.error('  --cwd            Working directory override (optional, falls back to project path)');
+  console.error('  --task, -t       Attach to existing task by slug (context reconstruction)');
+  console.error('  --list-tasks     List existing tasks for the project');
+  console.error('  --list-projects  List all projects');
+  process.exit(1);
+}
+
+const prompt = positionals.join(' ').trim();
+if (!prompt) {
+  console.error('Error: No prompt provided. Pass the prompt as a positional argument.');
+  console.error('Usage: npm run cli -- --project <name> --role <role> "Your prompt here"');
+  process.exit(1);
+}
+
+// Validate project and role
+let project;
+try {
+  project = getProject(projects, projectName);
+} catch {
+  console.error(`Error: Project "${projectName}" not found.`);
+  const available = [...projects.values()].map((p) => p.name).join(', ');
+  if (available) console.error(`  Available: ${available}`);
+  process.exit(1);
+}
+
 if (!roles.has(role)) {
   const available = [...roles.keys()].join(', ');
   console.error(`Error: Unknown role "${role}". Available: ${available}`);
@@ -118,8 +165,9 @@ if (!roles.has(role)) {
 
 // If --task provided, validate it exists and prepend context
 let finalPrompt = prompt;
+const tasksDir = getProjectTasksDir(PROJECTS_DIR, project.name);
 if (taskSlug) {
-  const taskDir = path.join(TASKS_DIR, taskSlug);
+  const taskDir = path.join(tasksDir, taskSlug);
   const manifestPath = path.join(taskDir, 'task.json');
   if (!fs.existsSync(manifestPath)) {
     console.error(`Error: Task "${taskSlug}" not found.`);
@@ -143,6 +191,7 @@ const message: InboundMessage = {
   content: finalPrompt,
   threadId: taskSlug ?? `cli-${Date.now()}`,
   source: 'cli',
+  project: project.name,
   role,
   metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
 };
@@ -150,31 +199,32 @@ const message: InboundMessage = {
 const adapter = new CliAdapter();
 const pool = new AgentPool(config.pool.maxConcurrent);
 
-// Create MCP servers — shared tracker and draftFn for lifecycle tools
+// Create MCP servers
 const tracker = new DispatchTracker();
 const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
   return draftAgent(roleName, taskContext, adapter, roles, config, {
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
+    cwd: opts?.cwd,
     pool,
   });
 };
 
 const mcpServers = {
-  createFull: (parentTaskSlug: string, parentTaskDir: string) => createHarnessServer({
-    pool, tasksDir: TASKS_DIR, roles, tools: 'full',
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => createHarnessServer({
+    pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
     tracker, draftFn,
-    parentTaskSlug, parentTaskDir,
+    parentTaskSlug, parentTaskDir, parentProject,
   }),
   readonly: createHarnessServer({
-    pool, tasksDir: TASKS_DIR, roles, tools: 'readonly',
+    pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'readonly',
   }),
 };
 
-logger.info({ role, taskSlug, prompt: prompt.slice(0, 80) }, 'CLI dispatch starting');
+logger.info({ role, project: project.name, taskSlug, prompt: prompt.slice(0, 80) }, 'CLI dispatch starting');
 
 try {
-  const result = await handleTask(message, adapter, roles, config, pool, mcpServers);
+  const result = await handleTask(message, adapter, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.status === 'completed' || result.status === 'aborted' ? 0 : 1);
 } catch (err) {

@@ -5,7 +5,7 @@ import type { McpServers } from './core.js';
 import { Debouncer } from './debounce.js';
 import { SlackAdapter, encodeSlackChannelId } from './adapters/slack.js';
 import type { InboundMessage } from './comms.js';
-import type { RoleDefinition } from './types.js';
+import type { RoleDefinition, Project } from './types.js';
 import type { Config } from './config.js';
 
 export async function startSlackApp(
@@ -14,6 +14,8 @@ export async function startSlackApp(
   roles: Map<string, RoleDefinition>,
   config: Config,
   mcpServers?: McpServers,
+  projects?: Map<string, Project>,
+  projectsDir?: string,
 ): Promise<App> {
   const app = new App({
     token,
@@ -82,7 +84,7 @@ export async function startSlackApp(
           metadata: { channelId, channel: msgChannel, firstMessageTs: firstTs, user },
         };
 
-        handleTask(inbound, adapter, roles, config, undefined, mcpServers)
+        handleTask(inbound, adapter, roles, config, undefined, mcpServers, projects ?? new Map(), projectsDir ?? '')
           .catch((err: unknown) => {
             logger.error({ err }, 'message handler error');
           })

@@ -18,7 +18,7 @@ export function buildTaskContext(taskDir: string): string {
   lines.push('## Task History');
   lines.push('');
   lines.push('### Original Request');
-  lines.push(manifest.description);
+  lines.push(manifest.description ?? manifest.name);
   lines.push('');
 
   // Filter to dispatches with results, ordered by startedAt

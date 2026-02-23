@@ -4,8 +4,10 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { buildTaskContext } from './context.js';
+import { getProjectTasksDir } from './project.js';
+import type { Project } from './project.js';
 import type { AgentPool } from './pool.js';
-import { recordDispatch } from './task.js';
+import { recordDispatch, listTasks } from './task.js';
 import type { TaskManifest } from './task.js';
 import { logger } from './logger.js';
 import type { DispatchResult, RoleDefinition } from './types.js';
@@ -25,12 +27,10 @@ export type TrackedDispatch = {
 export class DispatchTracker {
   private pending = new Map<string, TrackedDispatch>();
 
-  /** Track a new dispatch. */
   track(agentId: string, entry: Omit<TrackedDispatch, 'promise'> & { promise: Promise<DispatchResult> }): void {
     this.pending.set(agentId, entry);
   }
 
-  /** Wait for a tracked dispatch to complete. */
   async await(agentId: string): Promise<DispatchResult> {
     const entry = this.pending.get(agentId);
     if (!entry) {
@@ -39,17 +39,14 @@ export class DispatchTracker {
     return entry.promise;
   }
 
-  /** Get metadata for a tracked dispatch. */
   get(agentId: string): TrackedDispatch | undefined {
     return this.pending.get(agentId);
   }
 
-  /** Check if an agent ID is being tracked. */
   has(agentId: string): boolean {
     return this.pending.has(agentId);
   }
 
-  /** Remove a specific entry (after await or kill). */
   delete(agentId: string): void {
     this.pending.delete(agentId);
   }
@@ -62,7 +59,7 @@ export class DispatchTracker {
 export type DraftAgentFn = (
   roleName: string,
   taskContext: string,
-  options?: { taskSlug?: string; taskDir?: string },
+  options?: { taskSlug?: string; taskDir?: string; cwd?: string },
 ) => Promise<DispatchResult>;
 
 // ============================================================
@@ -71,7 +68,8 @@ export type DraftAgentFn = (
 
 export type HarnessServerOptions = {
   pool: AgentPool;
-  tasksDir: string;
+  projects: Map<string, Project>;
+  projectsDir: string;
   roles: Map<string, RoleDefinition>;
   tools: 'full' | 'readonly';
   // Required for lifecycle tools (full mode):
@@ -80,20 +78,15 @@ export type HarnessServerOptions = {
   // Task-scoped context — child agents automatically inherit the parent task
   parentTaskSlug?: string;
   parentTaskDir?: string;
+  parentProject?: string;
 };
 
 // ============================================================
 // Server factory
 // ============================================================
 
-/**
- * Create an MCP server that exposes harness primitives to dispatched agents.
- *
- * `tools: 'readonly'` — list_agents, list_tasks, get_task_context
- * `tools: 'full'` — adds draft_agent, await_agent, kill_agent
- */
 export function createHarnessServer(options: HarnessServerOptions): McpSdkServerConfigWithInstance {
-  const { pool, tasksDir, roles } = options;
+  const { pool, projects, projectsDir, roles } = options;
 
   const readonlyTools = [
     tool('list_agents', 'List currently active agents in the pool', {},
@@ -110,8 +103,25 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('list_tasks', 'List all tasks in the task inventory', {},
-      async () => {
+    tool('list_tasks', 'List tasks for a project', {
+      project: z.string().optional().describe('Project name. If omitted, uses parent project.'),
+    },
+      async ({ project: projectName }) => {
+        const resolvedName = projectName ?? options.parentProject;
+        if (!resolvedName) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Project name required (no parent project context)' }) }],
+            isError: true,
+          };
+        }
+        const proj = projects.get(resolvedName.toLowerCase());
+        if (!proj) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Project "${resolvedName}" not found` }) }],
+            isError: true,
+          };
+        }
+        const tasksDir = getProjectTasksDir(projectsDir, proj.name);
         const tasks = listTasks(tasksDir);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ tasks }) }],
@@ -119,8 +129,26 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('get_task_context', 'Get reconstructed context for a task (history of prior dispatches)', { taskSlug: z.string() },
-      async ({ taskSlug }) => {
+    tool('get_task_context', 'Get reconstructed context for a task (history of prior dispatches)', {
+      taskSlug: z.string(),
+      project: z.string().optional().describe('Project name. If omitted, uses parent project.'),
+    },
+      async ({ taskSlug, project: projectName }) => {
+        const resolvedName = projectName ?? options.parentProject;
+        if (!resolvedName) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Project name required' }) }],
+            isError: true,
+          };
+        }
+        const proj = projects.get(resolvedName.toLowerCase());
+        if (!proj) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Project "${resolvedName}" not found` }) }],
+            isError: true,
+          };
+        }
+        const tasksDir = getProjectTasksDir(projectsDir, proj.name);
         const taskDir = path.join(tasksDir, taskSlug);
         const manifestPath = path.join(taskDir, 'task.json');
         if (!fs.existsSync(manifestPath)) {
@@ -132,6 +160,20 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
         const context = buildTaskContext(taskDir);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ context }) }],
+        };
+      },
+    ),
+
+    tool('list_projects', 'List all registered projects', {},
+      async () => {
+        const projectList = [...projects.values()].map((p) => ({
+          name: p.name,
+          description: p.description,
+          paths: p.paths,
+          roles: p.roles,
+        }));
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ projects: projectList }) }],
         };
       },
     ),
@@ -151,7 +193,7 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
 // ============================================================
 
 function buildLifecycleTools(options: HarnessServerOptions) {
-  const { pool, tasksDir, roles, tracker, draftFn } = options;
+  const { pool, projects, projectsDir, roles, tracker, draftFn } = options;
 
   if (!tracker || !draftFn) {
     throw new Error('Full MCP server requires tracker and draftFn');
@@ -174,24 +216,54 @@ function buildLifecycleTools(options: HarnessServerOptions) {
           };
         }
 
+        // Inherit project from parent
+        const resolvedProject = options.parentProject;
+        if (!resolvedProject) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No parent project context — cannot draft agent' }) }],
+            isError: true,
+          };
+        }
+
+        const proj = projects.get(resolvedProject.toLowerCase());
+        if (!proj) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Project "${resolvedProject}" not found` }) }],
+            isError: true,
+          };
+        }
+
+        // Validate role is available for this project
+        if (!proj.roles.includes(role)) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Role "${role}" not available for project "${proj.name}". Available: ${proj.roles.join(', ')}` }) }],
+            isError: true,
+          };
+        }
+
         const agentId = `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-        // Inherit parent task context — child agents automatically land in the same task
+        // Inherit parent task context
         const resolvedSlug = taskSlug ?? options.parentTaskSlug ?? `mcp-task-${Date.now()}`;
         let taskDir: string | undefined = options.parentTaskDir;
 
         // If explicit slug was passed, try to resolve its task dir
         if (taskSlug) {
+          const tasksDir = getProjectTasksDir(projectsDir, proj.name);
           const candidate = path.join(tasksDir, taskSlug);
           if (fs.existsSync(path.join(candidate, 'task.json'))) {
             taskDir = candidate;
           }
         }
 
+        // Resolve CWD from project paths
+        const cwd = proj.paths[0]!;
+
         // Fire off the dispatch — do NOT await
         const promise = draftFn(role, prompt, {
           taskSlug: resolvedSlug,
           taskDir,
+          cwd,
         });
 
         tracker.track(agentId, {
@@ -199,7 +271,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
           role,
           startedAt: new Date(),
           taskDir,
-          cwd: roleDefn.cwd,
+          cwd,
         });
 
         return {
@@ -223,7 +295,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
         try {
           const result = await tracker.await(agentId);
 
-          // Record child dispatch in task.json so it shows up in context reconstruction
+          // Record child dispatch in task.json
           if (tracked.taskDir) {
             try {
               const dispatchResult = result.structuredResult
@@ -274,7 +346,6 @@ function buildLifecycleTools(options: HarnessServerOptions) {
       agentId: z.string(),
     },
       async ({ agentId }) => {
-        // Try pool first (pool.kill aborts the controller)
         const agentInPool = pool.list().find((a) => a.id === agentId);
         if (agentInPool) {
           pool.kill(agentId);
@@ -284,7 +355,6 @@ function buildLifecycleTools(options: HarnessServerOptions) {
           };
         }
 
-        // Agent not in pool — might have already completed or never existed
         if (tracker.has(agentId)) {
           tracker.delete(agentId);
           return {
@@ -298,36 +368,4 @@ function buildLifecycleTools(options: HarnessServerOptions) {
       },
     ),
   ];
-}
-
-// ============================================================
-// Helpers
-// ============================================================
-
-/** Read task directories and return summary for each. */
-function listTasks(tasksDir: string): Array<{ slug: string; created: string; description: string; dispatchCount: number }> {
-  if (!fs.existsSync(tasksDir)) return [];
-
-  const entries = fs.readdirSync(tasksDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory());
-
-  const tasks: Array<{ slug: string; created: string; description: string; dispatchCount: number }> = [];
-
-  for (const entry of entries) {
-    const manifestPath = path.join(tasksDir, entry.name, 'task.json');
-    if (!fs.existsSync(manifestPath)) continue;
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
-      tasks.push({
-        slug: manifest.slug,
-        created: manifest.created,
-        description: manifest.description,
-        dispatchCount: manifest.dispatches.length,
-      });
-    } catch {
-      // Skip corrupt manifests
-    }
-  }
-
-  return tasks;
 }

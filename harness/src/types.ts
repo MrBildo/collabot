@@ -3,6 +3,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 // Re-export communication layer types for convenience
 export type { InboundMessage, ChannelMessage, CommAdapter } from './comms.js';
+export type { Project } from './project.js';
 
 export const AgentResultSchema = z.object({
   status: z.enum(['success', 'partial', 'failed', 'blocked']),
@@ -20,7 +21,6 @@ export type RoleDefinition = {
   displayName: string;
   category: string;
   model?: string;
-  cwd?: string;
   prompt: string;
 };
 
@@ -101,7 +101,7 @@ export type AgentEvent = {
 };
 
 export type DispatchOptions = {
-  cwd?: string;          // target project dir (relative to platform root) — falls back to role.cwd
+  cwd: string;           // target project dir (relative to platform root) — required
   role: string;          // role name to look up
   featureSlug: string;   // for journal path construction
   taskDir?: string;      // Milestone C: task directory for journal placement
@@ -121,6 +121,7 @@ export type DraftSession = {
   sessionId: string;
   agentId: string;
   role: string;
+  project: string;
   taskSlug: string;
   taskDir: string;
   channelId: string;

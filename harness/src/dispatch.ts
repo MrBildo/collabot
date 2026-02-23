@@ -105,13 +105,8 @@ export async function dispatch(
     return { status: "crashed", error: message, duration_ms: 0 };
   }
 
-  // CWD resolution: per-dispatch override > role frontmatter > error
-  const resolvedCwd = options.cwd ?? role.cwd;
-  if (!resolvedCwd) {
-    const message = `No cwd for role "${options.role}". Set cwd in the role file or pass it in dispatch options.`;
-    logger.error({ role: options.role }, message);
-    return { status: "crashed", error: message, duration_ms: 0 };
-  }
+  // CWD resolution: always required in options (project provides path)
+  const resolvedCwd = options.cwd;
 
   // Model resolution: per-dispatch override > role frontmatter > config default
   const resolvedModel = options.model ?? role.model ?? config.models.default;

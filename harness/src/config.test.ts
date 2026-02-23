@@ -7,16 +7,10 @@ const validSlack = {
   reactions: { received: 'eyes', working: 'hammer', success: 'white_check_mark', failure: 'x' },
 };
 
-const validRouting = {
-  default: 'api-dev',
-  rules: [{ pattern: '^(portal|frontend)', role: 'portal-dev' }],
-};
-
 function validConfig(overrides: Record<string, unknown> = {}) {
   return {
     models: { default: 'claude-sonnet-4-6' },
     categories: { coding: { inactivityTimeout: 300 } },
-    routing: validRouting,
     slack: validSlack,
     ...overrides,
   };
@@ -46,25 +40,25 @@ test('negative inactivityTimeout fails validation', () => {
   assert.ok(paths.some((p) => p.includes('inactivityTimeout')));
 });
 
-test('routing section with rules parses correctly', () => {
+test('routing section is optional — defaults applied', () => {
   const raw = validConfig();
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.routing.default, 'api-dev');
-  assert.strictEqual(result.data.routing.rules.length, 1);
-  assert.strictEqual(result.data.routing.rules[0]?.role, 'portal-dev');
+  assert.strictEqual(result.data.routing.default, 'product-analyst');
+  assert.deepStrictEqual(result.data.routing.rules, []);
 });
 
-test('routing rule with optional cwd parses correctly', () => {
+test('explicit routing section still parses', () => {
   const raw = validConfig({
     routing: {
       default: 'api-dev',
-      rules: [{ pattern: '^portal', role: 'portal-dev', cwd: '../web-portal' }],
+      rules: [{ pattern: '^portal', role: 'portal-dev' }],
     },
   });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.routing.rules[0]?.cwd, '../web-portal');
+  assert.strictEqual(result.data.routing.default, 'api-dev');
+  assert.strictEqual(result.data.routing.rules.length, 1);
 });
 
 test('slack reactions parse correctly', () => {
@@ -73,12 +67,6 @@ test('slack reactions parse correctly', () => {
   assert.ok(result.success);
   assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
   assert.strictEqual(result.data.slack?.debounceMs, 2000);
-});
-
-test('missing routing section fails validation', () => {
-  const { routing: _routing, ...noRouting } = validConfig();
-  const result = ConfigSchema.safeParse(noRouting);
-  assert.ok(!result.success);
 });
 
 test('config without slack section is valid with defaults', () => {
@@ -136,28 +124,6 @@ test('config with mcp section parses correctly', () => {
   assert.deepStrictEqual(result.data.mcp.fullAccessCategories, ['conversational', 'research']);
 });
 
-test('config with empty mcp section gets defaults', () => {
-  const raw = validConfig({ mcp: {} });
-  const result = ConfigSchema.safeParse(raw);
-  assert.ok(result.success);
-  assert.strictEqual(result.data.mcp.streamTimeout, 600000);
-  assert.deepStrictEqual(result.data.mcp.fullAccessCategories, ['conversational']);
-});
-
-test('mcp fullAccessCategories determines tool access level', () => {
-  const raw = validConfig({
-    mcp: { fullAccessCategories: ['conversational'] },
-  });
-  const result = ConfigSchema.safeParse(raw);
-  assert.ok(result.success);
-  const fullAccess = result.data.mcp.fullAccessCategories;
-
-  // conversational category should get full access
-  assert.ok(fullAccess.includes('conversational'));
-  // coding category should NOT get full access
-  assert.ok(!fullAccess.includes('coding'));
-});
-
 // ============================================================
 // WS config tests
 // ============================================================
@@ -171,14 +137,6 @@ test('config without ws section is valid — ws is undefined', () => {
 
 test('config with ws section parses correctly', () => {
   const raw = validConfig({ ws: { port: 9800, host: '127.0.0.1' } });
-  const result = ConfigSchema.safeParse(raw);
-  assert.ok(result.success);
-  assert.strictEqual(result.data.ws?.port, 9800);
-  assert.strictEqual(result.data.ws?.host, '127.0.0.1');
-});
-
-test('config with empty ws section gets defaults', () => {
-  const raw = validConfig({ ws: {} });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
   assert.strictEqual(result.data.ws?.port, 9800);

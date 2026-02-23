@@ -3,8 +3,7 @@ import path from 'node:path';
 
 export type TaskContext = {
   slug: string;
-  taskDir: string;      // absolute path to .agents/tasks/{slug}/
-  threadTs: string;
+  taskDir: string;      // absolute path to .projects/{project}/tasks/{slug}/
   created: string;       // ISO timestamp
 };
 
@@ -28,9 +27,12 @@ export type DispatchRecord = {
 
 export type TaskManifest = {
   slug: string;
+  name: string;
+  project: string;
+  description?: string;
+  status: 'open' | 'closed';
   created: string;
-  threadTs: string;
-  description: string;
+  threadTs?: string;     // optional — only set when created from a thread
   dispatches: DispatchRecord[];
 };
 
@@ -41,17 +43,14 @@ const STRIP_WORDS = new Set([
   'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
   'on', 'with', 'at', 'by', 'from', 'it', 'its', 'this', 'that',
   'and', 'or', 'but', 'not', 'so', 'if', 'then', 'please', 'just',
-  // Routing prefixes (stripped because they're metadata, not content)
-  'api', 'portal', 'frontend', 'ui', 'test', 'e2e', 'playwright',
-  'backend', 'endpoint', 'app', 'mobile',
 ]);
 
 /**
- * Generate a short slug from a message.
+ * Generate a short slug from a task name.
  * Extracts first 3-5 meaningful words, slugifies, appends MMDD-HHmm timestamp.
  */
-export function generateSlug(message: string): string {
-  const words = message
+export function generateSlug(name: string): string {
+  const words = name
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
@@ -75,44 +74,26 @@ export function generateSlug(message: string): string {
 }
 
 /**
- * Finds an existing task for a thread, or creates a new one.
+ * Create a new task in the given tasks directory.
  */
-export function getOrCreateTask(threadTs: string, firstMessage: string, tasksDir: string): TaskContext {
-  // Search existing task.json files for matching threadTs
-  if (fs.existsSync(tasksDir)) {
-    const dirs = fs.readdirSync(tasksDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory());
-
-    for (const dir of dirs) {
-      const manifestPath = path.join(tasksDir, dir.name, 'task.json');
-      if (fs.existsSync(manifestPath)) {
-        try {
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
-          if (manifest.threadTs === threadTs) {
-            return {
-              slug: manifest.slug,
-              taskDir: path.join(tasksDir, dir.name),
-              threadTs: manifest.threadTs,
-              created: manifest.created,
-            };
-          }
-        } catch {
-          // Corrupt manifest — skip
-        }
-      }
-    }
-  }
-
-  // Create new task
-  const slug = generateSlug(firstMessage);
+export function createTask(tasksDir: string, opts: {
+  name: string;
+  project: string;
+  description?: string;
+  threadId?: string;
+}): TaskContext {
+  const slug = generateSlug(opts.name);
   const taskDir = path.join(tasksDir, slug);
   fs.mkdirSync(taskDir, { recursive: true });
 
   const manifest: TaskManifest = {
     slug,
+    name: opts.name,
+    project: opts.project,
+    description: opts.description,
+    status: 'open',
     created: new Date().toISOString(),
-    threadTs,
-    description: firstMessage,
+    threadTs: opts.threadId,
     dispatches: [],
   };
   fs.writeFileSync(path.join(taskDir, 'task.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
@@ -120,18 +101,106 @@ export function getOrCreateTask(threadTs: string, firstMessage: string, tasksDir
   return {
     slug: manifest.slug,
     taskDir,
-    threadTs: manifest.threadTs,
     created: manifest.created,
   };
 }
 
 /**
+ * Search for an existing task by thread ID.
+ */
+export function findTaskByThread(tasksDir: string, threadId: string): TaskContext | null {
+  if (!fs.existsSync(tasksDir)) return null;
+
+  const dirs = fs.readdirSync(tasksDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory());
+
+  for (const dir of dirs) {
+    const manifestPath = path.join(tasksDir, dir.name, 'task.json');
+    if (!fs.existsSync(manifestPath)) continue;
+
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
+      if (manifest.threadTs === threadId) {
+        return {
+          slug: manifest.slug,
+          taskDir: path.join(tasksDir, dir.name),
+          created: manifest.created,
+        };
+      }
+    } catch {
+      // Corrupt manifest — skip
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Look up a task by slug.
+ */
+export function getTask(tasksDir: string, slug: string): TaskContext {
+  const taskDir = path.join(tasksDir, slug);
+  const manifestPath = path.join(taskDir, 'task.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Task "${slug}" not found at ${taskDir}`);
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
+  return {
+    slug: manifest.slug,
+    taskDir,
+    created: manifest.created,
+  };
+}
+
+/**
+ * List all tasks in a tasks directory.
+ */
+export function listTasks(tasksDir: string): Array<{ slug: string; name: string; status: string; created: string; description?: string; dispatchCount: number }> {
+  if (!fs.existsSync(tasksDir)) return [];
+
+  const entries = fs.readdirSync(tasksDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory());
+
+  const tasks: Array<{ slug: string; name: string; status: string; created: string; description?: string; dispatchCount: number }> = [];
+
+  for (const entry of entries) {
+    const manifestPath = path.join(tasksDir, entry.name, 'task.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
+      tasks.push({
+        slug: manifest.slug,
+        name: manifest.name,
+        status: manifest.status,
+        created: manifest.created,
+        description: manifest.description,
+        dispatchCount: manifest.dispatches.length,
+      });
+    } catch {
+      // Skip corrupt manifests
+    }
+  }
+
+  return tasks;
+}
+
+/**
+ * Close a task by setting status to 'closed'.
+ */
+export function closeTask(tasksDir: string, slug: string): void {
+  const taskDir = path.join(tasksDir, slug);
+  const manifestPath = path.join(taskDir, 'task.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Task "${slug}" not found at ${taskDir}`);
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
+  manifest.status = 'closed';
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+}
+
+/**
  * Records a dispatch in the task manifest.
- *
- * NOTE: This does a read-modify-write on task.json. Two concurrent dispatches
- * finishing at the same instant could race. In practice the window is tiny
- * (dispatches end seconds apart). If this becomes a real issue, add a file-lock
- * or sequential write queue.
  */
 export function recordDispatch(taskDir: string, dispatch: DispatchRecord): void {
   const manifestPath = path.join(taskDir, 'task.json');
@@ -155,4 +224,26 @@ export function nextJournalFile(taskDir: string, roleName: string): string {
     n++;
   }
   return `${roleName}-${n}.md`;
+}
+
+// --- Legacy compatibility ---
+
+/**
+ * @deprecated Use createTask/findTaskByThread instead. Retained for backward compatibility during migration.
+ */
+export function getOrCreateTask(threadTs: string, firstMessage: string, tasksDir: string): TaskContext & { threadTs: string } {
+  // Search existing
+  const existing = findTaskByThread(tasksDir, threadTs);
+  if (existing) {
+    return { ...existing, threadTs };
+  }
+
+  // Create new
+  const result = createTask(tasksDir, {
+    name: firstMessage,
+    project: 'legacy',
+    threadId: threadTs,
+    description: firstMessage,
+  });
+  return { ...result, threadTs };
 }

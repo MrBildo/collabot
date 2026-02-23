@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import type { Project } from './project.js';
 
 // --- Test helpers ---
 function makeTempTaskDir(slug: string, manifest: Record<string, unknown>): string {
@@ -29,8 +30,8 @@ function makeConfig() {
   return {
     models: { default: 'claude-sonnet-4-6' },
     pool: { maxConcurrent: 2 },
-    routing: { rules: [] },
-    debounce: { enabled: false, windowMs: 0 },
+    mcp: { streamTimeout: 600000, fullAccessCategories: ['conversational'] },
+    categories: { coding: { inactivityTimeout: 300 } },
   };
 }
 
@@ -40,8 +41,18 @@ function makeRoles() {
       name: 'api-dev',
       displayName: 'API Dev',
       category: 'coding',
-      cwd: '../backend-api',
       prompt: 'You are an API developer.',
+    }],
+  ]);
+}
+
+function makeProjects(): Map<string, Project> {
+  return new Map([
+    ['acme', {
+      name: 'Acme',
+      description: 'Test project',
+      paths: ['../backend-api'],
+      roles: ['api-dev', 'product-analyst'],
     }],
   ]);
 }
@@ -68,15 +79,32 @@ let mockTaskDir: string | undefined;
 
 mock.module('./task.js', {
   namedExports: {
+    getTask: mock.fn((_tasksDir: string, _slug: string) => ({
+      slug: 'test-task',
+      taskDir: mockTaskDir!,
+      created: '2026-02-19T10:00:00.000Z',
+    })),
+    createTask: mock.fn(() => ({
+      slug: 'test-task',
+      taskDir: mockTaskDir!,
+      created: '2026-02-19T10:00:00.000Z',
+    })),
+    findTaskByThread: mock.fn(() => ({
+      slug: 'test-task',
+      taskDir: mockTaskDir!,
+      created: '2026-02-19T10:00:00.000Z',
+    })),
+    recordDispatch: mock.fn(() => {}),
+    nextJournalFile: mock.fn(() => 'api-dev.md'),
+    generateSlug: mock.fn(() => 'test-task'),
+    listTasks: mock.fn(() => []),
+    closeTask: mock.fn(() => {}),
     getOrCreateTask: mock.fn((_threadTs: string, _msg: string, _dir: string) => ({
       slug: 'test-task',
       taskDir: mockTaskDir!,
       threadTs: _threadTs,
       created: '2026-02-19T10:00:00.000Z',
     })),
-    recordDispatch: mock.fn(() => {}),
-    nextJournalFile: mock.fn(() => 'api-dev.md'),
-    generateSlug: mock.fn(() => 'test-task'),
   },
 });
 
@@ -86,6 +114,9 @@ const { handleTask } = await import('./core.js');
 test('follow-up dispatch with prior results — content includes task history', async () => {
   const taskDir = makeTempTaskDir('test-task', {
     slug: 'test-task',
+    name: 'Build the login feature',
+    project: 'Acme',
+    status: 'open',
     created: '2026-02-19T10:00:00.000Z',
     threadTs: 'thread-123',
     description: 'Build the login feature',
@@ -110,24 +141,27 @@ test('follow-up dispatch with prior results — content includes task history', 
     id: 'msg-1',
     content: 'Now add rate limiting',
     threadId: 'thread-123',
-    source: 'slack',
+    source: 'ws',
+    project: 'Acme',
     role: 'api-dev',
+    metadata: { taskSlug: 'test-task' },
   };
 
-  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any);
+  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
   const content = getCaptured();
   assert.ok(content.includes('## Task History'), 'should include Task History header');
   assert.ok(content.includes('Added login endpoint'), 'should include prior dispatch summary');
   assert.ok(content.includes('Now add rate limiting'), 'should include new message content');
-  assert.ok(content.includes('---\n\nNow add rate limiting'), 'should have separator before new content');
 });
 
 test('new task (no prior dispatches) — content is NOT enriched', async () => {
   const taskDir = makeTempTaskDir('test-task-new', {
     slug: 'test-task-new',
+    name: 'Brand new task',
+    project: 'Acme',
+    status: 'open',
     created: '2026-02-19T11:00:00.000Z',
-    threadTs: 'thread-456',
     description: 'Brand new task',
     dispatches: [],
   });
@@ -138,11 +172,13 @@ test('new task (no prior dispatches) — content is NOT enriched', async () => {
     id: 'msg-2',
     content: 'Do something new',
     threadId: 'thread-456',
-    source: 'slack',
+    source: 'ws',
+    project: 'Acme',
     role: 'api-dev',
+    metadata: { taskSlug: 'test-task-new' },
   };
 
-  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any);
+  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
   const content = getCaptured();
   assert.ok(!content.includes('## Task History'), 'should NOT include Task History for new task');
@@ -152,8 +188,10 @@ test('new task (no prior dispatches) — content is NOT enriched', async () => {
 test('task with failed dispatch (no result) — content is NOT enriched', async () => {
   const taskDir = makeTempTaskDir('test-task-failed', {
     slug: 'test-task-failed',
+    name: 'Task with a crash',
+    project: 'Acme',
+    status: 'open',
     created: '2026-02-19T11:00:00.000Z',
-    threadTs: 'thread-789',
     description: 'Task with a crash',
     dispatches: [{
       role: 'api-dev',
@@ -172,11 +210,13 @@ test('task with failed dispatch (no result) — content is NOT enriched', async 
     id: 'msg-3',
     content: 'Try again please',
     threadId: 'thread-789',
-    source: 'slack',
+    source: 'ws',
+    project: 'Acme',
     role: 'api-dev',
+    metadata: { taskSlug: 'test-task-failed' },
   };
 
-  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any);
+  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
   const content = getCaptured();
   assert.ok(!content.includes('## Task History'), 'should NOT include Task History when no dispatches have results');

@@ -19,7 +19,7 @@ export const ConfigSchema = z.object({
   routing: z.object({
     default: z.string(),
     rules: z.array(RoutingRuleSchema).default([]),
-  }),
+  }).optional().default({ default: 'product-analyst', rules: [] }),
   slack: z.object({
     debounceMs: z.number().positive().default(2000),
     reactions: z.object({

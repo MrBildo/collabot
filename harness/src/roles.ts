@@ -9,7 +9,6 @@ const RoleFrontmatterSchema = z.object({
   displayName: z.string(),
   category: z.string(),
   model: z.string().optional(),
-  cwd: z.string().optional(),
 });
 
 export function parseFrontmatter(content: string, filename: string): { frontmatter: unknown; body: string } {
@@ -62,8 +61,8 @@ export function loadRoles(rolesDir: string): Map<string, RoleDefinition> {
       throw new Error(`${file}: invalid frontmatter:\n${issues}`);
     }
 
-    const { name, displayName, category, model, cwd } = result.data;
-    roles.set(name, { name, displayName, category, model, cwd, prompt: body });
+    const { name, displayName, category, model } = result.data;
+    roles.set(name, { name, displayName, category, model, prompt: body });
   }
 
   return roles;

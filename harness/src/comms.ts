@@ -4,7 +4,8 @@ export interface InboundMessage {
   content: string;
   threadId: string;        // conversation grouping key
   source: string;          // 'slack', 'cli', 'http', etc.
-  role?: string;           // pre-resolved role. If absent, handleTask resolves via routing.
+  project?: string;        // project name — required at runtime, optional for type compatibility
+  role?: string;           // pre-resolved role
   metadata?: Record<string, unknown>;
 }
 

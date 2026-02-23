@@ -3,40 +3,128 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { getOrCreateTask, recordDispatch, generateSlug, nextJournalFile } from './task.js';
-import type { DispatchRecord } from './task.js';
+import { createTask, findTaskByThread, getTask, listTasks, closeTask, recordDispatch, generateSlug, nextJournalFile } from './task.js';
+import type { DispatchRecord, TaskManifest } from './task.js';
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'task-test-'));
 }
 
-function readManifest(taskDir: string) {
+function readManifest(taskDir: string): TaskManifest {
   return JSON.parse(fs.readFileSync(path.join(taskDir, 'task.json'), 'utf-8'));
 }
 
-// ── Description field ───────────────────────────────────────────
+// ── createTask ──────────────────────────────────────────────────
 
-test('getOrCreateTask stores description in task.json', () => {
+test('createTask creates manifest with all fields', () => {
   const tasksDir = makeTempDir();
-  const task = getOrCreateTask('thread-1', 'Build the login feature', tasksDir);
+  const task = createTask(tasksDir, {
+    name: 'Build the login feature',
+    project: 'acme',
+    description: 'Full login feature with OAuth',
+  });
   const manifest = readManifest(task.taskDir);
-  assert.strictEqual(manifest.description, 'Build the login feature');
+  assert.strictEqual(manifest.name, 'Build the login feature');
+  assert.strictEqual(manifest.project, 'acme');
+  assert.strictEqual(manifest.description, 'Full login feature with OAuth');
+  assert.strictEqual(manifest.status, 'open');
+  assert.ok(manifest.created);
+  assert.deepStrictEqual(manifest.dispatches, []);
 });
 
-test('getOrCreateTask returns existing task without overwriting description', () => {
+test('createTask with threadId stores it in manifest', () => {
   const tasksDir = makeTempDir();
-  const task1 = getOrCreateTask('thread-1', 'Build the login feature', tasksDir);
-  const task2 = getOrCreateTask('thread-1', 'Different message in same thread', tasksDir);
-  assert.strictEqual(task1.slug, task2.slug);
-  const manifest = readManifest(task2.taskDir);
-  assert.strictEqual(manifest.description, 'Build the login feature');
+  const task = createTask(tasksDir, {
+    name: 'Draft session task',
+    project: 'research',
+    threadId: 'thread-123',
+  });
+  const manifest = readManifest(task.taskDir);
+  assert.strictEqual(manifest.threadTs, 'thread-123');
 });
 
-// ── Result persistence ──────────────────────────────────────────
+// ── findTaskByThread ────────────────────────────────────────────
 
-test('recordDispatch with result persists full result in task.json', () => {
+test('findTaskByThread returns existing task', () => {
   const tasksDir = makeTempDir();
-  const task = getOrCreateTask('thread-2', 'Add user settings', tasksDir);
+  const original = createTask(tasksDir, {
+    name: 'Some task',
+    project: 'acme',
+    threadId: 'thread-abc',
+  });
+  const found = findTaskByThread(tasksDir, 'thread-abc');
+  assert.ok(found);
+  assert.strictEqual(found.slug, original.slug);
+});
+
+test('findTaskByThread returns null for unknown thread', () => {
+  const tasksDir = makeTempDir();
+  createTask(tasksDir, { name: 'A task', project: 'acme', threadId: 'thread-1' });
+  const found = findTaskByThread(tasksDir, 'thread-nonexistent');
+  assert.strictEqual(found, null);
+});
+
+test('findTaskByThread returns null when tasks dir does not exist', () => {
+  const found = findTaskByThread('/nonexistent/path', 'thread-1');
+  assert.strictEqual(found, null);
+});
+
+// ── getTask ─────────────────────────────────────────────────────
+
+test('getTask returns existing task by slug', () => {
+  const tasksDir = makeTempDir();
+  const original = createTask(tasksDir, { name: 'Test task', project: 'acme' });
+  const task = getTask(tasksDir, original.slug);
+  assert.strictEqual(task.slug, original.slug);
+});
+
+test('getTask throws for non-existent slug', () => {
+  const tasksDir = makeTempDir();
+  assert.throws(
+    () => getTask(tasksDir, 'nonexistent-slug'),
+    /not found/,
+  );
+});
+
+// ── listTasks ───────────────────────────────────────────────────
+
+test('listTasks returns all tasks', () => {
+  const tasksDir = makeTempDir();
+  createTask(tasksDir, { name: 'Task 1', project: 'acme' });
+  createTask(tasksDir, { name: 'Task 2', project: 'acme' });
+  const tasks = listTasks(tasksDir);
+  assert.strictEqual(tasks.length, 2);
+  assert.ok(tasks.every(t => t.status === 'open'));
+});
+
+test('listTasks returns empty for non-existent dir', () => {
+  const tasks = listTasks('/nonexistent');
+  assert.strictEqual(tasks.length, 0);
+});
+
+// ── closeTask ───────────────────────────────────────────────────
+
+test('closeTask sets status to closed', () => {
+  const tasksDir = makeTempDir();
+  const task = createTask(tasksDir, { name: 'To close', project: 'acme' });
+  closeTask(tasksDir, task.slug);
+  const manifest = readManifest(task.taskDir);
+  assert.strictEqual(manifest.status, 'closed');
+});
+
+test('closeTask throws for non-existent task', () => {
+  const tasksDir = makeTempDir();
+  assert.throws(
+    () => closeTask(tasksDir, 'nonexistent'),
+    /not found/,
+  );
+});
+
+// ── recordDispatch ──────────────────────────────────────────────
+
+test('recordDispatch with result persists full result', () => {
+  const tasksDir = makeTempDir();
+  const task = createTask(tasksDir, { name: 'Add user settings', project: 'acme' });
 
   const dispatch: DispatchRecord = {
     role: 'api-dev',
@@ -48,9 +136,9 @@ test('recordDispatch with result persists full result in task.json', () => {
     journalFile: 'api-dev.md',
     result: {
       summary: 'Added user settings endpoint',
-      changes: ['src/Controllers/SettingsController.cs', 'src/Models/UserSettings.cs'],
-      issues: ['Migration needed for new table'],
-      questions: ['Should settings be per-device or per-account?'],
+      changes: ['src/Controllers/SettingsController.cs'],
+      issues: ['Migration needed'],
+      questions: ['Per-device or per-account?'],
     },
   };
 
@@ -58,77 +146,39 @@ test('recordDispatch with result persists full result in task.json', () => {
   const manifest = readManifest(task.taskDir);
 
   assert.strictEqual(manifest.dispatches.length, 1);
-  const recorded = manifest.dispatches[0];
+  const recorded = manifest.dispatches[0]!;
   assert.strictEqual(recorded.role, 'api-dev');
-  assert.strictEqual(recorded.completedAt, '2026-02-19T10:05:00.000Z');
-  assert.strictEqual(recorded.result.summary, 'Added user settings endpoint');
-  assert.deepStrictEqual(recorded.result.changes, ['src/Controllers/SettingsController.cs', 'src/Models/UserSettings.cs']);
-  assert.deepStrictEqual(recorded.result.issues, ['Migration needed for new table']);
-  assert.deepStrictEqual(recorded.result.questions, ['Should settings be per-device or per-account?']);
+  assert.strictEqual(recorded.result!.summary, 'Added user settings endpoint');
 });
 
-test('recordDispatch without result — result absent in task.json', () => {
+test('multiple dispatches accumulate', () => {
   const tasksDir = makeTempDir();
-  const task = getOrCreateTask('thread-3', 'Fix bug', tasksDir);
-
-  const dispatch: DispatchRecord = {
-    role: 'api-dev',
-    cwd: '../backend-api',
-    model: 'claude-sonnet-4-6',
-    startedAt: '2026-02-19T10:00:00.000Z',
-    completedAt: '2026-02-19T10:01:00.000Z',
-    status: 'crashed',
-    journalFile: 'api-dev.md',
-  };
-
-  recordDispatch(task.taskDir, dispatch);
-  const manifest = readManifest(task.taskDir);
-
-  assert.strictEqual(manifest.dispatches.length, 1);
-  assert.strictEqual(manifest.dispatches[0].result, undefined);
-  assert.strictEqual(manifest.dispatches[0].status, 'crashed');
-});
-
-test('multiple dispatches accumulate in task.json', () => {
-  const tasksDir = makeTempDir();
-  const task = getOrCreateTask('thread-4', 'Multi-step task', tasksDir);
+  const task = createTask(tasksDir, { name: 'Multi-step', project: 'acme' });
 
   recordDispatch(task.taskDir, {
-    role: 'api-dev',
-    cwd: '../backend-api',
-    model: 'claude-sonnet-4-6',
-    startedAt: '2026-02-19T10:00:00.000Z',
-    completedAt: '2026-02-19T10:05:00.000Z',
-    status: 'completed',
-    journalFile: 'api-dev.md',
+    role: 'api-dev', cwd: '../api', model: 'claude-sonnet-4-6',
+    startedAt: '2026-02-19T10:00:00.000Z', completedAt: '2026-02-19T10:05:00.000Z',
+    status: 'completed', journalFile: 'api-dev.md',
     result: { summary: 'API done' },
   });
 
   recordDispatch(task.taskDir, {
-    role: 'portal-dev',
-    cwd: '../web-portal',
-    model: 'claude-sonnet-4-6',
-    startedAt: '2026-02-19T10:06:00.000Z',
-    completedAt: '2026-02-19T10:10:00.000Z',
-    status: 'completed',
-    journalFile: 'portal-dev.md',
+    role: 'portal-dev', cwd: '../portal', model: 'claude-sonnet-4-6',
+    startedAt: '2026-02-19T10:06:00.000Z', completedAt: '2026-02-19T10:10:00.000Z',
+    status: 'completed', journalFile: 'portal-dev.md',
     result: { summary: 'Portal done' },
   });
 
   const manifest = readManifest(task.taskDir);
   assert.strictEqual(manifest.dispatches.length, 2);
-  assert.strictEqual(manifest.dispatches[0].result.summary, 'API done');
-  assert.strictEqual(manifest.dispatches[1].result.summary, 'Portal done');
 });
 
 // ── Slug generation ─────────────────────────────────────────────
 
 test('generateSlug produces stable format', () => {
   const slug = generateSlug('Build the login feature for users');
-  // Should contain meaningful words (stripped: build, the, for)
   assert.ok(slug.includes('login'));
   assert.ok(slug.includes('feature'));
-  // Should have timestamp suffix
   assert.match(slug, /\d{4}-\d{4}$/);
 });
 

@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { logger } from './logger.js';
 import { dispatch } from './dispatch.js';
 import { buildTaskContext } from './context.js';
-import { resolveRole, resolveRoutingCwd } from './router.js';
-import { getOrCreateTask, recordDispatch, nextJournalFile } from './task.js';
+import { getTask, createTask, findTaskByThread, recordDispatch, nextJournalFile } from './task.js';
+import { getProject, getProjectTasksDir } from './project.js';
+import type { Project } from './project.js';
 import type { TaskManifest } from './task.js';
 import type { DispatchResult, RoleDefinition, AgentEvent } from './types.js';
 import type { InboundMessage, ChannelMessage, CommAdapter } from './comms.js';
@@ -13,10 +13,6 @@ import { filteredSend } from './comms.js';
 import type { Config } from './config.js';
 import type { AgentPool } from './pool.js';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
-
-// Hub root: harness/src/core.ts → ../../ = hub root
-const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const TASKS_DIR = path.join(HUB_ROOT, '.agents', 'tasks');
 
 function formatResult(result: DispatchResult): string {
   if (result.status === 'completed') {
@@ -97,12 +93,12 @@ export function makeChannelMessage(
 /**
  * handleTask — adapter-facing entry point.
  *
- * Resolves role, creates/finds task, dispatches agent via draftAgent,
+ * Resolves project + role, finds/validates task, dispatches agent via draftAgent,
  * manages adapter status, posts results.
  */
 export type McpServers = {
   /** Factory — creates a task-scoped full server so child agents inherit the parent task. */
-  createFull: (parentTaskSlug: string, parentTaskDir: string) => McpSdkServerConfigWithInstance;
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => McpSdkServerConfigWithInstance;
   readonly: McpSdkServerConfigWithInstance;
 };
 
@@ -111,28 +107,57 @@ export async function handleTask(
   adapter: CommAdapter,
   roles: Map<string, RoleDefinition>,
   config: Config,
-  pool?: AgentPool,
-  mcpServers?: McpServers,
+  pool: AgentPool | undefined,
+  mcpServers: McpServers | undefined,
+  projects: Map<string, Project>,
+  projectsDir: string,
 ): Promise<DispatchResult> {
-  // Resolve role: pre-resolved from message or via routing rules
-  const roleName = message.role ?? resolveRole(message.content, config);
-  const role = roles.get(roleName);
-  const routingCwd = message.role ? undefined : resolveRoutingCwd(message.content, config);
-  // CLI callers can pass a cwd override in metadata
-  const cwdOverride = (message.metadata?.['cwdOverride'] as string | undefined) ?? routingCwd;
+  // Project is required
+  const projectName = message.project;
+  if (!projectName) {
+    throw new Error('Project is required. Adapter must provide project context.');
+  }
 
-  // Task abstraction — use existing task if slug provided, otherwise get/create
+  const project = getProject(projects, projectName);
+  const tasksDir = getProjectTasksDir(projectsDir, project.name);
+
+  // Role is required (adapter provides it)
+  const roleName = message.role ?? 'product-analyst';
+  const role = roles.get(roleName);
+  if (!role) {
+    throw new Error(`Role "${roleName}" not found`);
+  }
+
+  // Validate role is available for this project
+  if (!project.roles.includes(roleName)) {
+    throw new Error(`Role "${roleName}" is not available for project "${project.name}". Available: ${project.roles.join(', ')}`);
+  }
+
+  // CWD: resolve from project paths (first path, or metadata override)
+  const cwdOverride = message.metadata?.['cwdOverride'] as string | undefined;
+  const cwd = cwdOverride ?? project.paths[0]!;
+
+  // Task resolution: taskSlug from metadata → lookup existing task, OR threadId → thread inheritance
   const existingTaskSlug = message.metadata?.['taskSlug'] as string | undefined;
   let task: { slug: string; taskDir: string };
   if (existingTaskSlug) {
-    const taskDir = path.join(TASKS_DIR, existingTaskSlug);
-    const manifestPath = path.join(taskDir, 'task.json');
-    if (!fs.existsSync(manifestPath)) {
-      throw new Error(`Task "${existingTaskSlug}" not found at ${taskDir}`);
+    task = getTask(tasksDir, existingTaskSlug);
+  } else if (message.threadId) {
+    const existing = findTaskByThread(tasksDir, message.threadId);
+    if (existing) {
+      task = existing;
+    } else {
+      // Auto-create task from message content
+      const created = createTask(tasksDir, {
+        name: message.content.slice(0, 80),
+        project: project.name,
+        description: message.content,
+        threadId: message.threadId,
+      });
+      task = created;
     }
-    task = { slug: existingTaskSlug, taskDir };
   } else {
-    task = getOrCreateTask(message.threadId, message.content, TASKS_DIR);
+    throw new Error('Task slug or thread ID is required for dispatch');
   }
 
   // Context reconstruction for follow-up dispatches
@@ -155,10 +180,8 @@ export async function handleTask(
     // If manifest read fails, proceed without context reconstruction
   }
 
-  const persona = role?.displayName ?? 'KK Agent';
-  const projectName = cwdOverride
-    ? path.basename(cwdOverride)
-    : (role?.cwd ? path.basename(role.cwd) : 'unknown');
+  const persona = role.displayName;
+  const projectLabel = path.basename(cwd);
 
   const channelId = message.metadata?.['channelId'] as string | undefined ?? message.threadId;
 
@@ -168,25 +191,25 @@ export async function handleTask(
   // Post dispatching notification
   await adapter.send(makeChannelMessage(
     channelId,
-    'KK Agent',
+    'Collabot',
     'lifecycle',
-    `Dispatching to *${persona}* (${projectName})...`,
+    `Dispatching to *${persona}* (${projectLabel})...`,
   ));
 
   // Dispatch the agent — pick MCP server based on role category
   const dispatchStartedAt = new Date().toISOString();
   let selectedMcpServer: McpSdkServerConfigWithInstance | undefined;
-  if (mcpServers && role) {
+  if (mcpServers) {
     const isFullAccess = config.mcp.fullAccessCategories.includes(role.category);
     selectedMcpServer = isFullAccess
-      ? mcpServers.createFull(task.slug, task.taskDir)
+      ? mcpServers.createFull(task.slug, task.taskDir, project.name)
       : mcpServers.readonly;
   }
   const result = await draftAgent(roleName, contentForDispatch, adapter, roles, config, {
     taskSlug: task.slug,
     taskDir: task.taskDir,
     channelId,
-    cwd: cwdOverride,
+    cwd,
     pool,
     mcpServer: selectedMcpServer,
   });
@@ -204,7 +227,7 @@ export async function handleTask(
 
     recordDispatch(task.taskDir, {
       role: roleName,
-      cwd: cwdOverride ?? role?.cwd ?? 'unknown',
+      cwd,
       model: result.model ?? config.models.default,
       startedAt: dispatchStartedAt,
       completedAt: new Date().toISOString(),
@@ -261,6 +284,10 @@ export async function draftAgent(
   const channelId = options?.channelId;
   const pool = options?.pool;
 
+  if (!options?.cwd) {
+    throw new Error(`No cwd provided for draftAgent (role: ${roleName}). Project paths must resolve a working directory.`);
+  }
+
   // Determine journal file
   const journalFileName = taskDir ? nextJournalFile(taskDir, roleName) : undefined;
 
@@ -269,7 +296,7 @@ export async function draftAgent(
     ? (pattern: string, count: number) => {
         adapter.send(makeChannelMessage(
           channelId,
-          'KK Agent',
+          'Collabot',
           'warning',
           `\u26A0 Agent appears stuck in a loop: \`${pattern}\` (${count} repetitions). Still running.`,
         )).catch((err: unknown) => {
@@ -309,7 +336,7 @@ export async function draftAgent(
   try {
     return await dispatch(taskContext, {
       role: roleName,
-      cwd: options?.cwd,
+      cwd: options.cwd,
       featureSlug: taskSlug,
       taskDir,
       journalFileName,

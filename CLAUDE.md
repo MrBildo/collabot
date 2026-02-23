@@ -15,7 +15,7 @@ The **harness** (`./harness/`) is the core orchestration engine — a persistent
 | Adapter | Description | How to use |
 |---------|-------------|------------|
 | Slack | DM the bot with a task | Requires `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` in `.env` |
-| CLI | One-shot dispatch | `npm run cli -- --role <role> "prompt"` |
+| CLI | One-shot dispatch | `npm run cli -- --project <project> --role <role> "prompt"` |
 | WebSocket | JSON-RPC 2.0 over WS | External processes connect to `ws://127.0.0.1:9800` |
 | TUI | Terminal UI (.NET 10) | `dotnet run` from `harness/tui/` |
 
@@ -23,11 +23,17 @@ The harness runs with or without any specific interface. Source is in `./harness
 
 ## Projects
 
-Projects are registered in `.projects/<name>/project.yaml`. Each manifest declares the project's repos, their paths, and which role handles each. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
+Projects are registered in `.projects/<name>/project.yaml`. Each manifest declares:
+- `name` — display name
+- `description` — what the project is
+- `paths[]` — relative paths to project repositories
+- `roles[]` — which roles can work on this project
+
+Projects are loaded at startup and validated against loaded roles. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
 
 ## Roles
 
-Roles define agent behavior: what project they work in, how they're categorized, and their system prompt. Stored in `harness/roles/`.
+Roles define agent behavior: their category and system prompt. Stored in `harness/roles/`.
 
 | Role | Description | Category |
 |------|-------------|----------|
@@ -62,8 +68,8 @@ Then restart with `npm run dev`. This applies before writing code, before testin
 
 The harness dispatches agents programmatically and handles role resolution, journal creation, structured output validation, error loop detection, context reconstruction, and MCP tool injection.
 
-- **Slack adapter:** DM the bot with a task. The harness routes to the right role/project based on message content and `config.yaml` routing rules.
-- **CLI adapter:** `npm run cli -- --role <role> "prompt"` for one-shot dispatch. No Slack required.
+- **Slack adapter:** DM the bot with a task. Project context is required.
+- **CLI adapter:** `npm run cli -- --project <project> --role <role> "prompt"` for one-shot dispatch. No Slack required.
 - **WebSocket adapter:** JSON-RPC 2.0 over WebSocket (`ws://127.0.0.1:9800`). External processes connect here.
 - **TUI adapter:** .NET 10 Terminal.Gui client at `./harness/tui/`. Connects via WebSocket.
 
@@ -115,11 +121,11 @@ These are configured in `.env` and passed through by the harness. See `.env.exam
 
 ## Task System
 
-Tasks are tracked in `.agents/tasks/{task-slug}/`. Each task directory contains:
-- `task.json` — manifest (slug, created timestamp, thread reference, dispatch history)
+Tasks are scoped to projects and tracked in `.projects/<project>/tasks/{task-slug}/`. Each task directory contains:
+- `task.json` — manifest (slug, name, project, status, created timestamp, dispatch history)
 - `{role}.md` — journal files per role dispatched within the task
 
-Task slugs are generated from the first message in a conversation thread. Same thread = same task.
+Tasks have explicit lifecycle: `open` → `closed`. They are created with a name and project, and can be created via CLI, WS, or MCP tools. Task slugs are generated from the task name.
 
 ## Reference Docs
 

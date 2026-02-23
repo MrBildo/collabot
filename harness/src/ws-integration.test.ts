@@ -6,7 +6,7 @@ import { AgentPool } from './pool.js';
 import { registerWsMethods } from './ws-methods.js';
 import type { CommAdapter, InboundMessage } from './comms.js';
 import type { Config } from './config.js';
-import type { RoleDefinition } from './types.js';
+import type { RoleDefinition, Project } from './types.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -36,6 +36,17 @@ function makeRole(name = 'api-dev'): RoleDefinition {
   return { name, displayName: 'API Dev', category: 'coding', prompt: '' };
 }
 
+function makeProjects(): Map<string, Project> {
+  return new Map([
+    ['acme', {
+      name: 'Acme',
+      description: 'Test project',
+      paths: ['../backend-api'],
+      roles: ['api-dev'],
+    }],
+  ]);
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 test('integration: list_agents RPC returns empty agents list', async () => {
@@ -48,7 +59,8 @@ test('integration: list_agents RPC returns empty agents list', async () => {
     roles: new Map([['api-dev', makeRole()]]),
     config: {} as Config,
     pool,
-    tasksDir: '/nonexistent',
+    projects: makeProjects(),
+    projectsDir: '/nonexistent',
   });
 
   await adapter.start();
@@ -86,7 +98,8 @@ test('integration: submit_prompt fires handleTask and client receives channel_me
     roles: new Map([['api-dev', makeRole()]]),
     config: {} as Config,
     pool,
-    tasksDir: '/nonexistent',
+    projects: makeProjects(),
+    projectsDir: '/nonexistent',
   });
 
   await adapter.start();
@@ -94,7 +107,7 @@ test('integration: submit_prompt fires handleTask and client receives channel_me
 
   // Expect two messages: RPC response + channel_message notification
   const messagesPromise = collectMessages(client, 2);
-  sendRpc(client, 'submit_prompt', { content: 'test task' }, 2);
+  sendRpc(client, 'submit_prompt', { content: 'test task', project: 'Acme' }, 2);
   const messages = await messagesPromise as any[];
 
   const rpcResponse = messages.find((m) => m.id !== undefined);

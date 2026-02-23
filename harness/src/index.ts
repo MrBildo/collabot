@@ -6,6 +6,7 @@ import { logger, verbose } from './logger.js';
 import { startSlackApp } from './slack.js';
 import { loadConfig } from './config.js';
 import { loadRoles } from './roles.js';
+import { loadProjects } from './project.js';
 import { watchJournals } from './journal.js';
 import { AgentPool } from './pool.js';
 import { draftAgent, handleTask } from './core.js';
@@ -25,6 +26,7 @@ const version = pkg.version;
 
 // Platform root: harness/src/index.ts → ../../ = collabot root
 const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const PROJECTS_DIR = path.join(HUB_ROOT, '.projects');
 
 // Load config (fail fast before any connections)
 let config;
@@ -32,7 +34,6 @@ try {
   config = loadConfig();
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
-  // Banner hasn't printed yet — print minimal header so the error has context
   console.log('\n  Collabot — config load failed\n');
   logger.error({ msg }, 'config load failed');
   process.exit(1);
@@ -40,8 +41,6 @@ try {
 
 const categoryCount = Object.keys(config.categories).length;
 const defaultModel = config.models.default;
-const routingRulesCount = config.routing.rules.length;
-const defaultRole = config.routing.default;
 
 // Load roles (fail fast before any connections)
 const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));
@@ -69,10 +68,22 @@ for (const role of roles.values()) {
 const roleCount = roles.size;
 const roleNames = [...roles.keys()].join(', ');
 
+// Load projects (fail fast on schema errors)
+let projects;
+try {
+  projects = loadProjects(PROJECTS_DIR, roles);
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.log('\n  Collabot — project load failed\n');
+  logger.error({ msg }, 'project load failed');
+  process.exit(1);
+}
+
+const projectCount = projects.size;
+const projectNames = [...projects.values()].map((p) => p.name).join(', ');
+
 // Initialize agent pool
 const pool = new AgentPool(config.pool.maxConcurrent);
-
-const TASKS_DIR = path.join(HUB_ROOT, '.agents', 'tasks');
 
 // Initialize MCP servers — shared tracker and draftFn for lifecycle tools
 const tracker = new DispatchTracker();
@@ -82,17 +93,18 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
   return draftAgent(roleName, taskContext, headlessAdapter, roles, config, {
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
+    cwd: opts?.cwd,
     pool,
   });
 };
 const mcpServers = {
-  createFull: (parentTaskSlug: string, parentTaskDir: string) => createHarnessServer({
-    pool, tasksDir: TASKS_DIR, roles, tools: 'full',
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => createHarnessServer({
+    pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
     tracker, draftFn,
-    parentTaskSlug, parentTaskDir,
+    parentTaskSlug, parentTaskDir, parentProject,
   }),
   readonly: createHarnessServer({
-    pool, tasksDir: TASKS_DIR, roles, tools: 'readonly',
+    pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'readonly',
   }),
 };
 
@@ -125,7 +137,7 @@ console.log([
   '',
   `  v${version} | Node ${process.version} | ${process.platform} | verbose=${verbose ? 'on' : 'off'}`,
   `  config: OK (${categoryCount} categories) | model: ${defaultModel}`,
-  `  routing: ${routingRulesCount} rules | default: ${defaultRole}`,
+  `  projects: ${projectCount} (${projectNames || 'none'})`,
   `  roles: ${roleCount} (${roleNames})`,
   `  pool: maxConcurrent=${config.pool.maxConcurrent || 'unlimited'}`,
   `  mcp: full=[${config.mcp.fullAccessCategories.join(',')}] streamTimeout=${config.mcp.streamTimeout}ms`,
@@ -134,14 +146,14 @@ console.log([
 ].join('\n'));
 
 // Recover active draft session (if harness was restarted mid-draft)
-// Runs after the banner so its log lines appear below the header.
-const recoveredDraft = loadActiveDraft(TASKS_DIR, pool);
+const recoveredDraft = loadActiveDraft(projects, PROJECTS_DIR, pool);
 if (recoveredDraft) {
   console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
 }
 
 logger.info({ defaultModel, categoryCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
+logger.info({ projectCount, projectNames }, 'projects loaded');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
 
 // Conditional Slack startup
@@ -157,7 +169,7 @@ if (slackEnabled) {
 let wsAdapter: WsAdapter | undefined;
 if (wsEnabled) {
   wsAdapter = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
-  registerWsMethods({ wsAdapter, handleTask, roles, config, pool, tasksDir: TASKS_DIR, mcpServers });
+  registerWsMethods({ wsAdapter, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers });
   pool.setOnChange((agents) => {
     wsAdapter!.broadcastNotification('pool_status', { agents });
   });

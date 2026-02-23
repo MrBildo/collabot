@@ -6,7 +6,9 @@ import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from './logger.js';
-import { getOrCreateTask } from './task.js';
+import { createTask } from './task.js';
+import { getProjectTasksDir } from './project.js';
+import type { Project } from './project.js';
 import { buildChildEnv, extractUsageMetrics } from './dispatch.js';
 import { extractToolTarget } from './journal.js';
 import { detectErrorLoop, detectNonRetryable } from './monitor.js';
@@ -34,7 +36,10 @@ export function getActiveDraft(): DraftSession | null {
 
 export function createDraft(opts: {
   role: RoleDefinition;
-  tasksDir: string;
+  project: Project;
+  projectsDir: string;
+  taskSlug?: string;
+  taskDir?: string;
   channelId: string;
   pool: AgentPool;
 }): DraftSession {
@@ -44,16 +49,31 @@ export function createDraft(opts: {
 
   const sessionId = randomUUID();
   const agentId = `draft-${opts.role.name}-${Date.now()}`;
-  const threadId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const task = getOrCreateTask(threadId, `Draft session: ${opts.role.displayName}`, opts.tasksDir);
+  // Use provided task or create a new one
+  let taskSlug: string;
+  let taskDir: string;
+  if (opts.taskSlug && opts.taskDir) {
+    taskSlug = opts.taskSlug;
+    taskDir = opts.taskDir;
+  } else {
+    const tasksDir = getProjectTasksDir(opts.projectsDir, opts.project.name);
+    const threadId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const task = createTask(tasksDir, {
+      name: `Draft session: ${opts.role.displayName}`,
+      project: opts.project.name,
+      threadId,
+    });
+    taskSlug = task.slug;
+    taskDir = task.taskDir;
+  }
 
   // Register in pool — stays registered until undraft
   const controller = new AbortController();
   opts.pool.register({
     id: agentId,
     role: opts.role.name,
-    taskSlug: task.slug,
+    taskSlug,
     startedAt: new Date(),
     controller,
   });
@@ -63,8 +83,9 @@ export function createDraft(opts: {
     sessionId,
     agentId,
     role: opts.role.name,
-    taskSlug: task.slug,
-    taskDir: task.taskDir,
+    project: opts.project.name,
+    taskSlug,
+    taskDir,
     channelId: opts.channelId,
     startedAt: now,
     lastActivityAt: now,
@@ -80,7 +101,7 @@ export function createDraft(opts: {
 
   persistDraft(session);
   activeDraft = session;
-  logger.info({ sessionId, role: opts.role.name, taskSlug: task.slug }, 'draft session created');
+  logger.info({ sessionId, role: opts.role.name, project: opts.project.name, taskSlug }, 'draft session created');
   return session;
 }
 
@@ -129,41 +150,49 @@ export function updateDraftMetrics(update: {
   persistDraft(activeDraft);
 }
 
-export function loadActiveDraft(tasksDir: string, pool: AgentPool): DraftSession | null {
-  if (!fs.existsSync(tasksDir)) return null;
+export function loadActiveDraft(
+  projects: Map<string, Project>,
+  projectsDir: string,
+  pool: AgentPool,
+): DraftSession | null {
+  // Scan all project task directories for active drafts
+  for (const project of projects.values()) {
+    const tasksDir = getProjectTasksDir(projectsDir, project.name);
+    if (!fs.existsSync(tasksDir)) continue;
 
-  const dirs = fs.readdirSync(tasksDir, { withFileTypes: true }).filter(d => d.isDirectory());
+    const dirs = fs.readdirSync(tasksDir, { withFileTypes: true }).filter(d => d.isDirectory());
 
-  for (const dir of dirs) {
-    const draftPath = path.join(tasksDir, dir.name, 'draft.json');
-    if (!fs.existsSync(draftPath)) continue;
+    for (const dir of dirs) {
+      const draftPath = path.join(tasksDir, dir.name, 'draft.json');
+      if (!fs.existsSync(draftPath)) continue;
 
-    try {
-      const data = JSON.parse(fs.readFileSync(draftPath, 'utf-8')) as DraftSession;
-      if (data.status !== 'active') continue;
-
-      // Re-register in pool with a new AbortController
-      const controller = new AbortController();
       try {
-        pool.register({
-          id: data.agentId,
-          role: data.role,
-          taskSlug: data.taskSlug,
-          startedAt: new Date(data.startedAt),
-          controller,
-        });
-      } catch (err) {
-        logger.warn({ err, sessionId: data.sessionId }, 'failed to re-register recovered draft in pool — marking closed');
-        data.status = 'closed';
-        persistDraftTo(path.join(tasksDir, dir.name, 'draft.json'), data);
-        continue;
-      }
+        const data = JSON.parse(fs.readFileSync(draftPath, 'utf-8')) as DraftSession;
+        if (data.status !== 'active') continue;
 
-      activeDraft = data;
-      logger.info({ sessionId: data.sessionId, role: data.role, turnCount: data.turnCount }, 'recovered active draft session');
-      return activeDraft;
-    } catch {
-      // Corrupt JSON — skip silently
+        // Re-register in pool with a new AbortController
+        const controller = new AbortController();
+        try {
+          pool.register({
+            id: data.agentId,
+            role: data.role,
+            taskSlug: data.taskSlug,
+            startedAt: new Date(data.startedAt),
+            controller,
+          });
+        } catch (err) {
+          logger.warn({ err, sessionId: data.sessionId }, 'failed to re-register recovered draft in pool — marking closed');
+          data.status = 'closed';
+          persistDraftTo(draftPath, data);
+          continue;
+        }
+
+        activeDraft = data;
+        logger.info({ sessionId: data.sessionId, role: data.role, project: data.project, turnCount: data.turnCount }, 'recovered active draft session');
+        return activeDraft;
+      } catch {
+        // Corrupt JSON — skip silently
+      }
     }
   }
 
@@ -185,6 +214,7 @@ export async function resumeDraft(
   config: Config,
   pool: AgentPool,
   opts?: {
+    cwd?: string;      // project-resolved CWD
     mcpServer?: McpSdkServerConfigWithInstance;
     onCompaction?: (event: { trigger: string; preTokens: number }) => void;
   },
@@ -197,6 +227,11 @@ export async function resumeDraft(
   const role = roles.get(session.role);
   if (!role) {
     throw new Error(`Role "${session.role}" not found`);
+  }
+
+  // CWD must be provided by caller (from project paths)
+  if (!opts?.cwd) {
+    throw new Error(`No cwd provided for resumeDraft. Project paths must resolve a working directory.`);
   }
 
   const isFirstTurn = !session.sessionInitialized;
@@ -215,10 +250,6 @@ export async function resumeDraft(
   const pendingToolCalls = new Map<string, { tool: string; target: string }>();
   let loopWarningPosted = false;
 
-  // TODO: Revisit draft session loop detection thresholds once the harness is
-  // more mature. Currently unlimited (0) because the user is present and can
-  // intervene. When we have better signal on what "stuck" looks like in
-  // conversational mode, tune these to meaningful values.
   const draftThresholds: LoopDetectionThresholds = {
     repeatWarn: 0, repeatKill: 0, pingPongWarn: 0, pingPongKill: 0,
   };
@@ -232,12 +263,7 @@ export async function resumeDraft(
     }, stallTimeoutMs);
   }
 
-  // Resolve CWD — draft agents use the role's cwd
-  const resolvedCwd = role.cwd;
-  if (!resolvedCwd) {
-    throw new Error(`No cwd for role "${role.name}"`);
-  }
-  const absoluteCwd = path.resolve(HUB_ROOT, resolvedCwd);
+  const absoluteCwd = path.resolve(HUB_ROOT, opts.cwd);
 
   // Resolve model
   const resolvedModel = role.model ?? config.models.default;
@@ -340,7 +366,6 @@ export async function resumeDraft(
             if (loopDetection) {
               if (loopDetection.severity === 'kill') {
                 abortReason = 'error_loop';
-                // Don't close draft — user can send another message
                 await filteredSend(adapter, makeChannelMessage(
                   session.channelId, 'system', 'warning',
                   `Agent killed: error loop detected (${loopDetection.pattern}, ${loopDetection.count} repetitions). Draft session is still active — send another message to continue.`,
@@ -436,9 +461,6 @@ export async function resumeDraft(
       const usage = extractUsageMetrics(resultMsg);
       updateDraftMetrics({
         costUsd: resultMsg.total_cost_usd,
-        // Prefer per-API-call input tokens from the last assistant message
-        // over resultMsg.usage.input_tokens which is unreliable for resumed
-        // sessions (reports num_turns instead of actual token count).
         inputTokens: usage?.inputTokens,
         outputTokens: usage?.outputTokens,
         contextWindow: usage?.contextWindow,
