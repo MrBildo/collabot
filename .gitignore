@@ -1,6 +1,7 @@
 # Claude Code local settings
 .claude/*
 !.claude/skills/
+**/.claude/settings.local.json
 
 # Project manifests (local only)
 .projects/
