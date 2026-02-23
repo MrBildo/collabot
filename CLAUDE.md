@@ -26,10 +26,12 @@ The harness runs with or without any specific interface. Source is in `./harness
 Projects are registered in `.projects/<name>/project.yaml`. Each manifest declares:
 - `name` — display name
 - `description` — what the project is
-- `paths[]` — relative paths to project repositories
+- `paths[]` — relative paths to project repositories (can be empty for scaffolded projects)
 - `roles[]` — which roles can work on this project
 
-Projects are loaded at startup and validated against loaded roles. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
+Projects are loaded at startup and validated against loaded roles. Projects with empty `paths` can be loaded but not dispatched to — the harness will error with a clear message directing the user to edit the YAML. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
+
+Projects can be scaffolded from the TUI (`/project init <name>`) or via the `create_project` WS method, and reloaded from disk without restart (`/project reload` or `reload_projects`).
 
 ## Roles
 
@@ -155,6 +157,7 @@ See `.claude/skills/` for full skill definitions.
 - **Context reconstruction over session resume.** Worker bots load task context + bot memory + role, not resume sessions.
 - **Every data point is training data.** Journals, task manifests, decision records — capture aggressively, curate later.
 - **Tools over tokens.** Deterministic operations should be scripts/tools, not agent reasoning.
+- **Project isolation via MCP.** Agents only see their own project's data through MCP tools (`list_projects`, `list_tasks`, `get_task_context` are all scoped to parent project). Dispatch (`draft_agent`) is also parent-project-only.
 
 ### Future Direction: Bot Abstraction
 
