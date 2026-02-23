@@ -17,18 +17,35 @@ public class MessageView : View, IDisposable
     private int _lastWrapWidth;
     private bool _autoScroll = true;
 
-    private const int TimestampIndent = 11; // "[HH:mm:ss] "
     private const int ScrollSpeed = 3;
+
+    private bool _verboseTimestamps;
+    public bool VerboseTimestamps
+    {
+        get => _verboseTimestamps;
+        set
+        {
+            if (_verboseTimestamps == value) return;
+            _verboseTimestamps = value;
+            if (_messages.Count > 0) RewrapAll();
+            SetNeedsDraw();
+        }
+    }
 
     // Working indicator
     private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     private static readonly string[] WorkingMessages =
         ["Thinking...", "Collaborating...", "Analyzing...", "Reasoning...", "Working on it...", "Processing..."];
+    private static readonly string[] CompletedMessages =
+        ["Thought for", "Collaborated for", "Analyzed for", "Reasoned for", "Worked for", "Processed for"];
     private bool _isWorking;
+    public bool IsWorking => _isWorking;
     private int _spinnerFrame;
     private object? _spinnerTimer;
     private DateTime _workingStartTime;
     private int _workingMessageIndex;
+    private string? _lastCompletedMessage;
+    private TimeSpan _lastWorkingElapsed;
 
     // Text selection
     private bool _isSelecting;
@@ -156,110 +173,138 @@ public class MessageView : View, IDisposable
 
     private static readonly HashSet<string> MarkdownTypes = new(StringComparer.OrdinalIgnoreCase) { "chat", "result" };
 
+    private (List<StyledRun> Runs, string Text, int Indent) BuildPrefix(ChatMessage msg, Color bg)
+    {
+        var runs = new List<StyledRun>();
+        var text = "";
+
+        if (_verboseTimestamps)
+        {
+            var ts = $"[{msg.Timestamp:HH:mm:ss}] ";
+            runs.Add(new StyledRun(ts, new Attribute(new Color(100, 100, 100), bg)));
+            text += ts;
+        }
+
+        var orangeAttr = new Attribute(new Color(255, 160, 0), bg);
+        var dimAttr = new Attribute(new Color(100, 100, 100), bg);
+        var (marker, markerAttr) = msg.Type switch
+        {
+            "user" => ("❯ ", orangeAttr),
+            "chat" or "result" => ("● ", orangeAttr),
+            "elapsed" => ("⣿ ", dimAttr),
+            _ => ("  ", (Attribute?)null)
+        };
+
+        runs.Add(new StyledRun(marker, markerAttr));
+        text += marker;
+
+        return (runs, text, TextHelpers.DisplayWidth(text));
+    }
+
     private void WrapMessage(int index, int width)
     {
         var msg = _messages[index];
-        var text = msg.ToString();
 
         // Banner lines are pre-formatted — never word-wrap
         if (msg.Type is "banner" or "banner-sub")
         {
-            _displayLines.Add(new DisplayLine(index, text));
+            _displayLines.Add(new DisplayLine(index, msg.Content));
             return;
         }
 
-        if (width <= 0)
+        if (width <= 0) width = 80;
+
+        // Blank line before user/agent messages for visual separation
+        if (_displayLines.Count > 0 && msg.Type is "user" or "chat" or "result")
         {
-            width = 80;
+            _displayLines.Add(new DisplayLine(index, ""));
         }
+
+        var bg = GetAttributeForRole(VisualRole.Normal).Background;
+        var (prefixRuns, prefixText, indent) = BuildPrefix(msg, bg);
+        var contentWidth = Math.Max(width - indent, 20);
 
         // Markdown rendering for chat/result messages
         if (MarkdownTypes.Contains(msg.Type))
         {
-            WrapMarkdownMessage(index, msg, width);
+            var baseAttr = GetMessageAttribute(msg.Type, bg);
+            var mdLines = Rendering.MarkdownRenderer.Render(msg.Content, contentWidth, bg, baseAttr);
+
+            if (mdLines.Count == 0)
+            {
+                _displayLines.Add(new DisplayLine(index, prefixText, prefixRuns));
+                return;
+            }
+
+            // First line: prepend prefix
+            var firstRuns = new List<StyledRun>(prefixRuns);
+            firstRuns.AddRange(mdLines[0].Runs);
+            _displayLines.Add(new DisplayLine(index, prefixText + mdLines[0].Text, firstRuns));
+
+            // Continuation lines
+            var indentStr = new string(' ', indent);
+            for (var i = 1; i < mdLines.Count; i++)
+            {
+                var md = mdLines[i];
+                var runs = new List<StyledRun> { new(indentStr) };
+                runs.AddRange(md.Runs);
+                _displayLines.Add(new DisplayLine(index, indentStr + md.Text, runs));
+            }
             return;
         }
 
-        if (TextHelpers.DisplayWidth(text) <= width)
+        // Plain text messages (user, system, lifecycle, etc.)
+        var textAttr = GetMessageAttribute(msg.Type, bg);
+        var content = msg.Content;
+
+        if (TextHelpers.DisplayWidth(content) <= contentWidth)
         {
-            _displayLines.Add(new DisplayLine(index, text));
+            var runs = new List<StyledRun>(prefixRuns) { new(content, textAttr) };
+            _displayLines.Add(new DisplayLine(index, prefixText + content, runs));
             return;
         }
 
-        // First line: full width
-        var firstBreak = TextHelpers.FindWordBreakByColumns(text, width);
-        _displayLines.Add(new DisplayLine(index, text[..firstBreak]));
-        var remaining = text[firstBreak..].TrimStart();
+        // Word wrap
+        var firstBreak = TextHelpers.FindWordBreakByColumns(content, contentWidth);
+        var firstChunk = content[..firstBreak];
+        var firstLineRuns = new List<StyledRun>(prefixRuns) { new(firstChunk, textAttr) };
+        _displayLines.Add(new DisplayLine(index, prefixText + firstChunk, firstLineRuns));
 
-        // Continuation lines: indented past timestamp
-        var indent = new string(' ', TimestampIndent);
-        var contWidth = Math.Max(width - TimestampIndent, 20);
+        var remaining = content[firstBreak..].TrimStart();
+        var indentString = new string(' ', indent);
 
         while (remaining.Length > 0)
         {
-            if (TextHelpers.DisplayWidth(remaining) <= contWidth)
+            if (TextHelpers.DisplayWidth(remaining) <= contentWidth)
             {
-                _displayLines.Add(new DisplayLine(index, indent + remaining));
+                var lineRuns = new List<StyledRun> { new(indentString), new(remaining, textAttr) };
+                _displayLines.Add(new DisplayLine(index, indentString + remaining, lineRuns));
                 break;
             }
 
-            var breakAt = TextHelpers.FindWordBreakByColumns(remaining, contWidth);
-            _displayLines.Add(new DisplayLine(index, indent + remaining[..breakAt]));
+            var breakAt = TextHelpers.FindWordBreakByColumns(remaining, contentWidth);
+            var chunk = remaining[..breakAt];
+            var lineRuns2 = new List<StyledRun> { new(indentString), new(chunk, textAttr) };
+            _displayLines.Add(new DisplayLine(index, indentString + chunk, lineRuns2));
             remaining = remaining[breakAt..].TrimStart();
         }
     }
 
-    private void WrapMarkdownMessage(int index, ChatMessage msg, int width)
+    private int GetContentHeight()
     {
-        var bg = GetAttributeForRole(VisualRole.Normal).Background;
-        var baseAttr = GetMessageAttribute(msg.Type, bg);
-
-        // Build timestamp prefix: "[HH:mm:ss] [from] "
-        var prefix = msg.Type switch
-        {
-            "user" => $"[{msg.Timestamp:HH:mm:ss}] > ",
-            _ when !string.IsNullOrEmpty(msg.From) => $"[{msg.Timestamp:HH:mm:ss}] [{msg.From}] ",
-            _ => $"[{msg.Timestamp:HH:mm:ss}] "
-        };
-
-        // Continuation lines use TimestampIndent, not full prefix width
-        var contentWidth = Math.Max(width - TimestampIndent, 20);
-
-        // Render markdown content
-        var mdLines = Rendering.MarkdownRenderer.Render(msg.Content, contentWidth, bg, baseAttr);
-
-        if (mdLines.Count == 0)
-        {
-            _displayLines.Add(new DisplayLine(index, prefix, [new StyledRun(prefix, baseAttr)]));
-            return;
-        }
-
-        // First line: prepend timestamp prefix
-        var firstMd = mdLines[0];
-        var firstRuns = new List<StyledRun> { new(prefix, baseAttr) };
-        firstRuns.AddRange(firstMd.Runs);
-        _displayLines.Add(new DisplayLine(index, prefix + firstMd.Text, firstRuns));
-
-        // Continuation lines: indent past timestamp only
-        var indent = new string(' ', TimestampIndent);
-        for (var i = 1; i < mdLines.Count; i++)
-        {
-            var md = mdLines[i];
-            var runs = new List<StyledRun> { new(indent) };
-            runs.AddRange(md.Runs);
-            _displayLines.Add(new DisplayLine(index, indent + md.Text, runs));
-        }
+        var height = Math.Max(_displayLines.Count, 1);
+        if (_isWorking) height += 2; // blank line + indicator
+        return height;
     }
 
     private void UpdateContentSize()
     {
-        var width = GetWrapWidth();
-        SetContentSize(new Size(width, Math.Max(_displayLines.Count, 1)));
+        SetContentSize(new Size(GetWrapWidth(), GetContentHeight()));
     }
 
     private void ScrollToEnd()
     {
-        var maxY = Math.Max(0, _displayLines.Count - Viewport.Height);
+        var maxY = Math.Max(0, GetContentHeight() - Viewport.Height);
         Viewport = Viewport with { Location = new Point(0, maxY) };
     }
 
@@ -404,6 +449,10 @@ public class MessageView : View, IDisposable
         _spinnerFrame = 0;
         _workingStartTime = DateTime.Now;
         _workingMessageIndex = (_workingMessageIndex + 1) % WorkingMessages.Length;
+        _lastCompletedMessage = null;
+
+        UpdateContentSize();
+        if (_autoScroll) ScrollToEnd();
 
         _spinnerTimer = App?.AddTimeout(TimeSpan.FromMilliseconds(150), () =>
         {
@@ -417,23 +466,45 @@ public class MessageView : View, IDisposable
     public void StopWorking()
     {
         if (!_isWorking) return;
+        _lastWorkingElapsed = DateTime.Now - _workingStartTime;
+        _lastCompletedMessage = CompletedMessages[_workingMessageIndex];
         _isWorking = false;
         if (_spinnerTimer is not null)
         {
             App?.RemoveTimeout(_spinnerTimer);
             _spinnerTimer = null;
         }
+        UpdateContentSize();
         SetNeedsDraw();
+    }
+
+    public void ShowElapsedIndicator(int? tokens = null)
+    {
+        if (_lastCompletedMessage is null) return;
+        var elapsed = FormatElapsed(_lastWorkingElapsed);
+        var content = tokens is > 0
+            ? $"{_lastCompletedMessage} {elapsed} · {FormatTokens(tokens.Value)}"
+            : $"{_lastCompletedMessage} {elapsed}";
+        AddMessage(new ChatMessage(DateTime.Now, "elapsed", "", content));
+        _lastCompletedMessage = null;
     }
 
     private static string FormatElapsed(TimeSpan elapsed)
     {
         if (elapsed.TotalHours >= 1)
-            return $"{(int)elapsed.TotalHours}h {elapsed.Minutes}m";
+            return $"{(int)elapsed.TotalHours}h {elapsed.Minutes:D2}m {elapsed.Seconds:D2}s";
         if (elapsed.TotalMinutes >= 1)
             return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
         return $"{(int)elapsed.TotalSeconds}s";
     }
+
+    private static string FormatTokens(int tokens) => tokens switch
+    {
+        >= 1_000_000_000 => $"{tokens / 1_000_000_000.0:F1}B tokens",
+        >= 1_000_000 => $"{tokens / 1_000_000.0:F1}M tokens",
+        >= 1_000 => $"{tokens / 1_000.0:F1}K tokens",
+        _ => $"{tokens:N0} tokens"
+    };
 
     private void DrawWorkingIndicator(int width, Color bg)
     {
@@ -646,6 +717,7 @@ public class MessageView : View, IDisposable
             "tool_use" => new Attribute(Color.DarkGray, bg),
             "thinking" => new Attribute(Color.DarkGray, bg),
             "user" => new Attribute(new Color(0, 180, 255), bg),
+            "elapsed" => new Attribute(new Color(100, 100, 100), bg),
             "system" => new Attribute(Color.Gray, bg),
             _ => new Attribute(Color.White, bg)
         };

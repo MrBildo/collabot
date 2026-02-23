@@ -33,6 +33,7 @@ public class MainWindow : Window
     private int _draftTurnCount;
     private double _draftCostUsd;
     private int _draftContextPct;
+    private bool _pendingElapsed;
 
     private readonly List<string> _commandHistory = [];
     private int _historyIndex = -1;
@@ -283,6 +284,12 @@ public class MainWindow : Window
             _draftCostUsd = e.CostUsd;
             _draftContextPct = e.ContextPct;
             UpdateStatusHeader();
+
+            if (_pendingElapsed)
+            {
+                _pendingElapsed = false;
+                _messageView.ShowElapsedIndicator(e.LastOutputTokens > 0 ? e.LastOutputTokens : null);
+            }
         });
     }
 
@@ -300,7 +307,11 @@ public class MainWindow : Window
 
         App?.Invoke(() =>
         {
-            _messageView.StopWorking();
+            if (_messageView.IsWorking)
+            {
+                _messageView.StopWorking();
+                _pendingElapsed = true;
+            }
             var timestamp = DateTime.TryParse(e.Timestamp, out var ts) ? ts : DateTime.Now;
             _messageView.AddMessage(new ChatMessage(timestamp, e.Type, e.From, e.Content));
         });
@@ -1166,6 +1177,7 @@ public class MainWindow : Window
         if (Enum.TryParse<FilterLevel>(level, ignoreCase: true, out var parsed))
         {
             _filterLevel = parsed;
+            _messageView.VerboseTimestamps = _filterLevel == FilterLevel.Verbose;
             AddSystemMessage($"Filter set to: {_filterLevel.ToString().ToLowerInvariant()}");
             UpdateStatusHeader();
         }

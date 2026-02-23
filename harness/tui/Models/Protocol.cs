@@ -75,7 +75,7 @@ public record PoolStatusNotification(AgentInfo[] Agents);
 
 public record DraftStatusNotification(
     string SessionId, string Role, string Project, int TurnCount,
-    double CostUsd, int ContextPct, string LastActivity);
+    double CostUsd, int ContextPct, int LastInputTokens, int LastOutputTokens, string LastActivity);
 
 public record ContextCompactedNotification(string SessionId, int PreTokens, string Trigger);
 

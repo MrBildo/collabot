@@ -158,6 +158,8 @@ export function registerWsMethods(deps: WsMethodDeps): void {
               costUsd: updated.cumulativeCostUsd,
               contextPct: updated.contextWindow > 0
                 ? Math.round((updated.lastInputTokens / updated.contextWindow) * 100) : 0,
+              lastInputTokens: updated.lastInputTokens,
+              lastOutputTokens: updated.lastOutputTokens,
               lastActivity: updated.lastActivityAt,
             });
           }

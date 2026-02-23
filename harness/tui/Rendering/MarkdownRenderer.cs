@@ -50,8 +50,6 @@ public static class MarkdownRenderer
 
         var styles = new InlineStyles(baseAttr, boldAttr, italicAttr, boldItalicAttr, inlineCodeAttr, linkAttr);
 
-        // Top padding — visually separates timestamp prefix from content
-        lines.Add(("", []));
 
         foreach (var block in document)
         {
