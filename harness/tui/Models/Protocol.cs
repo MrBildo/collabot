@@ -18,7 +18,7 @@ public record KillAgentParams(string AgentId);
 
 public record GetTaskContextParams(string Slug, string Project);
 
-public record DraftParams(string Role, string Project, string? Task);
+public record DraftParams(string Role, string Project, string Task);
 
 public record ListTasksParams(string Project);
 

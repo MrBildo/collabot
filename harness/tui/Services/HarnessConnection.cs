@@ -139,7 +139,7 @@ public class HarnessConnection : IDisposable
             new GetTaskContextParams(slug, project));
     }
 
-    public async Task<DraftResult> DraftAsync(string role, string project, string? task = null)
+    public async Task<DraftResult> DraftAsync(string role, string project, string task)
     {
         EnsureConnected();
         return await _rpc!.InvokeWithParameterObjectAsync<DraftResult>(

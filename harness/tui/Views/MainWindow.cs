@@ -245,6 +245,10 @@ public class MainWindow : Window
                     _draftTurnCount = result.Session.TurnCount;
                     _draftCostUsd = result.Session.CostUsd;
                     _draftContextPct = result.Session.ContextPct;
+
+                    // Hydrate local project/task from recovered draft
+                    _currentProject ??= result.Session.Project;
+                    _currentTask ??= result.Session.TaskSlug;
                 }
                 else
                 {
@@ -1018,6 +1022,12 @@ public class MainWindow : Window
             return;
         }
 
+        if (_currentTask is null)
+        {
+            AddMessage("error", "system", "No task selected. Use /task <slug> or /task new <name> first.");
+            return;
+        }
+
         try
         {
             var result = await _connection.DraftAsync(roleName, _currentProject, _currentTask);
@@ -1146,7 +1156,7 @@ public class MainWindow : Window
         AddSystemMessage("  /project [name]       Set active project (empty to show current)");
         AddSystemMessage("  /project init <name>  Scaffold a new project (edit YAML to add paths)");
         AddSystemMessage("  /project reload       Reload projects from disk");
-        AddSystemMessage("  /draft <role>         Draft an agent (requires project)");
+        AddSystemMessage("  /draft <role>         Draft an agent (requires project + task)");
         AddSystemMessage("  /undraft              End the active draft session");
         AddSystemMessage("  /context              Show draft metrics (or /context <slug>)");
         AddSystemMessage("  /agents               List active agents");

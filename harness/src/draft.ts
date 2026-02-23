@@ -6,7 +6,6 @@ import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from './logger.js';
-import { createTask } from './task.js';
 import { getProjectTasksDir } from './project.js';
 import type { Project } from './project.js';
 import { buildChildEnv, extractUsageMetrics } from './dispatch.js';
@@ -38,8 +37,8 @@ export function createDraft(opts: {
   role: RoleDefinition;
   project: Project;
   projectsDir: string;
-  taskSlug?: string;
-  taskDir?: string;
+  taskSlug: string;
+  taskDir: string;
   channelId: string;
   pool: AgentPool;
 }): DraftSession {
@@ -50,23 +49,7 @@ export function createDraft(opts: {
   const sessionId = randomUUID();
   const agentId = `draft-${opts.role.name}-${Date.now()}`;
 
-  // Use provided task or create a new one
-  let taskSlug: string;
-  let taskDir: string;
-  if (opts.taskSlug && opts.taskDir) {
-    taskSlug = opts.taskSlug;
-    taskDir = opts.taskDir;
-  } else {
-    const tasksDir = getProjectTasksDir(opts.projectsDir, opts.project.name);
-    const threadId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const task = createTask(tasksDir, {
-      name: `Draft session: ${opts.role.displayName}`,
-      project: opts.project.name,
-      threadId,
-    });
-    taskSlug = task.slug;
-    taskDir = task.taskDir;
-  }
+  const { taskSlug, taskDir } = opts;
 
   // Register in pool — stays registered until undraft
   const controller = new AbortController();

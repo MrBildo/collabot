@@ -268,6 +268,10 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException('project is required', -32602);
     }
 
+    if (typeof taskSlugParam !== 'string') {
+      throw new JSONRPCErrorException('task is required', -32602);
+    }
+
     const project = resolveProject(deps, projectName);
     const role = deps.roles.get(roleName);
     if (!role) {
@@ -278,18 +282,16 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException('Draft already active. Use undraft first.', WS_ERROR_DRAFT_ALREADY_ACTIVE);
     }
 
-    // Resolve task if provided
-    let taskSlug: string | undefined;
-    let taskDir: string | undefined;
-    if (taskSlugParam) {
-      const tasksDir = getProjectTasksDir(deps.projectsDir, project.name);
-      try {
-        const task = getTask(tasksDir, taskSlugParam);
-        taskSlug = task.slug;
-        taskDir = task.taskDir;
-      } catch {
-        throw new JSONRPCErrorException(`Task "${taskSlugParam}" not found`, WS_ERROR_TASK_NOT_FOUND);
-      }
+    // Resolve task
+    const tasksDir = getProjectTasksDir(deps.projectsDir, project.name);
+    let taskSlug: string;
+    let taskDir: string;
+    try {
+      const task = getTask(tasksDir, taskSlugParam);
+      taskSlug = task.slug;
+      taskDir = task.taskDir;
+    } catch {
+      throw new JSONRPCErrorException(`Task "${taskSlugParam}" not found`, WS_ERROR_TASK_NOT_FOUND);
     }
 
     const channelId = `draft-${Date.now()}`;
