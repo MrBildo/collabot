@@ -171,7 +171,7 @@ public class MessageView : View, IDisposable
         UpdateContentSize();
     }
 
-    private static readonly HashSet<string> MarkdownTypes = new(StringComparer.OrdinalIgnoreCase) { "chat", "result" };
+    private static readonly HashSet<string> MarkdownTypes = new(StringComparer.OrdinalIgnoreCase) { "chat", "result", "user" };
 
     private (List<StyledRun> Runs, string Text, int Indent) BuildPrefix(ChatMessage msg, Color bg)
     {
@@ -224,11 +224,25 @@ public class MessageView : View, IDisposable
         var (prefixRuns, prefixText, indent) = BuildPrefix(msg, bg);
         var contentWidth = Math.Max(width - indent, 20);
 
-        // Markdown rendering for chat/result messages
+        // Multi-line user input: truncate to preview before rendering
+        const int maxPreviewLines = 3;
+        var renderContent = msg.Content;
+        string? truncationSuffix = null;
+        if (msg.Type == "user")
+        {
+            var lines = msg.Content.Split('\n');
+            if (lines.Length > maxPreviewLines)
+            {
+                renderContent = string.Join('\n', lines[..maxPreviewLines]);
+                truncationSuffix = $"... +{lines.Length - maxPreviewLines} lines";
+            }
+        }
+
+        // Markdown rendering for chat/result/user messages
         if (MarkdownTypes.Contains(msg.Type))
         {
             var baseAttr = GetMessageAttribute(msg.Type, bg);
-            var mdLines = Rendering.MarkdownRenderer.Render(msg.Content, contentWidth, bg, baseAttr);
+            var mdLines = Rendering.MarkdownRenderer.Render(renderContent, contentWidth, bg, baseAttr);
 
             if (mdLines.Count == 0)
             {
@@ -250,6 +264,16 @@ public class MessageView : View, IDisposable
                 runs.AddRange(md.Runs);
                 _displayLines.Add(new DisplayLine(index, indentStr + md.Text, runs));
             }
+
+            // Truncation indicator for multi-line user input
+            if (truncationSuffix is not null)
+            {
+                var dimAttr = new Attribute(new Color(100, 100, 100), bg);
+                var indStr = new string(' ', indent);
+                var suffixRuns = new List<StyledRun> { new(indStr), new(truncationSuffix, dimAttr) };
+                _displayLines.Add(new DisplayLine(index, indStr + truncationSuffix, suffixRuns));
+            }
+
             return;
         }
 

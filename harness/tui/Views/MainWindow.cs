@@ -20,6 +20,7 @@ public class MainWindow : Window
     private readonly Line _bottomSeparator;
     private readonly TextView _inputField;
     private readonly Label _inputPrompt;
+    private readonly StatusBar _statusBar;
 
     private string? _currentProject;
     private string? _currentRole;
@@ -33,7 +34,7 @@ public class MainWindow : Window
     private int _draftTurnCount;
     private double _draftCostUsd;
     private int _draftContextPct;
-    private bool _pendingElapsed;
+    private bool _awaitingResponse;
 
     private readonly List<string> _commandHistory = [];
     private int _historyIndex = -1;
@@ -42,6 +43,9 @@ public class MainWindow : Window
     private const int _maxHistorySize = 50;
     private int _inputLineCount = 1;
     private const int MaxInputLines = 10;
+
+    private bool _escPending;
+    private object? _escTimer;
 
     public MainWindow()
     {
@@ -110,14 +114,15 @@ public class MainWindow : Window
             Width = Dim.Fill()
         };
 
-        var statusBar = new StatusBar(
+        _statusBar = new StatusBar(
         [
             new Shortcut(Key.F1, "Help", ShowHelp),
+            new Shortcut(Key.G.WithCtrl, "Editor", () => OpenExternalEditor()),
             new Shortcut(Key.L.WithCtrl, "Clear", ClearMessages),
             new Shortcut(Key.Q.WithCtrl, "Quit", () => App?.RequestStop())
         ]);
 
-        Add(_statusHeader, _messageView, _topSeparator, _inputPrompt, _inputField, _bottomSeparator, statusBar);
+        Add(_statusHeader, _messageView, _topSeparator, _inputPrompt, _inputField, _bottomSeparator, _statusBar);
 
         Initialized += OnWindowInitialized;
     }
@@ -177,6 +182,15 @@ public class MainWindow : Window
             if (message is not null)
             {
                 AddMessage("lifecycle", "system", message);
+            }
+
+            if (state == ConnectionState.Disconnected || state == ConnectionState.Reconnecting)
+            {
+                if (_awaitingResponse)
+                {
+                    _awaitingResponse = false;
+                    _messageView.StopWorking();
+                }
             }
 
             if (state == ConnectionState.Connected)
@@ -285,9 +299,10 @@ public class MainWindow : Window
             _draftContextPct = e.ContextPct;
             UpdateStatusHeader();
 
-            if (_pendingElapsed)
+            if (_awaitingResponse)
             {
-                _pendingElapsed = false;
+                _awaitingResponse = false;
+                _messageView.StopWorking();
                 _messageView.ShowElapsedIndicator(e.LastOutputTokens > 0 ? e.LastOutputTokens : null);
             }
         });
@@ -307,11 +322,6 @@ public class MainWindow : Window
 
         App?.Invoke(() =>
         {
-            if (_messageView.IsWorking)
-            {
-                _messageView.StopWorking();
-                _pendingElapsed = true;
-            }
             var timestamp = DateTime.TryParse(e.Timestamp, out var ts) ? ts : DateTime.Now;
             _messageView.AddMessage(new ChatMessage(timestamp, e.Type, e.From, e.Content));
         });
@@ -346,6 +356,13 @@ public class MainWindow : Window
             var text = _inputField.Text?.Trim();
             if (string.IsNullOrEmpty(text))
             {
+                return;
+            }
+
+            // Block non-command prompts while agent is processing
+            if (!text.StartsWith('/') && _awaitingResponse)
+            {
+                AddSystemMessage("Awaiting response...");
                 return;
             }
 
@@ -392,6 +409,16 @@ public class MainWindow : Window
             ClearMessages();
             e.Handled = true;
         }
+        else if (e == Key.Esc)
+        {
+            HandleEscKey();
+            e.Handled = true;
+        }
+        else if (e == Key.G.WithCtrl)
+        {
+            OpenExternalEditor();
+            e.Handled = true;
+        }
         else if (e == Key.Enter)
         {
             SubmitInput();
@@ -417,6 +444,107 @@ public class MainWindow : Window
     private void OnInputContentsChanged(object? sender, ContentsChangedEventArgs e)
     {
         UpdateInputLayout();
+    }
+
+    private void HandleEscKey()
+    {
+        // Nothing to clear
+        if (string.IsNullOrEmpty(_inputField.Text))
+        {
+            CancelEscPending();
+            return;
+        }
+
+        if (_escPending)
+        {
+            // Second press — clear input
+            CancelEscPending();
+            _inputField.Text = "";
+            return;
+        }
+
+        // First press — start timer, show hint
+        _escPending = true;
+        ShowEscHint(true);
+        _escTimer = App?.AddTimeout(TimeSpan.FromMilliseconds(500), () =>
+        {
+            CancelEscPending();
+            return false; // one-shot
+        });
+    }
+
+    private void CancelEscPending()
+    {
+        _escPending = false;
+        if (_escTimer is not null)
+        {
+            App?.RemoveTimeout(_escTimer);
+            _escTimer = null;
+        }
+        ShowEscHint(false);
+    }
+
+    private Shortcut? _escHintShortcut;
+
+    private void ShowEscHint(bool visible)
+    {
+        if (visible && _escHintShortcut is null)
+        {
+            _escHintShortcut = new Shortcut(Key.Esc, "ESC again to clear", null);
+            _statusBar.AddShortcutAt(_statusBar.SubViews.Count(), _escHintShortcut);
+        }
+        else if (!visible && _escHintShortcut is not null)
+        {
+            _statusBar.Remove(_escHintShortcut);
+            _escHintShortcut.Dispose();
+            _escHintShortcut = null;
+            _statusBar.SetNeedsDraw();
+        }
+    }
+
+    private async void OpenExternalEditor()
+    {
+        var currentText = _inputField.Text ?? "";
+
+        try
+        {
+            // Exit alternate screen so the editor is visible
+            Console.Write("\x1b[?1049l");
+
+            var result = await ExternalEditor.EditAsync(currentText);
+
+            // Re-enter alternate screen
+            Console.Write("\x1b[?1049h");
+
+            App?.Invoke(() =>
+            {
+                if (result.Success)
+                {
+                    _inputField.Text = result.Content;
+                    _inputField.MoveEnd();
+                    // Scroll viewport so cursor (at end) is visible
+                    var scrollTo = Math.Max(0, _inputField.CurrentRow - _inputLineCount + 1);
+                    _inputField.ScrollTo(scrollTo, isRow: true);
+                }
+                else
+                {
+                    AddSystemMessage($"Editor error: {result.Error}");
+                }
+
+                App?.LayoutAndDraw(true);
+                _inputField.SetFocus();
+            });
+        }
+        catch
+        {
+            // Always restore alternate screen
+            Console.Write("\x1b[?1049h");
+            App?.Invoke(() =>
+            {
+                App?.LayoutAndDraw(true);
+                _inputField.SetFocus();
+            });
+        }
     }
 
     private void UpdateInputLayout()
@@ -570,9 +698,11 @@ public class MainWindow : Window
 
         AddMessage("user", "you", text);
         _messageView.StartWorking();
+        _awaitingResponse = true;
 
         if (_connection.ConnectionState != ConnectionState.Connected)
         {
+            _awaitingResponse = false;
             _messageView.StopWorking();
             AddMessage("error", "system", "Not connected to harness");
             return;
@@ -585,6 +715,7 @@ public class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _awaitingResponse = false;
             _messageView.StopWorking();
             App?.Invoke(() => AddMessage("error", "system", $"Failed to submit: {ex.Message}"));
         }
@@ -1211,7 +1342,7 @@ public class MainWindow : Window
         AddSystemMessage("  /help                 Show this help");
         AddSystemMessage("  /quit                 Exit");
         AddSystemMessage("");
-        AddSystemMessage("Shortcuts: Ctrl+Q quit, Ctrl+L clear, Up/Down history, Shift+Enter newline");
+        AddSystemMessage("Shortcuts: Ctrl+Q quit, Ctrl+L clear, Ctrl+G editor, ESC×2 clear input, Up/Down history, Shift+Enter newline");
         AddSystemMessage("Type anything else to send as a prompt to the active draft session.");
     }
 

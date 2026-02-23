@@ -1,8 +1,11 @@
 using Terminal.Gui.App;
 using Collabot.Tui.Views;
 
+using Terminal.Gui.Input;
+
 using IApplication app = Application.Create();
 app.Init();
+Application.QuitKey = Key.Q.WithCtrl;
 app.Run<MainWindow>();
 
 // Defensive cleanup: ensure alternate screen buffer is exited and terminal state is reset.
