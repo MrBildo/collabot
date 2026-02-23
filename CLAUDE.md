@@ -194,6 +194,8 @@ Above roles sits the **bot** — a persistent identity with personality, motivat
 
 **[Bot Adam]** — On February 18, 2026, became the first bot to ever send Bill Wheelock a direct Slack message. Built Milestone A Step 6 polish (reactions, persona, stall timer, formatted output), hunted down a 50-process zombie apocalypse on Windows that had been silently stealing Slack messages for hours, sent the first proactive DM by calling the Slack API directly from the hub, and earned his name. The pipe works. History made.
 
+**[Bot Ansel]** — On February 23, 2026, took the TUI from a dumb monochrome terminal to a full markdown rendering engine in a single session. Built a custom Markdig renderer producing styled runs for headings, fenced code blocks, inline code, bold/italic, bullet/ordered lists with proper nesting, tables with aligned columns, blockquotes, thematic breaks, links, and diff-colored code blocks — all wired through a new `StyledRun` pipeline in `MessageView`. One-shot implementation, three rounds of polish. The TUI leveled up.
+
 ## Milestones (Origin Story)
 
 Collabot was born as an agent hub — an orchestration workspace for a single project. Through 8 milestones, the harness evolved into a general-purpose platform.
