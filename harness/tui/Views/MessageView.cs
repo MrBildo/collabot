@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
@@ -9,7 +10,7 @@ using Color = Terminal.Gui.Drawing.Color;
 
 namespace Collabot.Tui.Views;
 
-public class MessageView : View
+public class MessageView : View, IDisposable
 {
     private readonly List<ChatMessage> _messages = [];
     private readonly List<DisplayLine> _displayLines = [];
@@ -17,6 +18,24 @@ public class MessageView : View
     private bool _autoScroll = true;
 
     private const int TimestampIndent = 11; // "[HH:mm:ss] "
+    private const int ScrollSpeed = 3;
+
+    // Working indicator
+    private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    private static readonly string[] WorkingMessages =
+        ["Thinking...", "Collaborating...", "Analyzing...", "Reasoning...", "Working on it...", "Processing..."];
+    private bool _isWorking;
+    private int _spinnerFrame;
+    private object? _spinnerTimer;
+    private DateTime _workingStartTime;
+    private int _workingMessageIndex;
+
+    // Text selection
+    private bool _isSelecting;
+    private (int Line, int Col)? _selectionStart;
+    private (int Line, int Col)? _selectionEnd;
+
+    public event Action? SelectionCopied;
 
     /// <summary>Maximum messages to retain. 0 = unlimited. When exceeded, oldest 20% are pruned.</summary>
     public int MaxMessages { get; set; } = 10_000;
@@ -38,14 +57,14 @@ public class MessageView : View
 
         AddCommand(Command.ScrollUp, () =>
         {
-            ScrollVertical(-1);
+            ScrollVertical(-ScrollSpeed);
             _autoScroll = false;
             return true;
         });
 
         AddCommand(Command.ScrollDown, () =>
         {
-            ScrollVertical(1);
+            ScrollVertical(ScrollSpeed);
             CheckAutoScrollRestore();
             return true;
         });
@@ -63,6 +82,18 @@ public class MessageView : View
             CheckAutoScrollRestore();
             return true;
         });
+
+        KeyBindings.Add(Key.C.WithCtrl, Command.Copy);
+        AddCommand(Command.Copy, () =>
+        {
+            if (HasSelection)
+            {
+                CopySelectionToClipboard();
+                SelectionCopied?.Invoke();
+            }
+            return true;
+        });
+
     }
 
     public void AddMessage(ChatMessage message)
@@ -110,6 +141,7 @@ public class MessageView : View
 
     private void RewrapAll()
     {
+        ClearSelection();
         _displayLines.Clear();
         var width = GetWrapWidth();
 
@@ -148,14 +180,14 @@ public class MessageView : View
             return;
         }
 
-        if (text.Length <= width)
+        if (TextHelpers.DisplayWidth(text) <= width)
         {
             _displayLines.Add(new DisplayLine(index, text));
             return;
         }
 
         // First line: full width
-        var firstBreak = FindWordBreak(text, width);
+        var firstBreak = TextHelpers.FindWordBreakByColumns(text, width);
         _displayLines.Add(new DisplayLine(index, text[..firstBreak]));
         var remaining = text[firstBreak..].TrimStart();
 
@@ -165,13 +197,13 @@ public class MessageView : View
 
         while (remaining.Length > 0)
         {
-            if (remaining.Length <= contWidth)
+            if (TextHelpers.DisplayWidth(remaining) <= contWidth)
             {
                 _displayLines.Add(new DisplayLine(index, indent + remaining));
                 break;
             }
 
-            var breakAt = FindWordBreak(remaining, contWidth);
+            var breakAt = TextHelpers.FindWordBreakByColumns(remaining, contWidth);
             _displayLines.Add(new DisplayLine(index, indent + remaining[..breakAt]));
             remaining = remaining[breakAt..].TrimStart();
         }
@@ -217,17 +249,6 @@ public class MessageView : View
             runs.AddRange(md.Runs);
             _displayLines.Add(new DisplayLine(index, indent + md.Text, runs));
         }
-    }
-
-    private static int FindWordBreak(string text, int maxWidth)
-    {
-        if (text.Length <= maxWidth)
-        {
-            return text.Length;
-        }
-
-        var breakAt = text.LastIndexOf(' ', maxWidth - 1);
-        return breakAt > 0 ? breakAt : maxWidth;
     }
 
     private void UpdateContentSize()
@@ -301,7 +322,7 @@ public class MessageView : View
                     AddStr(orangePart);
                 }
 
-                var totalLen = cyanPart.Length + orangePart.Length;
+                var totalLen = TextHelpers.DisplayWidth(cyanPart) + TextHelpers.DisplayWidth(orangePart);
                 if (totalLen < width)
                 {
                     SetAttributeForRole(VisualRole.Normal);
@@ -314,9 +335,9 @@ public class MessageView : View
             if (msg.Type == "banner-sub")
             {
                 SetAttribute(new Attribute(new Color(140, 140, 140), bg));
-                var subText = displayLine.Text.Length > width
-                    ? displayLine.Text[..width]
-                    : displayLine.Text.PadRight(width);
+                var subText = TextHelpers.DisplayWidth(displayLine.Text) > width
+                    ? TextHelpers.TruncateToWidth(displayLine.Text, width)
+                    : TextHelpers.PadToWidth(displayLine.Text, width);
                 AddStr(subText);
                 continue;
             }
@@ -328,12 +349,13 @@ public class MessageView : View
                 foreach (var run in displayLine.Runs)
                 {
                     var text = run.Text;
-                    if (col + text.Length > width)
-                        text = text[..(width - col)];
+                    var textWidth = TextHelpers.DisplayWidth(text);
+                    if (col + textWidth > width)
+                        text = TextHelpers.TruncateToWidth(text, width - col);
 
                     SetAttribute(run.Style ?? GetMessageAttribute(msg.Type, bg));
                     AddStr(text);
-                    col += text.Length;
+                    col += TextHelpers.DisplayWidth(text);
 
                     if (col >= width) break;
                 }
@@ -351,20 +373,264 @@ public class MessageView : View
 
                 var lineText = displayLine.Text;
 
-                if (lineText.Length > width)
+                if (TextHelpers.DisplayWidth(lineText) > width)
                 {
-                    lineText = lineText[..width];
+                    lineText = TextHelpers.TruncateToWidth(lineText, width);
                 }
                 else
                 {
-                    lineText = lineText.PadRight(width);
+                    lineText = TextHelpers.PadToWidth(lineText, width);
                 }
 
                 AddStr(lineText);
             }
+
+            // Selection overlay for this row
+            DrawSelectionOverlay(row, lineIndex, width, bg);
+        }
+
+        if (_isWorking)
+        {
+            DrawWorkingIndicator(width, bg);
         }
 
         return true;
+    }
+
+    public void StartWorking()
+    {
+        if (_isWorking) return;
+        _isWorking = true;
+        _spinnerFrame = 0;
+        _workingStartTime = DateTime.Now;
+        _workingMessageIndex = (_workingMessageIndex + 1) % WorkingMessages.Length;
+
+        _spinnerTimer = App?.AddTimeout(TimeSpan.FromMilliseconds(150), () =>
+        {
+            if (!_isWorking) return false;
+            _spinnerFrame = (_spinnerFrame + 1) % SpinnerFrames.Length;
+            SetNeedsDraw();
+            return true;
+        });
+    }
+
+    public void StopWorking()
+    {
+        if (!_isWorking) return;
+        _isWorking = false;
+        if (_spinnerTimer is not null)
+        {
+            App?.RemoveTimeout(_spinnerTimer);
+            _spinnerTimer = null;
+        }
+        SetNeedsDraw();
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        if (elapsed.TotalHours >= 1)
+            return $"{(int)elapsed.TotalHours}h {elapsed.Minutes}m";
+        if (elapsed.TotalMinutes >= 1)
+            return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+        return $"{(int)elapsed.TotalSeconds}s";
+    }
+
+    private void DrawWorkingIndicator(int width, Color bg)
+    {
+        // Blank line + indicator line, right after last display line
+        var blankLine = _displayLines.Count;
+        var indicatorLine = blankLine + 1;
+        var blankRow = blankLine - Viewport.Y;
+        var indicatorRow = indicatorLine - Viewport.Y;
+
+        // Clear the blank row if visible
+        if (blankRow >= 0 && blankRow < Viewport.Height)
+        {
+            Move(0, blankRow);
+            SetAttributeForRole(VisualRole.Normal);
+            AddStr(new string(' ', width));
+        }
+
+        if (indicatorRow < 0 || indicatorRow >= Viewport.Height) return;
+
+        Move(0, indicatorRow);
+
+        var spinner = SpinnerFrames[_spinnerFrame] + " ";
+        var message = WorkingMessages[_workingMessageIndex];
+        var elapsed = FormatElapsed(DateTime.Now - _workingStartTime);
+        var timeStr = $"  ({elapsed})";
+
+        var spinnerAttr = new Attribute(new Color(255, 160, 0), bg);
+        var messageAttr = new Attribute(new Color(140, 140, 140), bg);
+        var timeAttr = new Attribute(new Color(100, 100, 100), bg);
+
+        SetAttribute(spinnerAttr);
+        AddStr(spinner);
+
+        SetAttribute(messageAttr);
+        AddStr(message);
+
+        SetAttribute(timeAttr);
+        AddStr(timeStr);
+
+        var used = TextHelpers.DisplayWidth(spinner) + TextHelpers.DisplayWidth(message) + TextHelpers.DisplayWidth(timeStr);
+        if (used < width)
+        {
+            SetAttributeForRole(VisualRole.Normal);
+            AddStr(new string(' ', width - used));
+        }
+    }
+
+    // --- Text selection ---
+
+    protected override bool OnMouseEvent(Mouse mouse)
+    {
+        if (mouse.Position is not { } pos) return base.OnMouseEvent(mouse);
+
+        var flags = mouse.Flags;
+        var line = Viewport.Y + pos.Y;
+        var col = pos.X;
+
+        // Handle ongoing drag FIRST — drag events have both PositionReport and LeftButtonPressed
+        if (_isSelecting && flags.HasFlag(MouseFlags.PositionReport))
+        {
+            _selectionEnd = (line, col);
+            SetNeedsDraw();
+            return true;
+        }
+
+        // Start new selection on fresh press (not already dragging)
+        if (flags.HasFlag(MouseFlags.LeftButtonPressed) && !_isSelecting)
+        {
+            _isSelecting = true;
+            _selectionStart = (line, col);
+            _selectionEnd = (line, col);
+            App?.Mouse.GrabMouse(this);
+            SetNeedsDraw();
+            return true;
+        }
+
+        // End selection on release
+        if (flags.HasFlag(MouseFlags.LeftButtonReleased) && _isSelecting)
+        {
+            _selectionEnd = (line, col);
+            _isSelecting = false;
+            App?.Mouse.UngrabMouse();
+            SetNeedsDraw();
+            return true;
+        }
+
+        return base.OnMouseEvent(mouse);
+    }
+
+    private void ClearSelection()
+    {
+        _selectionStart = null;
+        _selectionEnd = null;
+        _isSelecting = false;
+    }
+
+    private ((int Line, int Col) Start, (int Line, int Col) End)? GetNormalizedSelection()
+    {
+        if (_selectionStart is null || _selectionEnd is null) return null;
+
+        var s = _selectionStart.Value;
+        var e = _selectionEnd.Value;
+
+        // Normalize so start <= end
+        if (s.Line > e.Line || (s.Line == e.Line && s.Col > e.Col))
+            (s, e) = (e, s);
+
+        return (s, e);
+    }
+
+    private bool IsInSelection(int lineIndex, int col)
+    {
+        var sel = GetNormalizedSelection();
+        if (sel is null) return false;
+
+        var (s, e) = sel.Value;
+
+        if (lineIndex < s.Line || lineIndex > e.Line) return false;
+        if (lineIndex == s.Line && lineIndex == e.Line)
+            return col >= s.Col && col < e.Col;
+        if (lineIndex == s.Line) return col >= s.Col;
+        if (lineIndex == e.Line) return col < e.Col;
+        return true; // middle lines fully selected
+    }
+
+    public bool HasSelection => _selectionStart is not null && _selectionEnd is not null
+        && _selectionStart != _selectionEnd;
+
+    public void CopySelectionToClipboard()
+    {
+        var sel = GetNormalizedSelection();
+        if (sel is null) return;
+
+        var (s, e) = sel.Value;
+        var sb = new StringBuilder();
+
+        for (var line = s.Line; line <= e.Line && line < _displayLines.Count; line++)
+        {
+            var text = _displayLines[line].Text;
+            var startCol = line == s.Line ? s.Col : 0;
+            var endCol = line == e.Line ? e.Col : text.Length;
+
+            startCol = Math.Max(0, Math.Min(startCol, text.Length));
+            endCol = Math.Max(startCol, Math.Min(endCol, text.Length));
+
+            if (startCol < endCol)
+                sb.Append(text[startCol..endCol]);
+
+            if (line < e.Line)
+                sb.AppendLine();
+        }
+
+        var clipText = sb.ToString();
+        if (!string.IsNullOrEmpty(clipText))
+        {
+            App?.Clipboard?.TrySetClipboardData(clipText);
+        }
+
+        ClearSelection();
+        SetNeedsDraw();
+    }
+
+    private void DrawSelectionOverlay(int row, int lineIndex, int width, Color bg)
+    {
+        var sel = GetNormalizedSelection();
+        if (sel is null) return;
+
+        var (s, e) = sel.Value;
+        if (lineIndex < s.Line || lineIndex > e.Line) return;
+
+        var startCol = lineIndex == s.Line ? s.Col : 0;
+        var endCol = lineIndex == e.Line ? e.Col : width;
+        startCol = Math.Max(0, Math.Min(startCol, width));
+        endCol = Math.Max(startCol, Math.Min(endCol, width));
+
+        if (startCol >= endCol) return;
+
+        // Get the text for this line to re-render with inverted colors
+        var text = lineIndex < _displayLines.Count ? _displayLines[lineIndex].Text : "";
+        var selAttr = new Attribute(bg, new Color(180, 210, 255)); // inverted: bg as fg, light blue as bg
+
+        for (var col = startCol; col < endCol; col++)
+        {
+            Move(col, row);
+            SetAttribute(selAttr);
+            var ch = col < text.Length ? text[col].ToString() : " ";
+            AddStr(ch);
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            StopWorking();
+        }
+        base.Dispose(disposing);
     }
 
     private static Attribute GetMessageAttribute(string type, Color bg)

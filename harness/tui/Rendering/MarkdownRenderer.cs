@@ -116,8 +116,8 @@ public static class MarkdownRenderer
         var text = prefix + ExtractInlineText(heading.Inline);
 
         // Headings don't word-wrap — truncate if needed
-        if (text.Length > width)
-            text = text[..width];
+        if (TextHelpers.DisplayWidth(text) > width)
+            text = TextHelpers.TruncateToWidth(text, width);
 
         lines.Add((text, [new StyledRun(text, attr)]));
     }
@@ -133,7 +133,8 @@ public static class MarkdownRenderer
         foreach (var codeLine in codeLines)
         {
             var line = codeLine.TrimEnd('\r');
-            var display = line.Length > width ? line[..width] : line;
+            var display = TextHelpers.DisplayWidth(line) > width
+                ? TextHelpers.TruncateToWidth(line, width) : line;
 
             var lineAttr = attr;
             if (isDiff && display.Length > 0)
@@ -159,7 +160,8 @@ public static class MarkdownRenderer
         foreach (var codeLine in codeLines)
         {
             var line = codeLine.TrimEnd('\r');
-            var display = line.Length > width ? line[..width] : line;
+            var display = TextHelpers.DisplayWidth(line) > width
+                ? TextHelpers.TruncateToWidth(line, width) : line;
             lines.Add((display, [new StyledRun(display, attr)]));
         }
     }
@@ -272,7 +274,7 @@ public static class MarkdownRenderer
         foreach (var (_, cells) in rows)
         {
             for (var c = 0; c < cells.Count; c++)
-                colWidths[c] = Math.Max(colWidths[c], cells[c].Length);
+                colWidths[c] = Math.Max(colWidths[c], TextHelpers.DisplayWidth(cells[c]));
         }
 
         // Cap total width: "| col1 | col2 | ... |" = sum(colWidths) + 3*colCount + 1
@@ -297,10 +299,10 @@ public static class MarkdownRenderer
                 lineText += "| ";
 
                 var cellText = c < cells.Count ? cells[c] : "";
-                if (cellText.Length > colWidths[c])
-                    cellText = cellText[..colWidths[c]];
+                if (TextHelpers.DisplayWidth(cellText) > colWidths[c])
+                    cellText = TextHelpers.TruncateToWidth(cellText, colWidths[c]);
                 else
-                    cellText = cellText.PadRight(colWidths[c]);
+                    cellText = TextHelpers.PadToWidth(cellText, colWidths[c]);
 
                 lineRuns.Add(new StyledRun(cellText, cellAttr));
                 lineText += cellText;
@@ -461,12 +463,12 @@ public static class MarkdownRenderer
         {
             if (word.Length == 0) continue;
 
-            var needed = word.Length + (trailingSpace ? 1 : 0);
+            var wordWidth = TextHelpers.DisplayWidth(word);
             var lineWidth = isFirstLine ? width : width;
             var indentStr = "";
 
             // Check if we need to wrap
-            if (col > 0 && col + 1 + word.Length > lineWidth)
+            if (col > 0 && col + 1 + wordWidth > lineWidth)
             {
                 FlushLine();
             }
@@ -490,7 +492,7 @@ public static class MarkdownRenderer
 
             currentRuns.Add(new StyledRun(word, style));
             currentText += word;
-            col += word.Length;
+            col += wordWidth;
         }
 
         // Flush last line
@@ -560,14 +562,14 @@ public static class MarkdownRenderer
         var remaining = text;
         while (remaining.Length > 0)
         {
-            if (remaining.Length <= width)
+            if (TextHelpers.DisplayWidth(remaining) <= width)
             {
                 result.Add(remaining);
                 break;
             }
 
-            var breakAt = remaining.LastIndexOf(' ', width - 1);
-            if (breakAt <= 0) breakAt = width;
+            var breakAt = TextHelpers.FindWordBreakByColumns(remaining, width);
+            if (breakAt <= 0) breakAt = 1; // safety: advance at least one char
 
             result.Add(remaining[..breakAt]);
             remaining = remaining[breakAt..].TrimStart();

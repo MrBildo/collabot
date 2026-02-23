@@ -45,6 +45,8 @@ public class MainWindow : Window
     public MainWindow()
     {
         Title = "";
+        if (Padding is not null)
+            Padding.Thickness = new Thickness(2, 1, 2, 0);
 
         _connection = new HarnessConnection();
         _connection.ConnectionStateChanged += OnConnectionStateChanged;
@@ -97,6 +99,7 @@ public class MainWindow : Window
         };
         _inputField.KeyDown += OnInputKeyDown;
         _inputField.ContentsChanged += OnInputContentsChanged;
+        _messageView.SelectionCopied += () => _inputField.SetFocus();
 
         _bottomSeparator = new Line
         {
@@ -297,6 +300,7 @@ public class MainWindow : Window
 
         App?.Invoke(() =>
         {
+            _messageView.StopWorking();
             var timestamp = DateTime.TryParse(e.Timestamp, out var ts) ? ts : DateTime.Now;
             _messageView.AddMessage(new ChatMessage(timestamp, e.Type, e.From, e.Content));
         });
@@ -354,7 +358,25 @@ public class MainWindow : Window
 
     private void OnInputKeyDown(object? sender, Key e)
     {
-        if (e == Key.L.WithCtrl)
+        if (e == Key.C.WithCtrl)
+        {
+            if (_messageView.HasSelection)
+            {
+                _messageView.CopySelectionToClipboard();
+            }
+            else
+            {
+                _inputField.InvokeCommand(Command.Copy);
+                _inputField.IsSelecting = false;
+            }
+            e.Handled = true;
+        }
+        else if (e == Key.V.WithCtrl)
+        {
+            _inputField.InvokeCommand(Command.Paste);
+            e.Handled = true;
+        }
+        else if (e == Key.L.WithCtrl)
         {
             ClearMessages();
             e.Handled = true;
@@ -536,9 +558,11 @@ public class MainWindow : Window
         }
 
         AddMessage("user", "you", text);
+        _messageView.StartWorking();
 
         if (_connection.ConnectionState != ConnectionState.Connected)
         {
+            _messageView.StopWorking();
             AddMessage("error", "system", "Not connected to harness");
             return;
         }
@@ -550,6 +574,7 @@ public class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _messageView.StopWorking();
             App?.Invoke(() => AddMessage("error", "system", $"Failed to submit: {ex.Message}"));
         }
     }
