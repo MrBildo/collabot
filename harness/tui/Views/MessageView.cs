@@ -3,6 +3,7 @@ using Terminal.Gui.ViewBase;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Collabot.Tui.Models;
+using Collabot.Tui.Rendering;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 using Color = Terminal.Gui.Drawing.Color;
 
@@ -20,7 +21,7 @@ public class MessageView : View
     /// <summary>Maximum messages to retain. 0 = unlimited. When exceeded, oldest 20% are pruned.</summary>
     public int MaxMessages { get; set; } = 10_000;
 
-    private record DisplayLine(int MessageIndex, string Text);
+    private record DisplayLine(int MessageIndex, string Text, IReadOnlyList<StyledRun>? Runs = null);
 
     public MessageView()
     {
@@ -121,6 +122,8 @@ public class MessageView : View
         UpdateContentSize();
     }
 
+    private static readonly HashSet<string> MarkdownTypes = new(StringComparer.OrdinalIgnoreCase) { "chat", "result" };
+
     private void WrapMessage(int index, int width)
     {
         var msg = _messages[index];
@@ -136,6 +139,13 @@ public class MessageView : View
         if (width <= 0)
         {
             width = 80;
+        }
+
+        // Markdown rendering for chat/result messages
+        if (MarkdownTypes.Contains(msg.Type))
+        {
+            WrapMarkdownMessage(index, msg, width);
+            return;
         }
 
         if (text.Length <= width)
@@ -164,6 +174,48 @@ public class MessageView : View
             var breakAt = FindWordBreak(remaining, contWidth);
             _displayLines.Add(new DisplayLine(index, indent + remaining[..breakAt]));
             remaining = remaining[breakAt..].TrimStart();
+        }
+    }
+
+    private void WrapMarkdownMessage(int index, ChatMessage msg, int width)
+    {
+        var bg = GetAttributeForRole(VisualRole.Normal).Background;
+        var baseAttr = GetMessageAttribute(msg.Type, bg);
+
+        // Build timestamp prefix: "[HH:mm:ss] [from] "
+        var prefix = msg.Type switch
+        {
+            "user" => $"[{msg.Timestamp:HH:mm:ss}] > ",
+            _ when !string.IsNullOrEmpty(msg.From) => $"[{msg.Timestamp:HH:mm:ss}] [{msg.From}] ",
+            _ => $"[{msg.Timestamp:HH:mm:ss}] "
+        };
+
+        // Continuation lines use TimestampIndent, not full prefix width
+        var contentWidth = Math.Max(width - TimestampIndent, 20);
+
+        // Render markdown content
+        var mdLines = Rendering.MarkdownRenderer.Render(msg.Content, contentWidth, bg, baseAttr);
+
+        if (mdLines.Count == 0)
+        {
+            _displayLines.Add(new DisplayLine(index, prefix, [new StyledRun(prefix, baseAttr)]));
+            return;
+        }
+
+        // First line: prepend timestamp prefix
+        var firstMd = mdLines[0];
+        var firstRuns = new List<StyledRun> { new(prefix, baseAttr) };
+        firstRuns.AddRange(firstMd.Runs);
+        _displayLines.Add(new DisplayLine(index, prefix + firstMd.Text, firstRuns));
+
+        // Continuation lines: indent past timestamp only
+        var indent = new string(' ', TimestampIndent);
+        for (var i = 1; i < mdLines.Count; i++)
+        {
+            var md = mdLines[i];
+            var runs = new List<StyledRun> { new(indent) };
+            runs.AddRange(md.Runs);
+            _displayLines.Add(new DisplayLine(index, indent + md.Text, runs));
         }
     }
 
@@ -269,20 +321,47 @@ public class MessageView : View
                 continue;
             }
 
-            SetAttribute(GetMessageAttribute(msg.Type, bg));
-
-            var lineText = displayLine.Text;
-
-            if (lineText.Length > width)
+            if (displayLine.Runs is not null)
             {
-                lineText = lineText[..width];
+                // Styled rendering: iterate runs
+                var col = 0;
+                foreach (var run in displayLine.Runs)
+                {
+                    var text = run.Text;
+                    if (col + text.Length > width)
+                        text = text[..(width - col)];
+
+                    SetAttribute(run.Style ?? GetMessageAttribute(msg.Type, bg));
+                    AddStr(text);
+                    col += text.Length;
+
+                    if (col >= width) break;
+                }
+
+                // Pad remainder
+                if (col < width)
+                {
+                    SetAttributeForRole(VisualRole.Normal);
+                    AddStr(new string(' ', width - col));
+                }
             }
             else
             {
-                lineText = lineText.PadRight(width);
-            }
+                SetAttribute(GetMessageAttribute(msg.Type, bg));
 
-            AddStr(lineText);
+                var lineText = displayLine.Text;
+
+                if (lineText.Length > width)
+                {
+                    lineText = lineText[..width];
+                }
+                else
+                {
+                    lineText = lineText.PadRight(width);
+                }
+
+                AddStr(lineText);
+            }
         }
 
         return true;
