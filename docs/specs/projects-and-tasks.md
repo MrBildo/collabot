@@ -177,7 +177,7 @@ Each adapter validates its own inputs and provides project context before callin
 | Adapter | Project Resolution | Task Resolution |
 |---------|--------------------|-----------------|
 | **CLI** | `--project` flag (required) | `--task` flag or auto-create |
-| **WebSocket** | `project` field in JSON-RPC request (required, validated by adapter) | `task` field in JSON-RPC request |
+| **WebSocket** | `project` field in JSON-RPC request (required, validated by adapter) | `task` field in JSON-RPC request (required for draft, optional for autonomous dispatch) |
 | **TUI** | Active project state, set via slash command or startup | Prompt user to select/create if none active |
 | **Slack** | Deferred | Deferred |
 

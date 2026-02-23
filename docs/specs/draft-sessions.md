@@ -122,7 +122,7 @@ The SDK also emits `SDKCompactBoundaryMessage` (subtype `compact_boundary`) when
 
 | Method | Params | Result | Description |
 |--------|--------|--------|-------------|
-| `draft` | `{ role }` | `{ sessionId, taskSlug }` | Draft an agent by role. Creates task + session. Error if draft already active. |
+| `draft` | `{ role, project, task }` | `{ sessionId, taskSlug, project }` | Draft an agent by role into an existing task. Error if draft already active or task not found. |
 | `undraft` | `{}` | `{ sessionId, taskSlug, turns, cost }` | Close the active draft. Returns session summary. Error if no active draft. |
 | `get_draft_status` | `{}` | `{ active, session? }` | Returns current draft state including metrics. `active: false` if no draft. |
 
@@ -157,7 +157,7 @@ The `role` and `taskSlug` params are ignored when a draft is active — the draf
 
 | Command | Action |
 |---------|--------|
-| `/draft <role>` | Call `draft` RPC. On success, TUI enters "draft mode" — title bar updates, subsequent messages route to draft. |
+| `/draft <role>` | Call `draft` RPC with active project + task. Requires both. On success, TUI enters "draft mode" — title bar updates, subsequent messages route to draft. |
 | `/undraft` | Call `undraft` RPC. TUI exits draft mode. Display session summary (turns, cost, duration). |
 | `/context` | Call `get_draft_status` RPC. Display context metrics: input tokens, context window, % used, cumulative cost, turn count. |
 
@@ -192,9 +192,9 @@ Collabot ● Connected | No draft | Agents: 0
 
 Manages draft session lifecycle:
 
-- `createDraft(role, adapter, config, roles, pool, mcpServers)` → DraftSession
+- `createDraft({ role, project, projectsDir, taskSlug, taskDir, channelId, pool })` → DraftSession
   - Generate sessionId (UUID)
-  - Create task via `getOrCreateTask()`
+  - Task is required — provided by caller (adapter resolves before calling)
   - Register in pool (stays registered until undraft)
   - Persist `draft.json`
   - Return session
@@ -266,7 +266,7 @@ Modify `submit_prompt` handler to check for active draft before falling through 
 **Scope:** New `harness/src/draft.ts`, `harness/src/types.ts`
 
 - `DraftSession` type
-- `createDraft()` — session creation, task creation, pool registration, persistence
+- `createDraft()` — session creation, pool registration, persistence (task provided by caller)
 - `closeDraft()` — pool release, persistence, summary
 - `loadActiveDraft()` — crash recovery
 - `draft.json` read/write
@@ -285,7 +285,7 @@ Modify `submit_prompt` handler to check for active draft before falling through 
 
 **Scope:** `harness/src/ws-methods.ts`, `harness/src/adapters/ws.ts`
 
-- `draft` method — validate no active draft, create session, return sessionId + taskSlug
+- `draft` method — validate project + task + no active draft, create session, return sessionId + taskSlug + project
 - `undraft` method — validate active draft, close session, return summary
 - `get_draft_status` method — return current draft state + metrics
 - Modify `submit_prompt` — check for active draft, route accordingly
@@ -311,7 +311,6 @@ Currently, worker agents drafted by the user's agent use autonomous dispatch (st
 
 ## Out of Scope
 
-- **Project scoping** — TUI project selection, project-aware routing. Separate effort.
 - **Multiple concurrent drafts** — one draft at a time for now.
 - **Manual compaction (`/compact`)** — SDK doesn't expose this. Rely on auto-compaction.
 - **Bot abstraction** — persistent identity/personality layer sits above this. Future work.
