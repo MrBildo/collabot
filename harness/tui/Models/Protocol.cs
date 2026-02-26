@@ -61,7 +61,7 @@ public record ListProjectsResult(ProjectInfo[] Projects);
 
 public record CreateProjectResult(string Name, string[] Paths, string[] Roles);
 
-public record CreateTaskResult(string Slug, string TaskDir);
+public record CreateTaskResult(string Slug, string TaskDir, bool SlugModified = false);
 
 public record CloseTaskResult(bool Success);
 

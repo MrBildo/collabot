@@ -43,7 +43,7 @@ Each turn still spawns a subprocess (cold-start), but the SDK loads conversation
 | Output format | None — agent responds naturally | Structured JSON schema |
 | Session | Resumed via sessionId | Fresh each dispatch |
 | Result | Text stream to user | Parsed AgentResult |
-| MCP tools | Category-gated (same as today) | Category-gated (same as today) |
+| MCP tools | Permissions-gated per role | Permissions-gated per role |
 | Pool tracking | Register on draft, release on undraft | Register → release on completion |
 | Initiated by | User via TUI | User via any adapter, or agent via MCP |
 
@@ -51,7 +51,7 @@ The existing `handleTask` → `draftAgent` → `dispatch` path remains unchanged
 
 ### MCP Gating Unchanged
 
-MCP tool access remains category-driven via `config.mcp.fullAccessCategories`. A drafted `product-analyst` (conversational) gets full MCP tools (draft/await/kill). A drafted `api-dev` (coding) gets readonly tools. No changes needed — the existing gating is correct.
+MCP tool access is permissions-driven via the role's `permissions` frontmatter field (see `docs/specs/role-system-v2.md`). A drafted `product-analyst` with `permissions: [agent-draft, projects-list, projects-create]` gets full MCP tools (draft/await/kill). A drafted `dotnet-dev` with no permissions gets readonly tools.
 
 ### Manual Compaction Not Available
 
@@ -279,7 +279,7 @@ Modify `submit_prompt` handler to check for active draft before falling through 
 - No `outputFormat` — agent responds naturally
 - Stream text responses to adapter via `channel_message` notifications
 - Update metrics on turn completion
-- MCP server injection (same category gating as today)
+- MCP server injection (permissions-gated per role frontmatter)
 
 ### Step 4: WS Protocol + Method Registration
 

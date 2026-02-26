@@ -4,11 +4,30 @@ import yaml from 'js-yaml';
 import { z } from 'zod';
 import type { RoleDefinition } from './types.js';
 
-const RoleFrontmatterSchema = z.object({
-  name: z.string(),
-  displayName: z.string(),
-  category: z.string(),
-  model: z.string().optional(),
+// Exported enums — used by config validation and entity tooling
+export const ModelHintEnum = z.enum(['opus-latest', 'sonnet-latest', 'haiku-latest']);
+export const PermissionsEnum = z.enum(['agent-draft', 'projects-list', 'projects-create']);
+
+export const EntityNameSchema = z.string()
+  .min(1).max(64)
+  .regex(/^[a-z0-9](?:[a-z0-9]*-?[a-z0-9])*$/,
+    'lowercase alphanumeric with hyphens, no start/end/consecutive hyphens');
+
+export const RoleFrontmatterSchema = z.object({
+  // Common entity fields
+  id: z.string().length(26, 'ULID must be exactly 26 characters'),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/, 'must be valid semver (e.g. 1.0.0)'),
+  name: EntityNameSchema,
+  description: z.string().min(1).max(1024),
+  createdOn: z.string().datetime({ offset: true }),
+  createdBy: z.string().min(1).max(32),
+  updatedOn: z.string().datetime({ offset: true }).optional(),
+  updatedBy: z.string().max(32).optional(),
+  displayName: z.string().max(64).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
+  // Role-specific fields (kebab-case YAML)
+  'model-hint': ModelHintEnum,
+  permissions: z.array(PermissionsEnum).optional(),
 });
 
 export function parseFrontmatter(content: string, filename: string): { frontmatter: unknown; body: string } {
@@ -61,8 +80,22 @@ export function loadRoles(rolesDir: string): Map<string, RoleDefinition> {
       throw new Error(`${file}: invalid frontmatter:\n${issues}`);
     }
 
-    const { name, displayName, category, model } = result.data;
-    roles.set(name, { name, displayName, category, model, prompt: body });
+    const fm = result.data;
+    roles.set(fm.name, {
+      id: fm.id,
+      version: fm.version,
+      name: fm.name,
+      description: fm.description,
+      createdOn: fm.createdOn,
+      createdBy: fm.createdBy,
+      updatedOn: fm.updatedOn,
+      updatedBy: fm.updatedBy,
+      displayName: fm.displayName,
+      metadata: fm.metadata,
+      modelHint: fm['model-hint'],   // kebab-case YAML → camelCase TS
+      permissions: fm.permissions,
+      prompt: body,
+    });
   }
 
   return roles;

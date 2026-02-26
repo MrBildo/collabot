@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createTask, findTaskByThread, getTask, listTasks, closeTask, recordDispatch, generateSlug, nextJournalFile } from './task.js';
+import { createTask, findTaskByThread, getTask, listTasks, closeTask, recordDispatch, generateSlug, deduplicateSlug, nextJournalFile } from './task.js';
 import type { DispatchRecord, TaskManifest } from './task.js';
 
 function makeTempDir(): string {
@@ -175,11 +175,102 @@ test('multiple dispatches accumulate', () => {
 
 // ── Slug generation ─────────────────────────────────────────────
 
-test('generateSlug produces stable format', () => {
-  const slug = generateSlug('Build the login feature for users');
-  assert.ok(slug.includes('login'));
-  assert.ok(slug.includes('feature'));
-  assert.match(slug, /\d{4}-\d{4}$/);
+test('generateSlug preserves valid slug names', () => {
+  const result = generateSlug('test-task');
+  assert.strictEqual(result.slug, 'test-task');
+  assert.strictEqual(result.modified, false);
+});
+
+test('generateSlug preserves simple alphanumeric names', () => {
+  const result = generateSlug('deploy');
+  assert.strictEqual(result.slug, 'deploy');
+  assert.strictEqual(result.modified, false);
+});
+
+test('generateSlug trims trailing hyphens without reporting modification', () => {
+  const result = generateSlug('new-task-');
+  assert.strictEqual(result.slug, 'new-task');
+  assert.strictEqual(result.modified, false);
+});
+
+test('generateSlug trims leading hyphens without reporting modification', () => {
+  const result = generateSlug('-my-task');
+  assert.strictEqual(result.slug, 'my-task');
+  assert.strictEqual(result.modified, false);
+});
+
+test('generateSlug lowercases without reporting modification', () => {
+  const result = generateSlug('My-Task');
+  assert.strictEqual(result.slug, 'my-task');
+  assert.strictEqual(result.modified, false);
+});
+
+test('generateSlug normalizes natural language names', () => {
+  const result = generateSlug('Build the login feature for users');
+  assert.ok(result.slug.includes('login'));
+  assert.ok(result.slug.includes('feature'));
+  assert.strictEqual(result.modified, true);
+});
+
+test('generateSlug normalizes names with spaces', () => {
+  const result = generateSlug('My Task Name');
+  assert.strictEqual(result.modified, true);
+  assert.ok(!result.slug.includes(' '));
+  assert.match(result.slug, /^[a-z0-9-]+$/);
+});
+
+test('generateSlug handles empty-ish names', () => {
+  const result = generateSlug('the a an');
+  assert.strictEqual(result.slug, 'task');
+  assert.strictEqual(result.modified, true);
+});
+
+// ── Slug deduplication ──────────────────────────────────────────
+
+test('deduplicateSlug returns base when no collision', () => {
+  const dir = makeTempDir();
+  const result = deduplicateSlug(dir, 'test-task');
+  assert.strictEqual(result.slug, 'test-task');
+  assert.strictEqual(result.deduplicated, false);
+});
+
+test('deduplicateSlug appends -2 on collision', () => {
+  const dir = makeTempDir();
+  fs.mkdirSync(path.join(dir, 'test-task'));
+  const result = deduplicateSlug(dir, 'test-task');
+  assert.strictEqual(result.slug, 'test-task-2');
+  assert.strictEqual(result.deduplicated, true);
+});
+
+test('deduplicateSlug increments past existing suffixes', () => {
+  const dir = makeTempDir();
+  fs.mkdirSync(path.join(dir, 'test-task'));
+  fs.mkdirSync(path.join(dir, 'test-task-2'));
+  const result = deduplicateSlug(dir, 'test-task');
+  assert.strictEqual(result.slug, 'test-task-3');
+  assert.strictEqual(result.deduplicated, true);
+});
+
+test('createTask returns slugModified false for valid slug name', () => {
+  const tasksDir = makeTempDir();
+  const task = createTask(tasksDir, { name: 'my-task', project: 'acme' });
+  assert.strictEqual(task.slug, 'my-task');
+  assert.strictEqual(task.slugModified, false);
+});
+
+test('createTask returns slugModified true for normalized name', () => {
+  const tasksDir = makeTempDir();
+  const task = createTask(tasksDir, { name: 'Build the login feature', project: 'acme' });
+  assert.strictEqual(task.slugModified, true);
+});
+
+test('createTask deduplicates on collision', () => {
+  const tasksDir = makeTempDir();
+  const first = createTask(tasksDir, { name: 'my-task', project: 'acme' });
+  const second = createTask(tasksDir, { name: 'my-task', project: 'acme' });
+  assert.strictEqual(first.slug, 'my-task');
+  assert.strictEqual(second.slug, 'my-task-2');
+  assert.strictEqual(second.slugModified, true);
 });
 
 // ── nextJournalFile ─────────────────────────────────────────────

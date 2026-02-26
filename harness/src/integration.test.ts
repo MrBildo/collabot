@@ -30,15 +30,26 @@ function createTask(projectsDir: string, projectName: string, slug: string, mani
 function makeRoles(): Map<string, RoleDefinition> {
   return new Map([
     ['api-dev', {
+      id: '01HXYZ01234567890ABCDEFGH',
+      version: '1.0.0',
       name: 'api-dev',
+      description: 'Backend development.',
+      createdOn: '2026-02-24T15:00:00Z',
+      createdBy: 'Test',
       displayName: 'API Dev',
-      category: 'coding',
+      modelHint: 'sonnet-latest',
       prompt: 'You are an API developer.',
     }],
     ['product-analyst', {
+      id: '01HXYZ01234567890ABCDEFGI',
+      version: '1.0.0',
       name: 'product-analyst',
+      description: 'Coordination and analysis.',
+      createdOn: '2026-02-24T15:00:00Z',
+      createdBy: 'Test',
       displayName: 'PM',
-      category: 'conversational',
+      modelHint: 'opus-latest',
+      permissions: ['agent-draft', 'projects-list', 'projects-create'],
       prompt: 'You are a product analyst.',
     }],
   ]);
@@ -155,22 +166,18 @@ test('integration: draft_agent → list → await → get_task_context (full flo
 });
 
 // ============================================================
-// Access control: role category determines server type
+// Access control: role permissions determine server type
 // ============================================================
 
-test('integration: coding role gets readonly, conversational gets full', () => {
+test('integration: coding role gets readonly, agent-draft role gets full', () => {
   const roles = makeRoles();
 
-  const config = {
-    mcp: { fullAccessCategories: ['conversational'] },
-  };
-
   const apiDevRole = roles.get('api-dev')!;
-  const isFullApiDev = config.mcp.fullAccessCategories.includes(apiDevRole.category);
+  const isFullApiDev = apiDevRole.permissions?.includes('agent-draft') ?? false;
   assert.equal(isFullApiDev, false);
 
   const pmRole = roles.get('product-analyst')!;
-  const isFullPm = config.mcp.fullAccessCategories.includes(pmRole.category);
+  const isFullPm = pmRole.permissions?.includes('agent-draft') ?? false;
   assert.equal(isFullPm, true);
 });
 

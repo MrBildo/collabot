@@ -399,6 +399,8 @@ Change inventory for implementing this spec. Not design decisions — these are 
 - **Pre-compaction memory flush** — OpenClaw pattern: silent agentic turn to externalize state before SDK compaction. Worth a spike once event capture is in place. Not this spec.
 - **Attention recitation** — Manus todo.md pattern: re-injecting task context into recent attention for long-running agents. Near-term evolution, not this spec.
 - **Hybrid search / temporal decay** — scaling knowledge base retrieval beyond Read-tool navigation. Future, when knowledge bases grow large enough to need it.
+- **Draft recovery vs. stale roles** — `loadActiveDraft()` recovers sessions from disk without validating the session's role still exists in loaded roles. Discovered during Phase 1: a recovered draft referenced `product-analyst` (archived) while only `ts-dev` was loaded. Recovery should validate the role exists and either skip with a warning or offer to close the stale session.
+- **Review prompt content** — `harness/prompts/system.md` (common agent rules) and `harness/prompts/tools.md` (MCP tool docs) were scaffolded during Phase 2 with content extracted from archived roles. Bill to review and refine with a PM agent after dev work is complete.
 
 ---
 

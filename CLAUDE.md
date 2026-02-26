@@ -35,15 +35,17 @@ Projects can be scaffolded from the TUI (`/project init <name>`) or via the `cre
 
 ## Roles
 
-Roles define agent behavior: their category and system prompt. Stored in `harness/roles/`.
+Roles are markdown files with YAML frontmatter, stored in `harness/roles/`. Each role defines a behavioral profile: identity, prompt, model hint, and permissions. Roles are tech-stack-focused (not project-specific) — any role can be assigned to any project. See `docs/specs/role-system-v2.md` for the full design.
 
-| Role | Description | Category |
-|------|-------------|----------|
-| `api-dev` | Backend development (.NET/C#) | coding |
-| `portal-dev` | Frontend development (React) | coding |
-| `app-dev` | Mobile development (React Native) | coding |
-| `qa-dev` | E2E testing (Playwright) | coding |
-| `product-analyst` | Analysis, coordination, multi-agent dispatch | conversational |
+**Frontmatter fields:** `id` (ULID), `version` (semver), `name`, `description`, `createdOn`, `createdBy`, `displayName`, `model-hint` (alias from config), `permissions` (optional, controls MCP tool access).
+
+| Role | Description | Model Hint | Permissions |
+|------|-------------|------------|-------------|
+| `dotnet-dev` | Backend development (.NET/C#) | sonnet-latest | — |
+| `ts-dev` | TypeScript/React development | sonnet-latest | — |
+| `product-analyst` | Analysis, coordination, multi-agent dispatch | opus-latest | agent-draft, projects-list, projects-create |
+
+Old project-specific roles (`api-dev`, `portal-dev`, `app-dev`, `qa-dev`) are archived in `harness/roles/archived/`.
 
 ## Running the Harness
 
@@ -68,7 +70,7 @@ Then restart with `npm run dev`. This applies before writing code, before testin
 
 ### Primary: Harness Dispatch (Agent SDK)
 
-The harness dispatches agents programmatically and handles role resolution, journal creation, structured output validation, error loop detection, context reconstruction, and MCP tool injection.
+The harness dispatches agents programmatically and handles role resolution, event capture, structured output validation, error loop detection, context reconstruction, and MCP tool injection.
 
 - **Slack adapter:** DM the bot with a task. Project context is required.
 - **CLI adapter:** `npm run cli -- --project <project> --role <role> "prompt"` for one-shot dispatch. No Slack required.
@@ -125,7 +127,8 @@ These are configured in `.env` and passed through by the harness. See `.env.exam
 
 Tasks are scoped to projects and tracked in `.projects/<project>/tasks/{task-slug}/`. Each task directory contains:
 - `task.json` — manifest (slug, name, project, status, created timestamp, dispatch history)
-- `{role}.md` — journal files per role dispatched within the task
+- `events.json` — event capture log (agent lifecycle, tool use, errors, structured results)
+- `{role}.md` — journal files per role dispatched within the task (legacy; new dispatches use event capture)
 
 Tasks have explicit lifecycle: `open` → `closed`. They are created with a name and project, and can be created via CLI, WS, or MCP tools. Task slugs are generated from the task name.
 
@@ -135,6 +138,8 @@ Tasks have explicit lifecycle: `open` → `closed`. They are created with a name
 |----------|------|---------|
 | Workflow | `docs/process/WORKFLOW.md` | Step-by-step feature planning process |
 | Architecture | `docs/process/agent-orchestration-architecture.md` | Full orchestration architecture |
+| Role System v2 | `docs/specs/role-system-v2.md` | Role schema, event capture, permissions, entity tooling |
+| Platform Vision | `docs/vision/authoring-and-knowledge.md` | Authoring conventions, knowledge model, growth philosophy |
 
 Project-specific docs (ecosystem, API contracts, domain language, releases, CI/CD, PR workflow) live in their respective project repos, not here.
 
@@ -155,7 +160,7 @@ See `.claude/skills/` for full skill definitions.
 - **Mechanical vs organic separation.** Model selection, maxTurns, budget, timeouts are harness mechanics — never in roles, skills, or bot definitions.
 - **Task is the unit of persistence.** A task spans multiple dispatches, roles, and eventually bots.
 - **Context reconstruction over session resume.** Worker bots load task context + bot memory + role, not resume sessions.
-- **Every data point is training data.** Journals, task manifests, decision records — capture aggressively, curate later.
+- **Every data point is training data.** Event logs, task manifests, decision records — capture aggressively, curate later.
 - **Tools over tokens.** Deterministic operations should be scripts/tools, not agent reasoning.
 - **Project isolation via MCP.** Agents only see their own project's data through MCP tools (`list_projects`, `list_tasks`, `get_task_context` are all scoped to parent project). Dispatch (`draft_agent`) is also parent-project-only.
 

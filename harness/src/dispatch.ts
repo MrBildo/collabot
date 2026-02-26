@@ -5,9 +5,11 @@ import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "./logger.js";
 import type { DispatchResult, DispatchOptions, RoleDefinition, ToolCall, ErrorTriplet, AgentEvent, UsageMetrics } from "./types.js";
 import { AgentResultSchema } from "./types.js";
-import type { Config } from "./config.js";
-import { createJournal, appendJournal, updateJournalStatus, extractToolTarget } from "./journal.js";
+import { resolveModelId, type Config } from "./config.js";
+import { assemblePrompt } from "./prompts.js";
+import { extractToolTarget } from "./journal.js";
 import { detectErrorLoop, detectNonRetryable } from "./monitor.js";
+import { getEventStore, makeEvent } from "./events.js";
 
 // JSON Schema for structured agent output — mirrors AgentResultSchema
 const AGENT_RESULT_JSON_SCHEMA: Record<string, unknown> = {
@@ -108,20 +110,14 @@ export async function dispatch(
   // CWD resolution: always required in options (project provides path)
   const resolvedCwd = options.cwd;
 
-  // Model resolution: per-dispatch override > role frontmatter > config default
-  const resolvedModel = options.model ?? role.model ?? config.models.default;
+  // Model resolution: per-dispatch override > role model-hint > config default
+  const resolvedModel = options.model ?? resolveModelId(role.modelHint, config);
 
-  // Inactivity timeout from config (category-driven, seconds → ms)
-  const categoryConfig = config.categories[role.category];
-  const stallTimeoutMs = (categoryConfig?.inactivityTimeout ?? 300) * 1000;
+  // Inactivity timeout from config defaults (seconds → ms)
+  const stallTimeoutMs = config.defaults.stallTimeoutSeconds * 1000;
 
-  // Process role prompt — replace {journal_path} with concrete path
-  // Milestone C: if taskDir is set, journal lives in the task dir
-  const journalFileName = options.journalFileName ?? `${role.name}.md`;
-  const journalPath = options.taskDir
-    ? `${options.taskDir}/${journalFileName}`.replace(/\\/g, '/')
-    : `.agents/journals/${options.featureSlug}/${role.name}.md`;
-  const processedPrompt = role.prompt.replaceAll('{journal_path}', journalPath);
+  // Layered prompt assembly: system prompt + role prompt + conditional tool docs
+  const assembledPrompt = assemblePrompt(role.prompt, role.permissions);
 
   // Resolve project cwd to absolute path (resolvedCwd is relative to hub root)
   const absoluteCwd = path.resolve(HUB_ROOT, resolvedCwd);
@@ -150,6 +146,19 @@ export async function dispatch(
   // contains the agent's final text even when StructuredOutput was also called.
   let capturedStructuredOutput: unknown = undefined;
 
+  // Event capture — write to task dir if available
+  const eventStore = getEventStore();
+  const taskDir = options.taskDir;
+  const taskSlug = options.featureSlug;
+
+  function emitEvent(type: Parameters<typeof makeEvent>[0], data?: Record<string, unknown>) {
+    if (taskDir) {
+      try {
+        eventStore.append(taskDir, role!.name, taskSlug, makeEvent(type, data));
+      } catch { /* event capture failure is non-fatal */ }
+    }
+  }
+
   function resetStallTimer() {
     if (stallTimer !== undefined) clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
@@ -162,30 +171,12 @@ export async function dispatch(
     role: role.name,
     model: resolvedModel,
     cwd: absoluteCwd,
-    featureSlug: options.featureSlug,
-    journalPath,
+    taskSlug,
     stallTimeoutMs,
   }, "dispatching agent");
 
-  // Create journal file in the target project directory
-  let absoluteJournalPath: string | undefined;
-  let journalStatusUpdated = false;
-  try {
-    absoluteJournalPath = createJournal({
-      featureSlug: options.featureSlug,
-      roleName: role.name,
-      project: path.basename(absoluteCwd),
-      model: resolvedModel,
-      cwd: absoluteCwd,
-      branch: undefined,
-      specPath: undefined,
-      taskDir: options.taskDir,
-      journalFileName: options.journalFileName,
-    });
-    logger.info({ journalFile: absoluteJournalPath }, "journal created");
-  } catch (journalErr) {
-    logger.error({ err: journalErr }, "failed to create journal - continuing without journaling");
-  }
+  // Emit dispatch_start event
+  emitEvent('dispatch_start', { role: role.name, model: resolvedModel, cwd: absoluteCwd });
 
   try {
     resetStallTimer();
@@ -197,7 +188,7 @@ export async function dispatch(
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: processedPrompt,
+          append: assembledPrompt,
         },
         settingSources: ["project"],
         model: resolvedModel,
@@ -233,6 +224,7 @@ export async function dispatch(
             if (text.trim()) {
               logger.info({ sessionId, text: text.slice(0, 200) }, "agent text");
               options.onEvent?.({ type: 'chat', content: text });
+              emitEvent('text', { text });
             }
           }
 
@@ -242,6 +234,7 @@ export async function dispatch(
             if (thinking.trim()) {
               logger.info({ sessionId, thinking: thinking.slice(0, 200) }, "agent thinking");
               options.onEvent?.({ type: 'thinking', content: thinking });
+              emitEvent('thinking', { text: thinking });
             }
           }
 
@@ -261,6 +254,7 @@ export async function dispatch(
 
             if (block.name !== "StructuredOutput") {
               logger.info({ sessionId, tool: block.name, target }, "tool use");
+              emitEvent('tool_use', { tool: block.name, target, input: inputSummary });
             }
 
             // Emit tool_use event (skip StructuredOutput — SDK internal)
@@ -278,26 +272,6 @@ export async function dispatch(
               pendingToolCalls.set(block.id, { tool: block.name, target });
             }
 
-            if (absoluteJournalPath) {
-              // Skip logging when the agent is targeting the journal file itself —
-              // the harness writing between the agent's Read and Edit causes
-              // "File has been modified since read" errors that trigger the
-              // non-retryable detector.
-              const normJournal = absoluteJournalPath.replace(/\\/g, '/').toLowerCase();
-              const normTarget = target ? target.replace(/\\/g, '/').toLowerCase() : '';
-              const isJournalTarget = normTarget !== '' && normJournal === normTarget;
-              if (!isJournalTarget) {
-                try {
-                  const entry = target
-                    ? `[harness] tool_use: ${block.name} ${target}`
-                    : `[harness] tool_use: ${block.name}`;
-                  appendJournal(absoluteJournalPath, entry);
-                } catch {
-                  // Journal write failure should not interrupt the agent
-                }
-              }
-            }
-
             // Sliding window error loop detection
             toolCallWindow.push({ tool: block.name, target, timestamp: Date.now() });
             if (toolCallWindow.length > 10) toolCallWindow.shift();
@@ -306,18 +280,13 @@ export async function dispatch(
             if (loopDetection) {
               if (loopDetection.severity === 'kill' && !humanRespondedSinceWarning) {
                 abortReason = 'error_loop';
-                if (absoluteJournalPath) {
-                  try {
-                    appendJournal(absoluteJournalPath, `[harness] Agent killed: error loop detected (${loopDetection.pattern}, ${loopDetection.count} repetitions)`);
-                    updateJournalStatus(absoluteJournalPath, 'failed');
-                    journalStatusUpdated = true;
-                  } catch { /* non-fatal */ }
-                }
+                emitEvent('loop_kill', { pattern: loopDetection.pattern, count: loopDetection.count });
                 controller.abort();
                 break; // exit inner block loop; outer for-await throws AbortError
               } else if (loopDetection.severity === 'warning' && !loopWarningPosted) {
                 logger.warn({ pattern: loopDetection.pattern, count: loopDetection.count }, 'error loop detected');
                 loopWarningPosted = true;
+                emitEvent('loop_warning', { pattern: loopDetection.pattern, count: loopDetection.count });
                 options.onLoopWarning?.(loopDetection.pattern, loopDetection.count);
               }
             }
@@ -366,13 +335,10 @@ export async function dispatch(
                   errorSnippet: nonRetryable.errorSnippet,
                   count: nonRetryable.count,
                 }, "non-retryable error detected");
-                if (absoluteJournalPath) {
-                  try {
-                    appendJournal(absoluteJournalPath, `[harness] Agent killed: non-retryable error (${nonRetryable.tool}::${nonRetryable.target}, ${nonRetryable.count}x: ${nonRetryable.errorSnippet.slice(0, 80)})`);
-                    updateJournalStatus(absoluteJournalPath, "failed");
-                    journalStatusUpdated = true;
-                  } catch { /* non-fatal */ }
-                }
+                emitEvent('error', {
+                  message: `Non-retryable error: ${nonRetryable.tool}::${nonRetryable.target} (${nonRetryable.count}x)`,
+                  snippet: nonRetryable.errorSnippet,
+                });
                 controller.abort();
               }
             }
@@ -380,6 +346,10 @@ export async function dispatch(
         }
       } else if (msg.type === "system" && msg.subtype === "compact_boundary") {
         logger.warn({ sessionId }, "context compacted");
+        emitEvent('compaction', {
+          trigger: (msg as any).compact_metadata?.trigger ?? 'auto',
+          preTokens: (msg as any).compact_metadata?.pre_tokens ?? 0,
+        });
         options.onCompaction?.({
           trigger: (msg as any).compact_metadata?.trigger ?? 'auto',
           preTokens: (msg as any).compact_metadata?.pre_tokens ?? 0,
@@ -397,9 +367,7 @@ export async function dispatch(
     }
 
     if (resultMsg && resultMsg.subtype === "success") {
-      if (absoluteJournalPath) {
-        try { updateJournalStatus(absoluteJournalPath, "completed"); journalStatusUpdated = true; } catch { /* non-fatal */ }
-      }
+      emitEvent('dispatch_end', { status: 'completed', cost: resultMsg.total_cost_usd });
 
       // Prefer StructuredOutput tool capture over resultMsg.result (which is
       // the agent's final text and may not be JSON even when outputFormat is set).
@@ -411,7 +379,6 @@ export async function dispatch(
             structuredResult: validated.data,
             cost: resultMsg.total_cost_usd,
             duration_ms: Date.now() - startTime,
-            journalFile: journalFileName,
             model: resolvedModel,
             usage: extractUsageMetrics(resultMsg),
           };
@@ -430,7 +397,6 @@ export async function dispatch(
               structuredResult: validated.data,
               cost: resultMsg.total_cost_usd,
               duration_ms: Date.now() - startTime,
-              journalFile: journalFileName,
               model: resolvedModel,
               usage: extractUsageMetrics(resultMsg),
             };
@@ -444,13 +410,12 @@ export async function dispatch(
           result: resultMsg.result,
           cost: resultMsg.total_cost_usd,
           duration_ms: Date.now() - startTime,
-          journalFile: journalFileName,
           model: resolvedModel,
           usage: extractUsageMetrics(resultMsg),
         };
       }
 
-      return { status: "completed", cost: resultMsg.total_cost_usd, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel, usage: extractUsageMetrics(resultMsg) };
+      return { status: "completed", cost: resultMsg.total_cost_usd, duration_ms: Date.now() - startTime, model: resolvedModel, usage: extractUsageMetrics(resultMsg) };
     }
 
     if (resultMsg) {
@@ -459,74 +424,46 @@ export async function dispatch(
       const subtype = resultMsg.subtype;
       const isHardLimit = subtype === "error_max_turns" || subtype === "error_max_budget_usd";
       logger.warn({ subtype, cost: resultMsg.total_cost_usd }, `agent stopped with error: ${subtype}`);
-      if (absoluteJournalPath) {
-        try {
-          appendJournal(absoluteJournalPath, `[harness] Agent stopped: ${subtype}`);
-          updateJournalStatus(absoluteJournalPath, "failed");
-          journalStatusUpdated = true;
-        } catch { /* non-fatal */ }
-      }
+      emitEvent('dispatch_end', { status: isHardLimit ? 'aborted' : 'crashed', reason: subtype, cost: resultMsg.total_cost_usd });
       return {
         status: isHardLimit ? "aborted" : "crashed",
         error: subtype,
         cost: resultMsg.total_cost_usd,
         duration_ms: Date.now() - startTime,
-        journalFile: journalFileName,
         model: resolvedModel,
         usage: extractUsageMetrics(resultMsg),
       };
     }
 
-    return { status: "completed", duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel };
+    emitEvent('dispatch_end', { status: 'completed' });
+    return { status: "completed", duration_ms: Date.now() - startTime, model: resolvedModel };
   } catch (err) {
     if (err instanceof AbortError) {
       if (abortReason === "stall") {
         logger.warn({ prompt: prompt.slice(0, 50), stallTimeoutMs }, "agent stalled (inactivity timeout)");
-        if (absoluteJournalPath) {
-          try {
-            appendJournal(absoluteJournalPath, "[harness] Agent stalled (inactivity timeout)");
-            updateJournalStatus(absoluteJournalPath, "stalled");
-            journalStatusUpdated = true;
-          } catch { /* non-fatal */ }
-        }
+        emitEvent('stall', { timeoutMs: stallTimeoutMs });
       } else if (abortReason === "error_loop") {
-        // Journal and status were already written before controller.abort() — nothing to do here
+        // Event already emitted before controller.abort()
         logger.warn({ prompt: prompt.slice(0, 50) }, "agent killed: error loop");
       } else if (abortReason === "non_retryable_error") {
-        // Journal and status were already written before controller.abort()
+        // Event already emitted before controller.abort()
         logger.warn({ prompt: prompt.slice(0, 50) }, "agent killed: non-retryable error");
       } else {
         logger.warn({ prompt: prompt.slice(0, 50) }, "agent aborted");
-        if (absoluteJournalPath) {
-          try {
-            appendJournal(absoluteJournalPath, "[harness] Agent aborted");
-            updateJournalStatus(absoluteJournalPath, "failed");
-            journalStatusUpdated = true;
-          } catch { /* non-fatal */ }
-        }
+        emitEvent('abort', { reason: abortReason ?? 'external' });
       }
-      return { status: "aborted", cost: resultMsg?.total_cost_usd, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel, usage: resultMsg ? extractUsageMetrics(resultMsg) : undefined };
+      emitEvent('dispatch_end', { status: 'aborted', reason: abortReason });
+      return { status: "aborted", cost: resultMsg?.total_cost_usd, duration_ms: Date.now() - startTime, model: resolvedModel, usage: resultMsg ? extractUsageMetrics(resultMsg) : undefined };
     }
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err, message }, "agent crashed");
-    if (absoluteJournalPath) {
-      try {
-        appendJournal(absoluteJournalPath, `[harness] Agent crashed: ${message}`);
-        updateJournalStatus(absoluteJournalPath, "failed");
-        journalStatusUpdated = true;
-      } catch { /* non-fatal */ }
-    }
+    emitEvent('error', { message });
+    emitEvent('dispatch_end', { status: 'crashed', error: message });
     logger.flush();
-    return { status: "crashed", error: message, duration_ms: Date.now() - startTime, journalFile: journalFileName, model: resolvedModel };
+    return { status: "crashed", error: message, duration_ms: Date.now() - startTime, model: resolvedModel };
   } finally {
     if (stallTimer !== undefined) {
       clearTimeout(stallTimer);
-    }
-    // Safety net: if journal was created but status was never updated, mark as failed
-    if (absoluteJournalPath && !journalStatusUpdated) {
-      try {
-        updateJournalStatus(absoluteJournalPath, "failed");
-      } catch { /* best effort */ }
     }
   }
 }

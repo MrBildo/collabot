@@ -204,7 +204,7 @@ export async function handleTask(
     ));
   }
 
-  const persona = role.displayName;
+  const persona = role.displayName ?? role.name;
   const projectLabel = path.basename(cwd);
 
   const channelId = message.metadata?.['channelId'] as string | undefined ?? message.threadId;
@@ -224,7 +224,7 @@ export async function handleTask(
   const dispatchStartedAt = new Date().toISOString();
   let selectedMcpServer: McpSdkServerConfigWithInstance | undefined;
   if (mcpServers) {
-    const isFullAccess = config.mcp.fullAccessCategories.includes(role.category);
+    const isFullAccess = role.permissions?.includes('agent-draft') ?? false;
     selectedMcpServer = isFullAccess
       ? mcpServers.createFull(task.slug, task.taskDir, project.name)
       : mcpServers.readonly;

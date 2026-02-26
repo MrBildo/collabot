@@ -12,10 +12,11 @@ const RoutingRuleSchema = z.object({
 export const ConfigSchema = z.object({
   models: z.object({
     default: z.string(),
+    aliases: z.record(z.string(), z.string()).default({}),
   }),
-  categories: z.record(z.string(), z.object({
-    inactivityTimeout: z.number().positive(),
-  })),
+  defaults: z.object({
+    stallTimeoutSeconds: z.number().positive().default(300),
+  }).default({ stallTimeoutSeconds: 300 }),
   routing: z.object({
     default: z.string(),
     rules: z.array(RoutingRuleSchema).default([]),
@@ -34,8 +35,7 @@ export const ConfigSchema = z.object({
   }).default({ maxConcurrent: 0 }),
   mcp: z.object({
     streamTimeout: z.number().int().positive().default(600000), // CLAUDE_CODE_STREAM_CLOSE_TIMEOUT (ms)
-    fullAccessCategories: z.array(z.string()).default(['conversational']),
-  }).default({ streamTimeout: 600000, fullAccessCategories: ['conversational'] }),
+  }).default({ streamTimeout: 600000 }),
   ws: z.object({
     port: z.number().int().positive().default(9800),
     host: z.string().default('127.0.0.1'),
@@ -43,6 +43,10 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+export function resolveModelId(modelHint: string, config: Config): string {
+  return config.models.aliases[modelHint] ?? config.models.default;
+}
 
 let _config: Config | undefined;
 

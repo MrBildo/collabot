@@ -12,10 +12,15 @@ function makeRoles(...names: string[]): Map<string, RoleDefinition> {
   const map = new Map<string, RoleDefinition>();
   for (const name of names) {
     map.set(name, {
+      id: '01HXYZ01234567890ABCDEFGH',
+      version: '1.0.0',
       name,
+      description: `${name} role.`,
+      createdOn: '2026-02-24T15:00:00Z',
+      createdBy: 'Test',
       displayName: name,
-      category: 'coding',
-      systemPrompt: `You are ${name}`,
+      modelHint: 'sonnet-latest',
+      prompt: `You are ${name}`,
     });
   }
   return map;

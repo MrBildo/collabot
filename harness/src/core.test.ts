@@ -28,19 +28,24 @@ function makeAdapter() {
 
 function makeConfig() {
   return {
-    models: { default: 'claude-sonnet-4-6' },
+    models: { default: 'claude-sonnet-4-6', aliases: { 'sonnet-latest': 'claude-sonnet-4-6' } },
     pool: { maxConcurrent: 2 },
-    mcp: { streamTimeout: 600000, fullAccessCategories: ['conversational'] },
-    categories: { coding: { inactivityTimeout: 300 } },
+    mcp: { streamTimeout: 600000 },
+    defaults: { stallTimeoutSeconds: 300 },
   };
 }
 
 function makeRoles() {
   return new Map([
     ['api-dev', {
+      id: '01HXYZ01234567890ABCDEFGH',
+      version: '1.0.0',
       name: 'api-dev',
+      description: 'Backend development.',
+      createdOn: '2026-02-24T15:00:00Z',
+      createdBy: 'Test',
       displayName: 'API Dev',
-      category: 'coding',
+      modelHint: 'sonnet-latest',
       prompt: 'You are an API developer.',
     }],
   ]);
@@ -88,6 +93,8 @@ mock.module('./task.js', {
       slug: 'test-task',
       taskDir: mockTaskDir!,
       created: '2026-02-19T10:00:00.000Z',
+      slugModified: false,
+      originalName: 'test-task',
     })),
     findTaskByThread: mock.fn(() => ({
       slug: 'test-task',
@@ -96,7 +103,8 @@ mock.module('./task.js', {
     })),
     recordDispatch: mock.fn(() => {}),
     nextJournalFile: mock.fn(() => 'api-dev.md'),
-    generateSlug: mock.fn(() => 'test-task'),
+    generateSlug: mock.fn(() => ({ slug: 'test-task', modified: false })),
+    deduplicateSlug: mock.fn(() => ({ slug: 'test-task', deduplicated: false })),
     listTasks: mock.fn(() => []),
     closeTask: mock.fn(() => {}),
     getOrCreateTask: mock.fn((_threadTs: string, _msg: string, _dir: string) => ({

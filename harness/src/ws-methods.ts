@@ -12,6 +12,8 @@ import { buildTaskContext } from './context.js';
 import { listTasks, createTask, closeTask, getTask } from './task.js';
 import { logger } from './logger.js';
 import { getActiveDraft, createDraft, closeDraft, resumeDraft } from './draft.js';
+import { scaffoldEntity, validateEntityFrontmatter } from './entity-tools.js';
+import type { EntityType } from './entity-tools.js';
 
 const WS_ERROR_TASK_NOT_FOUND = -32000;
 const WS_ERROR_AGENT_NOT_FOUND = -32001;
@@ -131,7 +133,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       const draftCwd = draftProject?.paths[0];
       let mcpServer;
       if (deps.mcpServers && draftRole) {
-        const isFullAccess = deps.config.mcp.fullAccessCategories.includes(draftRole.category);
+        const isFullAccess = draftRole?.permissions?.includes('agent-draft') ?? false;
         mcpServer = isFullAccess
           ? deps.mcpServers.createFull(draft.taskSlug, draft.taskDir, draft.project)
           : deps.mcpServers.readonly;
@@ -227,7 +229,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     const tasksDir = getProjectTasksDir(deps.projectsDir, project.name);
     const task = createTask(tasksDir, { name, project: project.name, description });
 
-    return { slug: task.slug, taskDir: task.taskDir };
+    return { slug: task.slug, taskDir: task.taskDir, slugModified: task.slugModified };
   });
 
   // close_task — close a task in a project
@@ -421,5 +423,45 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     const context = buildTaskContext(taskDir);
     return { context };
+  });
+
+  // entity_scaffold — generate a new entity file from template
+  deps.wsAdapter.addMethod('entity_scaffold', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const type = p['type'] as EntityType | undefined;
+    const name = p['name'] as string | undefined;
+    const author = p['author'] as string | undefined;
+
+    if (typeof type !== 'string') {
+      throw new JSONRPCErrorException('type is required (e.g. "role")', -32602);
+    }
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new JSONRPCErrorException('name is required and must be a non-empty string', -32602);
+    }
+    if (typeof author !== 'string' || author.trim() === '') {
+      throw new JSONRPCErrorException('author is required and must be a non-empty string', -32602);
+    }
+
+    try {
+      const result = scaffoldEntity(type as EntityType, name, author);
+      return { content: result.content, id: result.id, filePath: result.filePath };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new JSONRPCErrorException(msg, -32602);
+    }
+  });
+
+  // entity_validate — validate entity frontmatter against schema
+  deps.wsAdapter.addMethod('entity_validate', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const content = p['content'] as string | undefined;
+    const type = (p['type'] as string | undefined) ?? 'role';
+
+    if (typeof content !== 'string' || content.trim() === '') {
+      throw new JSONRPCErrorException('content is required and must be a non-empty string', -32602);
+    }
+
+    const result = validateEntityFrontmatter(content, type as EntityType);
+    return result;
   });
 }

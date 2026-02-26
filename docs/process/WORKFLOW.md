@@ -118,7 +118,7 @@ The orchestration session stays alive as **home base** throughout the release. S
 
 ### 8. Test the Implementation
 
-After sub-project agents have implemented their changes, testing is dispatched to the designated **testing project** (e.g., via the `qa-dev` role). See the testing project's documentation for the full process.
+After sub-project agents have implemented their changes, testing is dispatched to the designated **testing project** (e.g., via a testing role). See the testing project's documentation for the full process.
 
 1. **Confirm environment** — Ask the user: LOCAL or STAGE? Is the API running? Is the portal running?
 2. **Read the playbook** — Check the testing project's playbook for documented procedures (auth, navigation, common flows)

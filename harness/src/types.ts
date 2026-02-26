@@ -17,10 +17,21 @@ export const AgentResultSchema = z.object({
 export type AgentResult = z.infer<typeof AgentResultSchema>;
 
 export type RoleDefinition = {
-  name: string;
-  displayName: string;
-  category: string;
-  model?: string;
+  // Common entity fields
+  id: string;                    // ULID (26 chars)
+  version: string;               // Semver
+  name: string;                  // [a-z0-9-], 1-64 chars
+  description: string;           // 1-1024 chars
+  createdOn: string;             // RFC 3339
+  createdBy: string;             // 1-32 chars
+  updatedOn?: string;            // RFC 3339
+  updatedBy?: string;            // 0-32 chars
+  displayName?: string;          // 0-64 chars, falls back to name
+  metadata?: Record<string, string>;
+  // Role-specific fields
+  modelHint: string;             // 'opus-latest' | 'sonnet-latest' | 'haiku-latest'
+  permissions?: string[];        // 'agent-draft' | 'projects-list' | 'projects-create'
+  // Body
   prompt: string;
 };
 
@@ -45,18 +56,6 @@ export type DispatchResult = {
   journalFile?: string;         // journal filename (e.g., 'api-dev.md') — set by dispatch()
   model?: string;               // resolved model used for this dispatch
   usage?: UsageMetrics;
-};
-
-export type JournalOptions = {
-  featureSlug: string;
-  roleName: string;
-  project: string;     // project name for the header (e.g., "backend-api")
-  model: string;       // resolved model name for the initial log entry
-  cwd: string;         // absolute path to target project — journal dir created here
-  branch?: string;
-  specPath?: string;
-  taskDir?: string;         // Milestone C: task directory for journal placement
-  journalFileName?: string; // Milestone C: custom filename (from nextJournalFile)
 };
 
 export type ToolCall = {
@@ -143,4 +142,33 @@ export type DraftSummary = {
   turns: number;
   costUsd: number;
   durationMs: number;
+};
+
+// ── Event Capture (D5-D8) ───────────────────────────────────────
+
+export type CapturedEventType =
+  | 'dispatch_start'
+  | 'dispatch_end'
+  | 'text'
+  | 'thinking'
+  | 'tool_use'
+  | 'tool_result'
+  | 'compaction'
+  | 'loop_warning'
+  | 'loop_kill'
+  | 'stall'
+  | 'abort'
+  | 'error';
+
+export type CapturedEvent = {
+  type: CapturedEventType;
+  timestamp: string;           // RFC 3339
+  data?: Record<string, unknown>;
+};
+
+export type EventLog = {
+  taskSlug: string;
+  role: string;
+  startedAt: string;           // RFC 3339
+  events: CapturedEvent[];
 };

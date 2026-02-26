@@ -45,15 +45,32 @@ const STRIP_WORDS = new Set([
   'and', 'or', 'but', 'not', 'so', 'if', 'then', 'please', 'just',
 ]);
 
+// Valid task slug: lowercase alphanumeric + hyphens, no leading/trailing/consecutive hyphens, max 64 chars.
+const VALID_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+export type SlugResult = {
+  slug: string;
+  modified: boolean;
+};
+
 /**
- * Generate a short slug from a task name.
- * Extracts first 3-5 meaningful words, slugifies, appends MMDD-HHmm timestamp.
+ * Generate a slug from a task name.
+ * If the name is already a valid slug, it is returned as-is.
+ * Otherwise the name is normalized (lowercased, stop-words stripped, truncated).
  */
-export function generateSlug(name: string): string {
-  const words = name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
-    .split(/\s+/)
+export function generateSlug(name: string): SlugResult {
+  // Sanitize: trim whitespace and leading/trailing hyphens
+  const sanitized = name.trim().replace(/^-+|-+$/g, '').toLowerCase();
+
+  // If the sanitized name is already a valid slug, use it directly
+  if (sanitized.length >= 1 && sanitized.length <= 64 && VALID_SLUG_RE.test(sanitized)) {
+    return { slug: sanitized, modified: false };
+  }
+
+  // Normalize: strip non-alphanumeric, remove stop words, join with hyphens
+  const words = sanitized
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/[\s-]+/)
     .filter((w) => w.length > 0 && !STRIP_WORDS.has(w));
 
   const meaningful = words.slice(0, 5);
@@ -61,17 +78,30 @@ export function generateSlug(name: string): string {
     meaningful.push('task');
   }
 
-  const base = meaningful.join('-').slice(0, 30);
-
-  const now = new Date();
-  const mo = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const h = String(now.getHours()).padStart(2, '0');
-  const m = String(now.getMinutes()).padStart(2, '0');
-  const timestamp = `${mo}${d}-${h}${m}`;
-
-  return `${base}-${timestamp}`;
+  const slug = meaningful.join('-').slice(0, 64).replace(/-$/, '');
+  return { slug, modified: slug !== sanitized };
 }
+
+/**
+ * Find a unique slug in the tasks directory by appending -2, -3, etc. on collision.
+ */
+export function deduplicateSlug(tasksDir: string, base: string): { slug: string; deduplicated: boolean } {
+  const candidate = path.join(tasksDir, base);
+  if (!fs.existsSync(candidate)) {
+    return { slug: base, deduplicated: false };
+  }
+
+  let n = 2;
+  while (fs.existsSync(path.join(tasksDir, `${base}-${n}`))) {
+    n++;
+  }
+  return { slug: `${base}-${n}`, deduplicated: true };
+}
+
+export type CreateTaskResult = TaskContext & {
+  slugModified: boolean;
+  originalName: string;
+};
 
 /**
  * Create a new task in the given tasks directory.
@@ -81,8 +111,9 @@ export function createTask(tasksDir: string, opts: {
   project: string;
   description?: string;
   threadId?: string;
-}): TaskContext {
-  const slug = generateSlug(opts.name);
+}): CreateTaskResult {
+  const gen = generateSlug(opts.name);
+  const { slug, deduplicated } = deduplicateSlug(tasksDir, gen.slug);
   const taskDir = path.join(tasksDir, slug);
   fs.mkdirSync(taskDir, { recursive: true });
 
@@ -102,6 +133,8 @@ export function createTask(tasksDir: string, opts: {
     slug: manifest.slug,
     taskDir,
     created: manifest.created,
+    slugModified: gen.modified || deduplicated,
+    originalName: opts.name,
   };
 }
 

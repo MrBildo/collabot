@@ -1,13 +1,12 @@
 models:
   default: claude-sonnet-4-6
+  aliases:
+    opus-latest: claude-opus-4-6
+    sonnet-latest: claude-sonnet-4-6
+    haiku-latest: claude-haiku-4-5-20251001
 
-categories:
-  coding:
-    inactivityTimeout: 300
-  conversational:
-    inactivityTimeout: 180
-  research:
-    inactivityTimeout: 420
+defaults:
+  stallTimeoutSeconds: 300
 
 slack:
   debounceMs: 2000
@@ -22,9 +21,6 @@ pool:
 
 mcp:
   streamTimeout: 600000        # CLAUDE_CODE_STREAM_CLOSE_TIMEOUT (ms)
-  fullAccessCategories:         # role categories that get all tools
-    - conversational            # PM / coordinator roles
-  # All other categories get read-only tools (list_agents, list_tasks, get_task_context)
 
 ws:
   port: 9800

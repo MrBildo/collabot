@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConfigSchema } from './config.js';
+import { ConfigSchema, resolveModelId } from './config.js';
 
 const validSlack = {
   debounceMs: 2000,
@@ -9,8 +9,15 @@ const validSlack = {
 
 function validConfig(overrides: Record<string, unknown> = {}) {
   return {
-    models: { default: 'claude-sonnet-4-6' },
-    categories: { coding: { inactivityTimeout: 300 } },
+    models: {
+      default: 'claude-sonnet-4-6',
+      aliases: {
+        'opus-latest': 'claude-opus-4-6',
+        'sonnet-latest': 'claude-sonnet-4-6',
+        'haiku-latest': 'claude-haiku-4-5-20251001',
+      },
+    },
+    defaults: { stallTimeoutSeconds: 300 },
     slack: validSlack,
     ...overrides,
   };
@@ -21,7 +28,6 @@ test('valid YAML object parses correctly', () => {
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
   assert.strictEqual(result.data.models.default, 'claude-sonnet-4-6');
-  assert.strictEqual(result.data.categories['coding']?.inactivityTimeout, 300);
 });
 
 test('missing models.default fails validation', () => {
@@ -30,14 +36,6 @@ test('missing models.default fails validation', () => {
   assert.ok(!result.success);
   const paths = result.error.issues.map((i) => i.path.join('.'));
   assert.ok(paths.some((p) => p.includes('default')));
-});
-
-test('negative inactivityTimeout fails validation', () => {
-  const raw = validConfig({ categories: { coding: { inactivityTimeout: -1 } } });
-  const result = ConfigSchema.safeParse(raw);
-  assert.ok(!result.success);
-  const paths = result.error.issues.map((i) => i.path.join('.'));
-  assert.ok(paths.some((p) => p.includes('inactivityTimeout')));
 });
 
 test('routing section is optional — defaults applied', () => {
@@ -51,13 +49,13 @@ test('routing section is optional — defaults applied', () => {
 test('explicit routing section still parses', () => {
   const raw = validConfig({
     routing: {
-      default: 'api-dev',
-      rules: [{ pattern: '^portal', role: 'portal-dev' }],
+      default: 'ts-dev',
+      rules: [{ pattern: '^portal', role: 'react-dev' }],
     },
   });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.routing.default, 'api-dev');
+  assert.strictEqual(result.data.routing.default, 'ts-dev');
   assert.strictEqual(result.data.routing.rules.length, 1);
 });
 
@@ -100,6 +98,66 @@ test('slack section with defaults fills in reaction names', () => {
 });
 
 // ============================================================
+// Model aliases tests
+// ============================================================
+
+test('model aliases parse correctly', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.models.aliases['opus-latest'], 'claude-opus-4-6');
+  assert.strictEqual(result.data.models.aliases['sonnet-latest'], 'claude-sonnet-4-6');
+  assert.strictEqual(result.data.models.aliases['haiku-latest'], 'claude-haiku-4-5-20251001');
+});
+
+test('config without aliases section defaults to empty record', () => {
+  const raw = validConfig({ models: { default: 'claude-sonnet-4-6' } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.deepStrictEqual(result.data.models.aliases, {});
+});
+
+// ============================================================
+// Defaults tests
+// ============================================================
+
+test('defaults.stallTimeoutSeconds parses correctly', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.defaults.stallTimeoutSeconds, 300);
+});
+
+test('config without defaults section uses default (300s)', () => {
+  const { defaults: _defaults, ...noDefaults } = validConfig();
+  const result = ConfigSchema.safeParse(noDefaults);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.defaults.stallTimeoutSeconds, 300);
+});
+
+test('negative stallTimeoutSeconds fails validation', () => {
+  const raw = validConfig({ defaults: { stallTimeoutSeconds: -1 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+});
+
+// ============================================================
+// resolveModelId tests
+// ============================================================
+
+test('resolveModelId resolves known alias', () => {
+  const config = ConfigSchema.parse(validConfig());
+  assert.strictEqual(resolveModelId('opus-latest', config), 'claude-opus-4-6');
+  assert.strictEqual(resolveModelId('sonnet-latest', config), 'claude-sonnet-4-6');
+  assert.strictEqual(resolveModelId('haiku-latest', config), 'claude-haiku-4-5-20251001');
+});
+
+test('resolveModelId falls back to default for unknown alias', () => {
+  const config = ConfigSchema.parse(validConfig());
+  assert.strictEqual(resolveModelId('unknown-hint', config), 'claude-sonnet-4-6');
+});
+
+// ============================================================
 // MCP config tests
 // ============================================================
 
@@ -108,20 +166,15 @@ test('config without mcp section is valid — defaults applied', () => {
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
   assert.strictEqual(result.data.mcp.streamTimeout, 600000);
-  assert.deepStrictEqual(result.data.mcp.fullAccessCategories, ['conversational']);
 });
 
 test('config with mcp section parses correctly', () => {
   const raw = validConfig({
-    mcp: {
-      streamTimeout: 300000,
-      fullAccessCategories: ['conversational', 'research'],
-    },
+    mcp: { streamTimeout: 300000 },
   });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
   assert.strictEqual(result.data.mcp.streamTimeout, 300000);
-  assert.deepStrictEqual(result.data.mcp.fullAccessCategories, ['conversational', 'research']);
 });
 
 // ============================================================

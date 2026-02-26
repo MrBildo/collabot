@@ -13,6 +13,8 @@ import { listTasks } from './task.js';
 import { CliAdapter } from './adapters/cli.js';
 import { AgentPool } from './pool.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
+import { scaffoldEntity, validateEntityFrontmatter, validateLinks } from './entity-tools.js';
+import type { EntityType } from './entity-tools.js';
 import type { DraftAgentFn } from './mcp.js';
 import type { InboundMessage } from './comms.js';
 
@@ -38,6 +40,91 @@ const cwdOverride = values['cwd'] as string | undefined;
 const taskSlug = values['task'] as string | undefined;
 const showListTasks = values['list-tasks'] as boolean | undefined;
 const showListProjects = values['list-projects'] as boolean | undefined;
+
+// --- Entity subcommands (no config/roles/projects needed) ---
+if (positionals[0] === 'entity') {
+  const sub = positionals[1];
+
+  if (sub === 'scaffold') {
+    const entityType = positionals[2] as EntityType | undefined;
+    const entityName = positionals[3];
+    const author = positionals[4];
+
+    if (!entityType || !entityName || !author) {
+      console.error('Usage: npm run cli -- entity scaffold <type> <name> "<author>"');
+      console.error('  type: role');
+      console.error('  Example: npm run cli -- entity scaffold role my-role "Bill Wheelock"');
+      process.exit(1);
+    }
+
+    try {
+      const result = scaffoldEntity(entityType, entityName, author);
+      const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));
+      const outPath = path.join(rolesDir, result.filePath);
+
+      if (fs.existsSync(outPath)) {
+        console.error(`Error: File already exists: ${outPath}`);
+        process.exit(1);
+      }
+
+      fs.writeFileSync(outPath, result.content, 'utf8');
+      console.log(`Scaffolded ${entityType}: ${outPath}`);
+      console.log(`  ID: ${result.id}`);
+      console.log(`  Name: ${entityName}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  if (sub === 'validate') {
+    const filePath = positionals[2];
+    const entityType = (positionals[3] ?? 'role') as EntityType;
+
+    if (!filePath) {
+      console.error('Usage: npm run cli -- entity validate <file> [type]');
+      console.error('  type defaults to "role"');
+      process.exit(1);
+    }
+
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) {
+      console.error(`Error: File not found: ${resolved}`);
+      process.exit(1);
+    }
+
+    const content = fs.readFileSync(resolved, 'utf8');
+    const fmResult = validateEntityFrontmatter(content, entityType);
+
+    if (!fmResult.valid) {
+      console.error('Frontmatter validation failed:');
+      for (const err of fmResult.errors ?? []) {
+        console.error(`  - ${err}`);
+      }
+    }
+
+    const linkResult = validateLinks(content, path.dirname(resolved));
+    if (!linkResult.valid) {
+      console.error('Broken links:');
+      for (const link of linkResult.broken ?? []) {
+        console.error(`  - ${link}`);
+      }
+    }
+
+    if (fmResult.valid && linkResult.valid) {
+      console.log('Valid.');
+    } else {
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  console.error(`Unknown entity command: ${sub}`);
+  console.error('Available: scaffold, validate');
+  process.exit(1);
+}
 
 // Load config
 let config;

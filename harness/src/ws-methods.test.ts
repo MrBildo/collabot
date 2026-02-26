@@ -14,7 +14,17 @@ import type { RoleDefinition, Project } from './types.js';
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function makeRole(name = 'api-dev'): RoleDefinition {
-  return { name, displayName: 'API Dev', category: 'coding', prompt: '' };
+  return {
+    id: '01HXYZ01234567890ABCDEFGH',
+    version: '1.0.0',
+    name,
+    description: 'Test role.',
+    createdOn: '2026-02-24T15:00:00Z',
+    createdBy: 'Test',
+    displayName: 'API Dev',
+    modelHint: 'sonnet-latest',
+    prompt: '',
+  };
 }
 
 function makeProjects(): Map<string, Project> {

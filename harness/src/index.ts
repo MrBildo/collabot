@@ -4,8 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger, logTier } from './logger.js';
 import { startSlackApp } from './slack.js';
-import { loadConfig } from './config.js';
-import { loadRoles } from './roles.js';
+import { loadConfig, resolveModelId } from './config.js';
+import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
 import { loadProjects } from './project.js';
 import { watchJournals } from './journal.js';
 import { AgentPool } from './pool.js';
@@ -39,8 +39,8 @@ try {
   process.exit(1);
 }
 
-const categoryCount = Object.keys(config.categories).length;
 const defaultModel = config.models.default;
+const aliasCount = Object.keys(config.models.aliases).length;
 
 // Load roles (fail fast before any connections)
 const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));
@@ -54,14 +54,29 @@ try {
   process.exit(1);
 }
 
-// Validate role categories against config
+// Validate role model-hints resolve to a known alias or the default model
+const knownAliases = Object.keys(config.models.aliases);
+const validModelHints = ModelHintEnum.options;
+const validPermissions = PermissionsEnum.options;
+
 for (const role of roles.values()) {
-  if (!(role.category in config.categories)) {
-    logger.error(
-      { role: role.name, category: role.category, knownCategories: Object.keys(config.categories) },
-      'role references unknown category',
+  // Warn if model-hint has no alias mapping (will fall back to default)
+  if (!knownAliases.includes(role.modelHint)) {
+    logger.warn(
+      { role: role.name, modelHint: role.modelHint, knownAliases },
+      'role model-hint has no alias — will use config default',
     );
-    process.exit(1);
+  }
+
+  // Validate permissions are known enum values
+  for (const perm of role.permissions ?? []) {
+    if (!validPermissions.includes(perm as any)) {
+      logger.error(
+        { role: role.name, permission: perm, validPermissions },
+        'role references unknown permission',
+      );
+      process.exit(1);
+    }
   }
 }
 
@@ -136,11 +151,11 @@ console.log([
   dim('        the collaborative agent platform'),
   '',
   `  v${version} | Node ${process.version} | ${process.platform} | log=${logTier}`,
-  `  config: OK (${categoryCount} categories) | model: ${defaultModel}`,
+  `  config: OK | model: ${defaultModel} | aliases: ${aliasCount}`,
   `  projects: ${projectCount} (${projectNames || 'none'})`,
   `  roles: ${roleCount} (${roleNames})`,
   `  pool: maxConcurrent=${config.pool.maxConcurrent || 'unlimited'}`,
-  `  mcp: full=[${config.mcp.fullAccessCategories.join(',')}] streamTimeout=${config.mcp.streamTimeout}ms`,
+  `  mcp: streamTimeout=${config.mcp.streamTimeout}ms`,
   `  interfaces: ${interfaceList}`,
   '',
 ].join('\n'));
@@ -151,7 +166,7 @@ if (recoveredDraft) {
   console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
 }
 
-logger.info({ defaultModel, categoryCount }, 'config loaded');
+logger.info({ defaultModel, aliasCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
 logger.info({ projectCount, projectNames }, 'projects loaded');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');

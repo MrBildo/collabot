@@ -1,7 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
 import { watch, type FSWatcher } from "chokidar";
-import type { JournalOptions } from "./types.js";
 
 export type JournalChangeHandler = (journalPath: string, newEntries: string[]) => void;
 
@@ -10,70 +8,6 @@ export type JournalStatus = {
   lastEntries: string[];
   lastActivity: Date;
 };
-
-function formatTime(): string {
-  const now = new Date();
-  const h = String(now.getHours()).padStart(2, "0");
-  const m = String(now.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
-}
-
-function formatDateTime(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const mo = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${mo}-${d} ${formatTime()}`;
-}
-
-/**
- * Creates a journal file.
- * If taskDir is provided, the journal is created there (Milestone C task-based).
- * Otherwise falls back to legacy .agents/journals/{featureSlug}/ in the project cwd.
- * Returns the absolute path to the created file.
- */
-export function createJournal(options: JournalOptions): string {
-  const journalDir = options.taskDir ?? path.join(options.cwd, ".agents", "journals", options.featureSlug);
-  fs.mkdirSync(journalDir, { recursive: true });
-
-  const filePath = path.join(journalDir, options.journalFileName ?? `${options.roleName}.md`);
-  const spec = options.specPath ?? "N/A";
-  const branch = options.branch ?? "N/A";
-  const started = formatDateTime();
-  const time = formatTime();
-
-  const content =
-    `# Journal: ${options.featureSlug}\n` +
-    `Spec: ${spec}\n` +
-    `Project: ${options.project}\n` +
-    `Branch: ${branch}\n` +
-    `Started: ${started}\n` +
-    `Status: in-progress\n` +
-    `\n` +
-    `## Log\n` +
-    `\n` +
-    `- ${time} — [harness] Agent dispatched (${options.roleName}, ${options.model})\n`;
-
-  fs.writeFileSync(filePath, content, "utf-8");
-  return filePath;
-}
-
-/**
- * Appends a timestamped entry to the journal's ## Log section.
- */
-export function appendJournal(journalPath: string, entry: string): void {
-  const line = `- ${formatTime()} — ${entry}\n`;
-  fs.appendFileSync(journalPath, line, "utf-8");
-}
-
-/**
- * Updates the Status: line in the journal header.
- */
-export function updateJournalStatus(journalPath: string, newStatus: string): void {
-  const content = fs.readFileSync(journalPath, "utf-8");
-  const updated = content.replace(/^Status: .+$/m, `Status: ${newStatus}`);
-  fs.writeFileSync(journalPath, updated, "utf-8");
-}
 
 /**
  * Extracts a human-readable target from a tool_use input block.

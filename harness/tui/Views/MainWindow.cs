@@ -5,6 +5,7 @@ using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
 using Collabot.Tui.Models;
+using Collabot.Tui.Rendering;
 using Collabot.Tui.Services;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 using Color = Terminal.Gui.Drawing.Color;
@@ -43,8 +44,11 @@ public class MainWindow : Window
     private const int _maxHistorySize = 50;
     private int _inputLineCount = 1;
     private const int MaxInputLines = 10;
+    private bool _browsingHistory;
 
     private bool _escPending;
+    private bool _pasting;
+    private long _lastNonEnterKeyTicks; // timestamp-based paste detection
     private object? _escTimer;
 
     public MainWindow()
@@ -401,7 +405,15 @@ public class MainWindow : Window
         }
         else if (e == Key.V.WithCtrl)
         {
-            _inputField.InvokeCommand(Command.Paste);
+            _pasting = true;
+            try
+            {
+                _inputField.InvokeCommand(Command.Paste);
+            }
+            finally
+            {
+                _pasting = false;
+            }
             e.Handled = true;
         }
         else if (e == Key.L.WithCtrl)
@@ -421,7 +433,18 @@ public class MainWindow : Window
         }
         else if (e == Key.Enter)
         {
-            SubmitInput();
+            // TODO: Refactor — replace timestamp heuristic with bracketed paste mode
+            // when Terminal.Gui adds support. See: https://en.wikipedia.org/wiki/Bracketed-paste
+            var elapsed = (DateTime.UtcNow.Ticks - _lastNonEnterKeyTicks) / TimeSpan.TicksPerMillisecond;
+            if (_pasting || elapsed < 5)
+            {
+                // Newline in pasted text — insert as newline, don't submit
+                _inputField.InvokeCommand(Command.NewLine);
+            }
+            else
+            {
+                SubmitInput();
+            }
             e.Handled = true;
         }
         else if (e == Key.Enter.WithShift)
@@ -429,21 +452,31 @@ public class MainWindow : Window
             _inputField.InvokeCommand(Command.NewLine);
             e.Handled = true;
         }
-        else if (e == Key.CursorUp && IsOnFirstLine())
+        else if (e == Key.CursorUp && (IsInputEmpty() || _browsingHistory) && IsOnFirstLine())
         {
             NavigateHistory(-1);
             e.Handled = true;
         }
-        else if (e == Key.CursorDown && IsOnLastLine())
+        else if (e == Key.CursorDown && (IsInputEmpty() || _browsingHistory) && IsOnLastLine())
         {
             NavigateHistory(1);
             e.Handled = true;
+        }
+        else if (!e.Handled && e != Key.CursorUp && e != Key.CursorDown
+                 && e != Key.CursorLeft && e != Key.CursorRight
+                 && e != Key.Esc && e != Key.Tab)
+        {
+            _lastNonEnterKeyTicks = DateTime.UtcNow.Ticks;
+            _browsingHistory = false;
         }
     }
 
     private void OnInputContentsChanged(object? sender, ContentsChangedEventArgs e)
     {
         UpdateInputLayout();
+        // Deferred re-check: Viewport.Width may be stale during synchronous
+        // ContentsChanged (especially after paste). Re-run after layout settles.
+        App?.Invoke(() => UpdateInputLayout());
     }
 
     private void HandleEscKey()
@@ -522,9 +555,7 @@ public class MainWindow : Window
                 {
                     _inputField.Text = result.Content;
                     _inputField.MoveEnd();
-                    // Scroll viewport so cursor (at end) is visible
-                    var scrollTo = Math.Max(0, _inputField.CurrentRow - _inputLineCount + 1);
-                    _inputField.ScrollTo(scrollTo, isRow: true);
+                    ScrollInputToCursor();
                 }
                 else
                 {
@@ -555,28 +586,78 @@ public class MainWindow : Window
         if (newHeight != _inputLineCount)
         {
             _inputLineCount = newHeight;
-            // Bottom reservation = input + 2 separators + 1 statusbar
-            var bottomRows = _inputLineCount + 3;
-            _inputField.Height = _inputLineCount;
-            _topSeparator.Y = Pos.AnchorEnd(bottomRows);
-            _inputPrompt.Y = Pos.AnchorEnd(bottomRows - 1);
-            _inputField.Y = Pos.AnchorEnd(bottomRows - 1);
-            // _bottomSeparator.Y stays at AnchorEnd(2)
-            _messageView.Height = Dim.Fill(bottomRows);
-            SetNeedsLayout();
-            SetNeedsDraw();
+            ApplyInputHeight();
         }
+
+        // Always ensure cursor is visible — shared with editor path
+        ScrollInputToCursor();
+    }
+
+    /// <summary>
+    /// Recalculate and apply the input area height and surrounding layout.
+    /// Called from UpdateInputLayout and after editor returns.
+    /// </summary>
+    private void ApplyInputHeight()
+    {
+        var bottomRows = _inputLineCount + 3;
+        _inputField.Height = _inputLineCount;
+        _topSeparator.Y = Pos.AnchorEnd(bottomRows);
+        _inputPrompt.Y = Pos.AnchorEnd(bottomRows - 1);
+        _inputField.Y = Pos.AnchorEnd(bottomRows - 1);
+        _messageView.Height = Dim.Fill(bottomRows);
+        SetNeedsLayout();
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Scroll the input viewport so the cursor row is visible.
+    /// Shared between inline typing and external editor return paths.
+    /// </summary>
+    private void ScrollInputToCursor()
+    {
+        var scrollTo = Math.Max(0, _inputField.CurrentRow - _inputLineCount + 1);
+        _inputField.ScrollTo(scrollTo, isRow: true);
     }
 
     private int GetInputLineCount()
     {
         var text = _inputField.Text;
         if (string.IsNullOrEmpty(text)) return 1;
-        var count = 1;
-        foreach (var c in text)
-            if (c == '\n') count++;
-        return count;
+
+        // Viewport.Width can be stale during ContentsChanged; fall back to Frame.Width
+        var viewWidth = _inputField.Viewport.Width;
+        if (viewWidth <= 0) viewWidth = _inputField.Frame.Width;
+        if (viewWidth <= 0) return 1;
+
+        var lines = text.Split('\n');
+        var totalRows = 0;
+        foreach (var line in lines)
+        {
+            totalRows += CountWrappedLines(line, viewWidth);
+        }
+        return Math.Max(1, totalRows);
     }
+
+    /// <summary>
+    /// Estimate how many display rows a single line occupies with word-wrap.
+    /// TextView with WordWrap=true only wraps at word boundaries (spaces).
+    /// Text without spaces scrolls horizontally — it never wraps onto a new row.
+    /// For text with spaces, character-width ceiling division is close enough.
+    /// </summary>
+    private static int CountWrappedLines(string line, int width)
+    {
+        if (string.IsNullOrEmpty(line)) return 1;
+
+        var lineWidth = TextHelpers.DisplayWidth(line);
+        if (lineWidth <= width) return 1;
+
+        // No spaces means no word-wrap points — TextView scrolls horizontally
+        if (!line.Contains(' ')) return 1;
+
+        return (int)Math.Ceiling((double)lineWidth / width);
+    }
+
+    private bool IsInputEmpty() => string.IsNullOrWhiteSpace(_inputField.Text);
 
     private bool IsOnFirstLine() => _inputField.CurrentRow == 0;
 
@@ -618,6 +699,7 @@ public class MainWindow : Window
         {
             _historyIndex = -1;
             _historyStash = "";
+            _browsingHistory = false;
             return;
         }
 
@@ -630,6 +712,7 @@ public class MainWindow : Window
 
         _historyIndex = -1;
         _historyStash = "";
+        _browsingHistory = false;
     }
 
     private void NavigateHistory(int direction)
@@ -662,11 +745,13 @@ public class MainWindow : Window
             _inputField.Text = _historyStash;
             _historyIndex = -1;
             _historyStash = "";
+            _browsingHistory = false;
             return;
         }
 
         _historyIndex = newIndex;
         _inputField.Text = _commandHistory[_historyIndex];
+        _browsingHistory = true;
     }
 
     private async Task HandleReconnectAsync()
@@ -983,14 +1068,17 @@ public class MainWindow : Window
                 await HandleTaskSubcommandAsync("list");
                 break;
 
+            case "new":
             case "create":
                 {
                     var name = subParts.Length > 1 ? subParts[1].Trim() : null;
                     if (string.IsNullOrWhiteSpace(name))
                     {
-                        AddSystemMessage("Usage: /task create <name>");
+                        AddSystemMessage("Usage: /task new <name>");
                         return;
                     }
+                    if (_draftActive)
+                        await CloseActiveDraftAsync("task changed");
                     await HandleTaskCreateAsync(name);
                 }
                 break;
@@ -1003,18 +1091,24 @@ public class MainWindow : Window
                         AddSystemMessage("Usage: /task close [slug] (or set a current task first)");
                         return;
                     }
+                    if (_draftActive)
+                        await CloseActiveDraftAsync("task closed");
                     await HandleTaskCloseAsync(slug);
                 }
                 break;
 
             case "clear":
+                if (_draftActive)
+                    await CloseActiveDraftAsync("task cleared");
                 _currentTask = null;
                 AddSystemMessage("Task cleared");
                 UpdateStatusHeader();
                 break;
 
             default:
-                // Treat as slug selection
+                // Treat as slug selection — close existing draft if switching tasks
+                if (_draftActive && !string.Equals(_currentTask, arg, StringComparison.Ordinal))
+                    await CloseActiveDraftAsync("task changed");
                 _currentTask = arg;
                 AddSystemMessage($"Task set to: {arg}");
                 UpdateStatusHeader();
@@ -1071,7 +1165,10 @@ public class MainWindow : Window
             {
                 _currentTask = result.Slug;
                 UpdateStatusHeader();
-                AddSystemMessage($"Task created: {result.Slug}");
+                if (result.SlugModified)
+                    AddSystemMessage($"Task created: {result.Slug} (name was normalized from \"{name}\")");
+                else
+                    AddSystemMessage($"Task created: {result.Slug}");
             });
         }
         catch (Exception ex)
@@ -1226,6 +1323,17 @@ public class MainWindow : Window
             return;
         }
 
+        await CloseActiveDraftAsync();
+    }
+
+    /// <summary>
+    /// Closes the active draft session. Returns true if closed successfully, false on error.
+    /// Callers should check _draftActive before calling, or accept a no-op.
+    /// </summary>
+    private async Task<bool> CloseActiveDraftAsync(string? reason = null)
+    {
+        if (!_draftActive) return true;
+
         try
         {
             var result = await _connection.UndraftAsync();
@@ -1243,13 +1351,16 @@ public class MainWindow : Window
                 var durationStr = duration.TotalMinutes >= 1
                     ? $"{duration.TotalMinutes:F1}m"
                     : $"{duration.TotalSeconds:F0}s";
+                var suffix = reason is not null ? $" ({reason})" : "";
                 AddMessage("lifecycle", "system",
-                    $"Draft ended \u2014 {result.Turns} turns, ${result.Cost:F2}, {durationStr}");
+                    $"Draft ended \u2014 {result.Turns} turns, ${result.Cost:F2}, {durationStr}{suffix}");
             });
+            return true;
         }
         catch (Exception ex)
         {
             App?.Invoke(() => AddMessage("error", "system", $"Failed to undraft: {ex.Message}"));
+            return false;
         }
     }
 
@@ -1331,7 +1442,7 @@ public class MainWindow : Window
         AddSystemMessage("  /task                 Show current task");
         AddSystemMessage("  /task <slug>          Set active task");
         AddSystemMessage("  /task list            List tasks in project");
-        AddSystemMessage("  /task create <name>   Create a task in project");
+        AddSystemMessage("  /task new <name>      Create a task in project");
         AddSystemMessage("  /task close [slug]    Close a task");
         AddSystemMessage("  /task clear           Clear current task");
         AddSystemMessage("  /kill <id>            Kill an agent");

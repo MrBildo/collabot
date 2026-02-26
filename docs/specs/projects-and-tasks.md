@@ -53,10 +53,11 @@ Tasks are **physically scoped** to their project:
   kindkatch/
     project.yaml
     tasks/
-      portal-fix-flyout-0219-1430/
+      portal-fix-flyout/
         task.json
-        portal-dev.md
-        api-dev.md
+        events.json
+        dotnet-dev.md
+        ts-dev.md
   research/
     project.yaml
     tasks/
@@ -113,10 +114,8 @@ paths:                                             # required, minimum one
   - ../kindkatchapp
   - ../kindkatch-testing
 roles:                                             # required, minimum one
-  - api-dev
-  - portal-dev
-  - app-dev
-  - qa-dev
+  - dotnet-dev
+  - ts-dev
   - product-analyst
 ```
 
@@ -144,13 +143,15 @@ roles:
 Roles shed `cwd` — the project provides the path. A role becomes purely a **behavioral profile**: what kind of agent is this and how does it behave.
 
 **Role definition (frontmatter):**
+- `id` — ULID, globally unique
+- `version` — semver
 - `name` — identifier
 - `displayName` — human-friendly label
-- `category` — `coding` or `conversational` (determines MCP access level)
-- `model` — optional, falls back to config default
+- `model-hint` — optional model alias, falls back to config default
+- `permissions` — optional list (e.g., `agent-draft`, `projects-list`), controls MCP tool access
 
 **Role definition (body):**
-- System prompt, journal instructions, rules
+- System prompt (Identity, How You Work, Practices)
 
 **Role skills:**
 - Roles carry skills managed at the harness level, following the [agentskills.io](https://agentskills.io/home) standard
