@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "description": "Collabot — the collaborative agent platform",
   "type": "module",
+  "bin": {
+    "collabot": "dist/entry.js"
+  },
+  "files": [
+    "dist/",
+    "config.defaults.toml"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts | pino-pretty",
     "build": "tsc",

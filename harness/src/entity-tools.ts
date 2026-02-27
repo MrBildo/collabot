@@ -128,6 +128,7 @@ export function validateLinks(content: string, basePath: string): LinkValidation
 
   for (const match of content.matchAll(MARKDOWN_LINK_RE)) {
     const target = match[2];
+    if (!target) continue;
 
     // Skip URLs, anchors, and protocol links
     if (target.startsWith('http://') || target.startsWith('https://') || target.startsWith('#') || target.includes('://')) {

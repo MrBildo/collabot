@@ -1,0 +1,31 @@
+# Collabot — default configuration
+# Copied to ~/.collabot/config.toml on `collabot init`.
+# Package fallback for fields missing from user config.
+
+[models]
+default = "claude-sonnet-4-6"
+
+[models.aliases]
+opus-latest = "claude-opus-4-6"
+sonnet-latest = "claude-sonnet-4-6"
+haiku-latest = "claude-haiku-4-5-20251001"
+
+[defaults]
+stallTimeoutSeconds = 300
+
+[agent]
+maxTurns = 50
+maxBudgetUsd = 1.00
+
+[logging]
+level = "debug"     # minimal | debug | verbose
+
+[pool]
+maxConcurrent = 0   # 0 = unlimited
+
+[mcp]
+streamTimeout = 600000
+
+[ws]
+port = 9800
+host = "127.0.0.1"

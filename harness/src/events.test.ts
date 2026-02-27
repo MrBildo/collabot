@@ -58,10 +58,10 @@ test('append accumulates events in order', () => {
   const log = store.read(dir);
   assert.ok(log);
   assert.strictEqual(log.events.length, 4);
-  assert.strictEqual(log.events[0].type, 'dispatch_start');
-  assert.strictEqual(log.events[1].type, 'text');
-  assert.strictEqual(log.events[2].type, 'tool_use');
-  assert.strictEqual(log.events[3].type, 'dispatch_end');
+  assert.strictEqual(log.events[0]!.type, 'dispatch_start');
+  assert.strictEqual(log.events[1]!.type, 'text');
+  assert.strictEqual(log.events[2]!.type, 'tool_use');
+  assert.strictEqual(log.events[3]!.type, 'dispatch_end');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

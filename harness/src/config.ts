@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
-import { getInstancePath } from './paths.js';
+import { getInstancePath, getPackagePath } from './paths.js';
 
 const RoutingRuleSchema = z.object({
   pattern: z.string(),
@@ -59,19 +59,60 @@ export function resolveModelId(modelHint: string, config: Config): string {
 
 let _config: Config | undefined;
 
-export function loadConfig(): Config {
-  const configPath = getInstancePath('config.toml');
+/**
+ * Deep-merge two plain objects. `override` values win over `base`.
+ * Arrays and non-object values are replaced entirely, not merged.
+ */
+function deepMerge(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const key of Object.keys(override)) {
+    const baseVal = base[key];
+    const overrideVal = override[key];
+    if (
+      baseVal !== null && typeof baseVal === 'object' && !Array.isArray(baseVal) &&
+      overrideVal !== null && typeof overrideVal === 'object' && !Array.isArray(overrideVal)
+    ) {
+      result[key] = deepMerge(
+        baseVal as Record<string, unknown>,
+        overrideVal as Record<string, unknown>,
+      );
+    } else {
+      result[key] = overrideVal;
+    }
+  }
+  return result;
+}
 
-  let raw: unknown;
+export function loadConfig(): Config {
+  // Load package defaults (fallback for missing user fields)
+  let defaults: Record<string, unknown> = {};
+  const defaultsPath = getPackagePath('config.defaults.toml');
+  if (existsSync(defaultsPath)) {
+    try {
+      defaults = parseToml(readFileSync(defaultsPath, 'utf8')) as Record<string, unknown>;
+    } catch {
+      // Malformed defaults — continue without them
+    }
+  }
+
+  // Load user config
+  const configPath = getInstancePath('config.toml');
+  let userConfig: Record<string, unknown>;
   try {
     const content = readFileSync(configPath, 'utf8');
-    raw = parseToml(content);
+    userConfig = parseToml(content) as Record<string, unknown>;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to read config.toml: ${msg}`);
   }
 
-  const result = ConfigSchema.safeParse(raw);
+  // Merge: defaults <- user overrides
+  const merged = deepMerge(defaults, userConfig);
+
+  const result = ConfigSchema.safeParse(merged);
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
