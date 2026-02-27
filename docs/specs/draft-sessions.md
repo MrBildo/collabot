@@ -294,7 +294,7 @@ Modify `submit_prompt` handler to check for active draft before falling through 
 
 ### Step 5: TUI Commands + Status Display
 
-**Scope:** `harness/tui/Views/MainWindow.cs`, `harness/tui/Services/HarnessConnection.cs`, `harness/tui/Models/Protocol.cs`
+**Scope:** TUI client (separate repo: `github.com/MrBildo/collabot-tui`)
 
 - `/draft <role>` command — call `draft` RPC, enter draft mode
 - `/undraft` command — call `undraft` RPC, display summary, exit draft mode
