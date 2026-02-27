@@ -32,6 +32,24 @@ This matters because it means the platform's job is to provide the **infrastruct
 
 ---
 
+## Platform Principles
+
+These are the governing beliefs behind how Collabot works. They emerged from building and using the platform, not from theory. Concrete specs and design decisions should trace back to these.
+
+### Curated context over large context
+
+An agent with a reduced context window, important conventions, precise instructions, and small granular tasks in short sessions is far more valuable than an agent with a million-token context window and just vibes to go on. More context is not better context — the same way more storage is not better schema design. Collabot's job is to assemble the *right* context, not the *most* context.
+
+### Phase sizing is context window budget
+
+Work phases aren't a formal SDLC ceremony — they're sized to what fits in a single coding agent's context window. A phase is a granular, isolated, logical task that one agent can hold in its head and execute completely. This is a novel constraint that traditional process frameworks don't account for. Metrics and memory will refine the sizing over time, but the constraint is structural, not arbitrary.
+
+### Iterative formalization
+
+Start loose, use the system, let the vision become self-evident, then codify. Roles followed this pattern: started as simple prompt files, accumulated real usage, revealed their true requirements, and got a formal spec (Role System v2) only when the shape was clear. Task internals are on the same path. Designing too early means guessing; designing after usage means knowing. The loose version is not debt — it's research.
+
+---
+
 ## The OS-for-Bots Analogy
 
 Collabot is, in a meaningful sense, an operating system for AI agents. The analogy maps surprisingly well:
