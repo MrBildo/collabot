@@ -33,3 +33,17 @@ The platform that enables this is what Collabot is becoming. The harness is home
 That's the vision. It has near-term pieces (product/instance separation, task internals, context optimization) and far-horizon pieces (bot memory, spatial presence, agent communication). But the arc is clear, and every architectural decision — from "curated context over large context" to "iterative formalization" to "the harness is the core" — points toward the same destination.
 
 A workplace, not a workflow engine.
+
+## Deployment Identity
+
+Collabot is a **service installed on a machine**, not a library consumed by projects. One install, one instance, one configuration. Like a database server, a CI agent, or Docker — you install it globally, configure it once, start it, and it runs. Projects connect to it; it doesn't live inside them.
+
+This is a foundational architectural constraint, not a deployment detail. It informs every design decision about packaging, configuration, path resolution, and multi-project support. Collabot manages many projects, but there is one Collabot per machine.
+
+```
+npm install -g collabot    # install the platform
+collabot init              # scaffold ~/.collabot/ with minimal config
+collabot start             # run the service
+```
+
+The instance lives at `~/.collabot/` (or `COLLABOT_HOME`). Everything the user configures — roles, skills, projects, credentials — lives there. The harness code ships as a global npm package and is updated independently of instance content. Product updates never touch user configuration.
