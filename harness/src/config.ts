@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
+import { getInstancePath } from './paths.js';
 
 const RoutingRuleSchema = z.object({
   pattern: z.string(),
@@ -60,7 +60,7 @@ export function resolveModelId(modelHint: string, config: Config): string {
 let _config: Config | undefined;
 
 export function loadConfig(): Config {
-  const configPath = fileURLToPath(new URL('../config.toml', import.meta.url));
+  const configPath = getInstancePath('config.toml');
 
   let raw: unknown;
   try {

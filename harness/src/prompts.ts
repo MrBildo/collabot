@@ -1,28 +1,28 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { getInstancePath } from './paths.js';
 
 let _systemPrompt: string | undefined;
 let _toolDocs: string | undefined;
 
 /**
- * Load and cache the harness system prompt (harness/prompts/system.md).
+ * Load and cache the harness system prompt (prompts/system.md).
  * Common rules injected into every agent dispatch.
  */
 export function loadSystemPrompt(): string {
   if (_systemPrompt === undefined) {
-    const promptPath = fileURLToPath(new URL('../prompts/system.md', import.meta.url));
+    const promptPath = getInstancePath('prompts', 'system.md');
     _systemPrompt = readFileSync(promptPath, 'utf8');
   }
   return _systemPrompt;
 }
 
 /**
- * Load and cache MCP tool documentation (harness/prompts/tools.md).
+ * Load and cache MCP tool documentation (prompts/tools.md).
  * Conditionally injected for roles with the 'agent-draft' permission.
  */
 export function loadToolDocs(): string {
   if (_toolDocs === undefined) {
-    const toolsPath = fileURLToPath(new URL('../prompts/tools.md', import.meta.url));
+    const toolsPath = getInstancePath('prompts', 'tools.md');
     _toolDocs = readFileSync(toolsPath, 'utf8');
   }
   return _toolDocs;

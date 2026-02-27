@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
@@ -19,10 +18,6 @@ import type { AgentPool } from './pool.js';
 import type { RoleDefinition, DraftSession, DraftSummary, ToolCall, ErrorTriplet, LoopDetectionThresholds } from './types.js';
 import { resolveModelId, type Config } from './config.js';
 import { assemblePrompt } from './prompts.js';
-
-// Hub root: harness/src/draft.ts → ../../ = hub root
-const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-
 
 // --- Module state (singleton — one draft at a time) ---
 
@@ -253,7 +248,8 @@ export async function resumeDraft(
     }, stallTimeoutMs);
   }
 
-  const absoluteCwd = path.resolve(HUB_ROOT, opts.cwd);
+  // Project paths are absolute (from project manifests)
+  const absoluteCwd = path.resolve(opts.cwd);
 
   // Resolve model
   const resolvedModel = resolveModelId(role.modelHint, config);

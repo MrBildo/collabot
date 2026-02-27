@@ -1,7 +1,5 @@
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
 import { startSlackApp } from './slack.js';
 import { loadConfig, resolveModelId } from './config.js';
@@ -15,18 +13,18 @@ import { CliAdapter } from './adapters/cli.js';
 import { WsAdapter } from './adapters/ws.js';
 import { registerWsMethods } from './ws-methods.js';
 import { loadActiveDraft } from './draft.js';
+import { getInstancePath, getPackagePath } from './paths.js';
 import type { DraftAgentFn } from './mcp.js';
 import type { FSWatcher } from 'chokidar';
 import type { App } from '@slack/bolt';
 
-// Read version from package.json (adjacent to src/)
-const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+// Read version from package.json (adjacent to src/ in the package)
+const pkgPath = getPackagePath('package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string };
 const version = pkg.version;
 
-// Platform root: harness/src/index.ts → ../../ = collabot root
-const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const PROJECTS_DIR = path.join(HUB_ROOT, '.projects');
+// Instance paths
+const PROJECTS_DIR = getInstancePath('.projects');
 
 // Load config (fail fast before any connections)
 let config;
@@ -46,7 +44,7 @@ const defaultModel = config.models.default;
 const aliasCount = Object.keys(config.models.aliases).length;
 
 // Load roles (fail fast before any connections)
-const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));
+const rolesDir = getInstancePath('roles');
 let roles;
 try {
   roles = loadRoles(rolesDir);
@@ -202,9 +200,9 @@ if (wsEnabled) {
   logger.info('WS config not found — WS adapter disabled');
 }
 
-// Journal watcher — monitors .agents/journals/ in the hub root (debug-level only)
+// Journal watcher — monitors .agents/journals/ in the instance root (debug-level only)
 const usePolling = process.env.HARNESS_POLL_JOURNALS === 'true';
-const journalsDir = path.join(HUB_ROOT, '.agents', 'journals');
+const journalsDir = getInstancePath('.agents', 'journals');
 logger.info(`journal watcher started${usePolling ? ' (polling mode)' : ''}`);
 const journalWatcher: FSWatcher = watchJournals(
   journalsDir,

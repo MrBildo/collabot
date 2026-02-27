@@ -35,7 +35,7 @@ Projects can be scaffolded from the TUI (`/project init <name>`) or via the `cre
 
 ## Roles
 
-Roles are markdown files with YAML frontmatter, stored in `harness/roles/`. Each role defines a behavioral profile: identity, prompt, model hint, and permissions. Roles are tech-stack-focused (not project-specific) — any role can be assigned to any project. See `docs/specs/role-system-v2.md` for the full design.
+Roles are markdown files with YAML frontmatter, stored in `./roles/`. Each role defines a behavioral profile: identity, prompt, model hint, and permissions. Roles are tech-stack-focused (not project-specific) — any role can be assigned to any project. See `docs/specs/role-system-v2.md` for the full design.
 
 **Frontmatter fields:** `id` (ULID), `version` (semver), `name`, `description`, `createdOn`, `createdBy`, `displayName`, `model-hint` (alias from config), `permissions` (optional, controls MCP tool access).
 
@@ -45,7 +45,7 @@ Roles are markdown files with YAML frontmatter, stored in `harness/roles/`. Each
 | `ts-dev` | TypeScript/React development | sonnet-latest | — |
 | `product-analyst` | Analysis, coordination, multi-agent dispatch | opus-latest | agent-draft, projects-list, projects-create |
 
-Old project-specific roles (`api-dev`, `portal-dev`, `app-dev`, `qa-dev`) are archived in `harness/roles/archived/`.
+Old project-specific roles (`api-dev`, `portal-dev`, `app-dev`, `qa-dev`) are archived in `./roles/archived/`.
 
 ## Running the Harness
 
@@ -65,6 +65,8 @@ Stop-Process -Name node -Force
 ```
 
 Then restart with `npm run dev`. This applies before writing code, before testing, and before interpreting test results.
+
+**Running tests:** Tests use Node's built-in `node:test` runner, executed via `tsx --test`. Run with `npm test` from `harness/`. Do NOT use `vitest`, `jest`, or any other test runner — they will fail because the test files import from `node:test`, not from a third-party framework.
 
 ## Dispatching Work
 

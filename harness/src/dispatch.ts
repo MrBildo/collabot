@@ -1,5 +1,4 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { query, AbortError } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "./logger.js";
@@ -26,8 +25,6 @@ const AGENT_RESULT_JSON_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-// Hub root: harness/src/dispatch.ts → ../../ = hub root
-const HUB_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 /**
  * Build a sanitized env object for the child Claude Code process.
@@ -117,8 +114,8 @@ export async function dispatch(
   // Layered prompt assembly: system prompt + role prompt + conditional tool docs
   const assembledPrompt = assemblePrompt(role.prompt, role.permissions);
 
-  // Resolve project cwd to absolute path (resolvedCwd is relative to hub root)
-  const absoluteCwd = path.resolve(HUB_ROOT, resolvedCwd);
+  // Project paths are absolute (from project manifests)
+  const absoluteCwd = path.resolve(resolvedCwd);
 
   const maxTurns = options.maxTurns ?? config.agent.maxTurns;
   const maxBudgetUsd = options.maxBudgetUsd ?? config.agent.maxBudgetUsd;

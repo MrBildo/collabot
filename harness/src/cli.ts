@@ -2,7 +2,6 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { fileURLToPath } from 'node:url';
 import { logger, applyConfigLogLevel } from './logger.js';
 import { loadConfig } from './config.js';
 import { loadRoles } from './roles.js';
@@ -14,12 +13,12 @@ import { CliAdapter } from './adapters/cli.js';
 import { AgentPool } from './pool.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
 import { scaffoldEntity, validateEntityFrontmatter, validateLinks } from './entity-tools.js';
+import { getInstancePath } from './paths.js';
 import type { EntityType } from './entity-tools.js';
 import type { DraftAgentFn } from './mcp.js';
 import type { InboundMessage } from './comms.js';
 
-const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const PROJECTS_DIR = path.join(HUB_ROOT, '.projects');
+const PROJECTS_DIR = getInstancePath('.projects');
 
 const { values, positionals } = parseArgs({
   options: {
@@ -59,7 +58,7 @@ if (positionals[0] === 'entity') {
 
     try {
       const result = scaffoldEntity(entityType, entityName, author);
-      const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));
+      const rolesDir = getInstancePath('roles');
       const outPath = path.join(rolesDir, result.filePath);
 
       if (fs.existsSync(outPath)) {
@@ -139,7 +138,7 @@ try {
 applyConfigLogLevel(config.logging.level);
 
 // Load roles
-const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));
+const rolesDir = getInstancePath('roles');
 let roles;
 try {
   roles = loadRoles(rolesDir);
