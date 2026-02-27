@@ -1,0 +1,55 @@
+# Collabot harness configuration
+# Copy to config.toml and adjust values as needed.
+# Secrets and system paths go in .env, not here.
+
+# --- Model configuration ---
+
+[models]
+default = "claude-sonnet-4-6"          # Fallback model when no alias matches
+
+[models.aliases]
+opus-latest = "claude-opus-4-6"
+sonnet-latest = "claude-sonnet-4-6"
+haiku-latest = "claude-haiku-4-5-20251001"
+
+# --- Agent defaults ---
+
+[defaults]
+stallTimeoutSeconds = 300               # Inactivity timeout before agent abort (seconds)
+
+[agent]
+maxTurns = 50                           # Max agentic turns per dispatch (overridable per-dispatch)
+maxBudgetUsd = 1.00                     # Max spend per dispatch in USD (overridable per-dispatch)
+
+# --- Logging ---
+
+[logging]
+level = "debug"                         # minimal | debug | verbose
+                                        # Can be overridden by HARNESS_LOG_LEVEL env var
+
+# --- Slack adapter (optional — omit to disable) ---
+
+# [slack]
+# debounceMs = 2000
+#
+# [slack.reactions]
+# received = "eyes"
+# working = "hammer"
+# success = "white_check_mark"
+# failure = "x"
+
+# --- Agent pool ---
+
+[pool]
+maxConcurrent = 3                       # 0 = unlimited
+
+# --- MCP ---
+
+[mcp]
+streamTimeout = 600000                  # CLAUDE_CODE_STREAM_CLOSE_TIMEOUT (ms)
+
+# --- WebSocket adapter (optional — omit to disable) ---
+
+[ws]
+port = 9800
+host = "127.0.0.1"

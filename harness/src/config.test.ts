@@ -23,7 +23,7 @@ function validConfig(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test('valid YAML object parses correctly', () => {
+test('valid config object parses correctly', () => {
   const raw = validConfig();
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
@@ -137,6 +137,58 @@ test('config without defaults section uses default (300s)', () => {
 
 test('negative stallTimeoutSeconds fails validation', () => {
   const raw = validConfig({ defaults: { stallTimeoutSeconds: -1 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+});
+
+// ============================================================
+// Agent defaults tests
+// ============================================================
+
+test('agent section defaults applied when omitted', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.agent.maxTurns, 50);
+  assert.strictEqual(result.data.agent.maxBudgetUsd, 1.00);
+});
+
+test('agent section with custom values parses correctly', () => {
+  const raw = validConfig({ agent: { maxTurns: 100, maxBudgetUsd: 5.00 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.agent.maxTurns, 100);
+  assert.strictEqual(result.data.agent.maxBudgetUsd, 5.00);
+});
+
+test('agent.maxTurns must be positive', () => {
+  const raw = validConfig({ agent: { maxTurns: 0, maxBudgetUsd: 1.00 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+});
+
+// ============================================================
+// Logging tests
+// ============================================================
+
+test('logging section defaults to debug when omitted', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.logging.level, 'debug');
+});
+
+test('logging.level accepts valid tiers', () => {
+  for (const level of ['minimal', 'debug', 'verbose']) {
+    const raw = validConfig({ logging: { level } });
+    const result = ConfigSchema.safeParse(raw);
+    assert.ok(result.success, `should accept level "${level}"`);
+    assert.strictEqual(result.data.logging.level, level);
+  }
+});
+
+test('logging.level rejects invalid values', () => {
+  const raw = validConfig({ logging: { level: 'trace' } });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(!result.success);
 });

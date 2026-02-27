@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import yaml from 'js-yaml';
+import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
 const RoutingRuleSchema = z.object({
@@ -8,6 +8,8 @@ const RoutingRuleSchema = z.object({
   role: z.string(),
   cwd: z.string().optional(),
 });
+
+const LogLevelSchema = z.enum(['minimal', 'debug', 'verbose']).default('debug');
 
 export const ConfigSchema = z.object({
   models: z.object({
@@ -17,6 +19,13 @@ export const ConfigSchema = z.object({
   defaults: z.object({
     stallTimeoutSeconds: z.number().positive().default(300),
   }).default({ stallTimeoutSeconds: 300 }),
+  agent: z.object({
+    maxTurns: z.number().int().positive().default(50),
+    maxBudgetUsd: z.number().positive().default(1.00),
+  }).default({ maxTurns: 50, maxBudgetUsd: 1.00 }),
+  logging: z.object({
+    level: LogLevelSchema,
+  }).default({ level: 'debug' }),
   routing: z.object({
     default: z.string(),
     rules: z.array(RoutingRuleSchema).default([]),
@@ -51,15 +60,15 @@ export function resolveModelId(modelHint: string, config: Config): string {
 let _config: Config | undefined;
 
 export function loadConfig(): Config {
-  const configPath = fileURLToPath(new URL('../config.yaml', import.meta.url));
+  const configPath = fileURLToPath(new URL('../config.toml', import.meta.url));
 
   let raw: unknown;
   try {
     const content = readFileSync(configPath, 'utf8');
-    raw = yaml.load(content);
+    raw = parseToml(content);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to read config.yaml: ${msg}`);
+    throw new Error(`Failed to read config.toml: ${msg}`);
   }
 
   const result = ConfigSchema.safeParse(raw);
@@ -67,7 +76,7 @@ export function loadConfig(): Config {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
       .join('\n');
-    throw new Error(`config.yaml is invalid:\n${issues}`);
+    throw new Error(`config.toml is invalid:\n${issues}`);
   }
 
   _config = result.data;

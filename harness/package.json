@@ -1,6 +1,6 @@
 {
   "name": "collabot",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Collabot — the collaborative agent platform",
   "type": "module",
   "scripts": {
@@ -19,6 +19,7 @@
     "js-yaml": "4.1.1",
     "json-rpc-2.0": "1.7.1",
     "pino": "10.3.1",
+    "smol-toml": "^1.6.0",
     "ulid": "^3.0.2",
     "ws": "8.19.0",
     "zod": "4.3.6"

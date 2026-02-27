@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { logger } from './logger.js';
+import { logger, applyConfigLogLevel } from './logger.js';
 import { loadConfig } from './config.js';
 import { loadRoles } from './roles.js';
 import { loadProjects, getProject, getProjectTasksDir } from './project.js';
@@ -135,6 +135,8 @@ try {
   logger.error({ msg }, 'config load failed');
   process.exit(1);
 }
+
+applyConfigLogLevel(config.logging.level);
 
 // Load roles
 const rolesDir = fileURLToPath(new URL('../roles', import.meta.url));

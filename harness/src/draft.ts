@@ -23,7 +23,6 @@ import { assemblePrompt } from './prompts.js';
 // Hub root: harness/src/draft.ts → ../../ = hub root
 const HUB_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-const DEFAULT_MAX_TURNS = 50;
 
 // --- Module state (singleton — one draft at a time) ---
 
@@ -264,8 +263,7 @@ export async function resumeDraft(
     ? { sessionId: session.sessionId }
     : { resume: session.sessionId };
 
-  const envMaxTurns = parseInt(process.env.AGENT_MAX_TURNS ?? '', 10);
-  const maxTurns = Number.isFinite(envMaxTurns) ? envMaxTurns : DEFAULT_MAX_TURNS;
+  const maxTurns = config.agent.maxTurns;
 
   logger.info({
     sessionId: session.sessionId,

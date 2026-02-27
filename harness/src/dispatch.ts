@@ -87,10 +87,8 @@ export function extractUsageMetrics(resultMsg: SDKResultMessage): UsageMetrics |
 
 // TODO: maxTurns strategy needs PM review. error_max_turns may not be a meaningful
 // error signal for real tasks — a coding agent legitimately needs many turns.
-// Options: per-category limits in config.yaml, role-level override, or removing
+// Options: per-category limits in config.toml, role-level override, or removing
 // the hard cap entirely in favor of budget-only limiting. Revisit before launch.
-const DEFAULT_MAX_TURNS = 50;
-const DEFAULT_MAX_BUDGET_USD = 1.00;
 
 export async function dispatch(
   prompt: string,
@@ -122,10 +120,8 @@ export async function dispatch(
   // Resolve project cwd to absolute path (resolvedCwd is relative to hub root)
   const absoluteCwd = path.resolve(HUB_ROOT, resolvedCwd);
 
-  const envMaxTurns = parseInt(process.env.AGENT_MAX_TURNS ?? '', 10);
-  const maxTurns = options.maxTurns ?? (Number.isFinite(envMaxTurns) ? envMaxTurns : DEFAULT_MAX_TURNS);
-  const envMaxBudget = parseFloat(process.env.AGENT_MAX_BUDGET_USD ?? '');
-  const maxBudgetUsd = options.maxBudgetUsd ?? (Number.isFinite(envMaxBudget) ? envMaxBudget : DEFAULT_MAX_BUDGET_USD);
+  const maxTurns = options.maxTurns ?? config.agent.maxTurns;
+  const maxBudgetUsd = options.maxBudgetUsd ?? config.agent.maxBudgetUsd;
   const startTime = Date.now();
   const controller = options.abortController ?? new AbortController();
   let stallTimer: ReturnType<typeof setTimeout> | undefined;

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger, logTier } from './logger.js';
+import { logger, logTier, applyConfigLogLevel } from './logger.js';
 import { startSlackApp } from './slack.js';
 import { loadConfig, resolveModelId } from './config.js';
 import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
@@ -38,6 +38,9 @@ try {
   logger.error({ msg }, 'config load failed');
   process.exit(1);
 }
+
+// Apply config-driven log level (env var override wins if set)
+applyConfigLogLevel(config.logging.level);
 
 const defaultModel = config.models.default;
 const aliasCount = Object.keys(config.models.aliases).length;
@@ -170,6 +173,7 @@ if (recoveredDraft) {
   }
 }
 
+logger.info({ version }, 'collabot started');
 logger.info({ defaultModel, aliasCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
 logger.info({ projectCount, projectNames }, 'projects loaded');
