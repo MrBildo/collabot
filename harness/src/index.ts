@@ -161,9 +161,13 @@ console.log([
 ].join('\n'));
 
 // Recover active draft session (if harness was restarted mid-draft)
-const recoveredDraft = loadActiveDraft(projects, PROJECTS_DIR, pool);
+const recoveredDraft = loadActiveDraft(projects, PROJECTS_DIR, pool, roles);
 if (recoveredDraft) {
-  console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
+  if (recoveredDraft.staleRole) {
+    console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns) — WARNING: role no longer exists\n`);
+  } else {
+    console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
+  }
 }
 
 logger.info({ defaultModel, aliasCount }, 'config loaded');

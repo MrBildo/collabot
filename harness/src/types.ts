@@ -134,6 +134,7 @@ export type DraftSession = {
   lastOutputTokens: number;
   contextWindow: number;
   maxOutputTokens: number;
+  staleRole?: boolean;      // true if recovered draft references a role that no longer exists
 };
 
 export type DraftSummary = {

@@ -139,6 +139,7 @@ export function loadActiveDraft(
   projects: Map<string, Project>,
   projectsDir: string,
   pool: AgentPool,
+  roles: Map<string, RoleDefinition>,
 ): DraftSession | null {
   // Scan all project task directories for active drafts
   for (const project of projects.values()) {
@@ -172,8 +173,14 @@ export function loadActiveDraft(
           continue;
         }
 
+        // Validate that the role still exists
+        if (!roles.has(data.role)) {
+          logger.warn({ sessionId: data.sessionId, role: data.role }, 'recovered draft references a role that no longer exists');
+          data.staleRole = true;
+        }
+
         activeDraft = data;
-        logger.info({ sessionId: data.sessionId, role: data.role, project: data.project, turnCount: data.turnCount }, 'recovered active draft session');
+        logger.info({ sessionId: data.sessionId, role: data.role, project: data.project, turnCount: data.turnCount, staleRole: data.staleRole ?? false }, 'recovered active draft session');
         return activeDraft;
       } catch {
         // Corrupt JSON — skip silently

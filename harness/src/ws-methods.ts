@@ -127,6 +127,12 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     // Draft session routing — takes priority over autonomous dispatch
     const draft = getActiveDraft();
     if (draft) {
+      if (draft.staleRole) {
+        throw new JSONRPCErrorException(
+          `Draft role "${draft.role}" no longer exists. Use /undraft to close the stale session.`,
+          WS_ERROR_ROLE_NOT_FOUND,
+        );
+      }
       const draftRole = deps.roles.get(draft.role);
       // Resolve CWD from the draft's project
       const draftProject = deps.projects.get(draft.project.toLowerCase());
@@ -352,6 +358,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
         lastInputTokens: draft.lastInputTokens,
         contextWindow: draft.contextWindow,
         lastActivity: draft.lastActivityAt,
+        staleRole: draft.staleRole ?? false,
       },
     };
   });
