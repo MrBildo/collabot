@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
-import { WsAdapter } from './adapters/ws.js';
+import { WsAdapter, PROTOCOL_VERSION } from './adapters/ws.js';
 import { AgentPool } from './pool.js';
 import { registerWsMethods } from './ws-methods.js';
 import type { CommAdapter, InboundMessage } from './comms.js';
@@ -16,6 +16,23 @@ function connectClient(port: number): Promise<WebSocket> {
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
+}
+
+function nextMessage(ws: WebSocket): Promise<unknown> {
+  return new Promise((resolve) => {
+    ws.once('message', (data) => resolve(JSON.parse(data.toString())));
+  });
+}
+
+async function handshake(ws: WebSocket, id = 99): Promise<void> {
+  const p = nextMessage(ws);
+  ws.send(JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'handshake',
+    params: { protocolVersion: PROTOCOL_VERSION, clientName: 'test', clientVersion: '0.0.0' },
+    id,
+  }));
+  await p;
 }
 
 function collectMessages(ws: WebSocket, count: number): Promise<unknown[]> {
@@ -75,6 +92,7 @@ test('integration: list_agents RPC returns empty agents list', async () => {
 
   await adapter.start();
   const client = await connectClient(adapter.port);
+  await handshake(client);
 
   const messagesPromise = collectMessages(client, 1);
   sendRpc(client, 'list_agents', {}, 1);
@@ -114,6 +132,7 @@ test('integration: submit_prompt fires handleTask and client receives channel_me
 
   await adapter.start();
   const client = await connectClient(adapter.port);
+  await handshake(client);
 
   // Expect two messages: RPC response + channel_message notification
   const messagesPromise = collectMessages(client, 2);

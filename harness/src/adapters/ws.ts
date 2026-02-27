@@ -1,7 +1,18 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { JSONRPCServer } from 'json-rpc-2.0';
 import type { CommAdapter, ChannelMessage } from '../comms.js';
 import { logger } from '../logger.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const { version: HARNESS_VERSION } = JSON.parse(
+  readFileSync(join(__dirname, '../../package.json'), 'utf-8'),
+);
+
+export const PROTOCOL_VERSION = 1;
+const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export interface WsAdapterOptions {
   port: number;
@@ -13,6 +24,8 @@ export class WsAdapter implements CommAdapter {
 
   private wss: WebSocketServer | null = null;
   private clients: Set<WebSocket> = new Set();
+  private handshaked: Set<WebSocket> = new Set();
+  private handshakeTimeouts: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
   private rpc: JSONRPCServer = new JSONRPCServer();
   private options: WsAdapterOptions;
 
@@ -53,8 +66,22 @@ export class WsAdapter implements CommAdapter {
         this.clients.add(socket);
         logger.info({ clientCount: this.clients.size }, 'WS client connected');
 
+        const timeout = setTimeout(() => {
+          if (!this.handshaked.has(socket)) {
+            logger.warn('WS client failed to handshake within timeout, closing');
+            socket.close(4000, 'Handshake timeout');
+          }
+        }, HANDSHAKE_TIMEOUT_MS);
+        this.handshakeTimeouts.set(socket, timeout);
+
         socket.on('message', async (data) => {
           const text = data.toString();
+
+          if (!this.handshaked.has(socket)) {
+            this.handlePreHandshake(socket, text);
+            return;
+          }
+
           const response = await this.rpc.receiveJSON(text);
           if (response !== null) {
             socket.send(JSON.stringify(response));
@@ -62,13 +89,13 @@ export class WsAdapter implements CommAdapter {
         });
 
         socket.on('close', () => {
-          this.clients.delete(socket);
+          this.cleanupSocket(socket);
           logger.info({ clientCount: this.clients.size }, 'WS client disconnected');
         });
 
         socket.on('error', (err) => {
           logger.error({ err }, 'WS client error');
-          this.clients.delete(socket);
+          this.cleanupSocket(socket);
         });
       });
     });
@@ -76,6 +103,12 @@ export class WsAdapter implements CommAdapter {
 
   stop(): Promise<void> {
     return new Promise((resolve, reject) => {
+      for (const timeout of this.handshakeTimeouts.values()) {
+        clearTimeout(timeout);
+      }
+      this.handshakeTimeouts.clear();
+      this.handshaked.clear();
+
       for (const client of this.clients) {
         client.terminate();
       }
@@ -108,17 +141,94 @@ export class WsAdapter implements CommAdapter {
   broadcastNotification(method: string, params: unknown): void {
     const notification = JSON.stringify({ jsonrpc: '2.0', method, params });
     for (const client of this.clients) {
+      if (!this.handshaked.has(client)) continue;
       try {
         client.send(notification, (err) => {
           if (err) {
             logger.error({ err, method }, 'WS notification send error');
             this.clients.delete(client);
+            this.handshaked.delete(client);
           }
         });
       } catch (err) {
         logger.error({ err, method }, 'WS notification failed');
         this.clients.delete(client);
+        this.handshaked.delete(client);
       }
+    }
+  }
+
+  private handlePreHandshake(socket: WebSocket, text: string): void {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      socket.close(4002, 'Invalid JSON');
+      return;
+    }
+
+    if (parsed.method === 'handshake') {
+      const params = (parsed.params ?? {}) as Record<string, unknown>;
+      const clientVersion = params.protocolVersion;
+
+      if (clientVersion !== PROTOCOL_VERSION) {
+        const error = {
+          jsonrpc: '2.0',
+          error: {
+            code: -32600,
+            message: `Protocol version mismatch: server=${PROTOCOL_VERSION}, client=${clientVersion}. Update your client.`,
+          },
+          id: parsed.id ?? null,
+        };
+        socket.send(JSON.stringify(error), () => {
+          socket.close(4001, 'Protocol version mismatch');
+        });
+        return;
+      }
+
+      this.handshaked.add(socket);
+      const hsTimeout = this.handshakeTimeouts.get(socket);
+      if (hsTimeout) {
+        clearTimeout(hsTimeout);
+        this.handshakeTimeouts.delete(socket);
+      }
+
+      logger.info(
+        { clientName: params.clientName, clientVersion: params.clientVersion },
+        'WS client handshake complete',
+      );
+
+      const response = {
+        jsonrpc: '2.0',
+        result: {
+          protocolVersion: PROTOCOL_VERSION,
+          harnessVersion: HARNESS_VERSION,
+        },
+        id: parsed.id ?? null,
+      };
+      socket.send(JSON.stringify(response));
+      return;
+    }
+
+    // Non-handshake call before handshake — reject
+    const error = {
+      jsonrpc: '2.0',
+      error: {
+        code: -32600,
+        message: 'Handshake required',
+      },
+      id: parsed.id ?? null,
+    };
+    socket.send(JSON.stringify(error));
+  }
+
+  private cleanupSocket(socket: WebSocket): void {
+    this.clients.delete(socket);
+    this.handshaked.delete(socket);
+    const timeout = this.handshakeTimeouts.get(socket);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.handshakeTimeouts.delete(socket);
     }
   }
 }

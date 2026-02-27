@@ -10,6 +10,12 @@ public enum ConnectionState
     Reconnecting
 }
 
+// --- Handshake ---
+
+public record HandshakeParams(int ProtocolVersion, string ClientName, string ClientVersion);
+
+public record HandshakeResult(int ProtocolVersion, string HarnessVersion);
+
 // --- Request Params ---
 
 public record SubmitPromptParams(string Content, string? Role, string? TaskSlug, string? Project);

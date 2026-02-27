@@ -5,8 +5,15 @@ using Collabot.Tui.Models;
 
 namespace Collabot.Tui.Services;
 
+public class HandshakeException(string message, Exception? innerException = null)
+    : Exception(message, innerException);
+
 public class HarnessConnection : IDisposable
 {
+    private const int ProtocolVersion = 1;
+    private static readonly string TuiVersion =
+        typeof(HarnessConnection).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+
     private readonly Uri _serverUri;
     private ClientWebSocket? _webSocket;
     private JsonRpc? _rpc;
@@ -42,6 +49,7 @@ public class HarnessConnection : IDisposable
     public event EventHandler<PoolStatusNotification>? PoolStatusReceived;
     public event EventHandler<DraftStatusNotification>? DraftStatusReceived;
     public event EventHandler<ContextCompactedNotification>? ContextCompactedReceived;
+    public event EventHandler<string>? HandshakeFailed;
 
     public HarnessConnection(string? serverUrl = null)
     {
@@ -230,6 +238,19 @@ public class HarnessConnection : IDisposable
         _rpc.Disconnected += OnRpcDisconnected;
         _rpc.StartListening();
 
+        try
+        {
+            await _rpc.InvokeWithParameterObjectAsync<HandshakeResult>(
+                "handshake",
+                new HandshakeParams(ProtocolVersion, "tui", TuiVersion));
+        }
+        catch (RemoteInvocationException ex)
+        {
+            _intentionalDisconnect = true;
+            CleanupConnection();
+            throw new HandshakeException(ex.Message, ex);
+        }
+
         ConnectionState = ConnectionState.Connected;
     }
 
@@ -301,6 +322,13 @@ public class HarnessConnection : IDisposable
             catch (OperationCanceledException)
             {
                 break;
+            }
+            catch (HandshakeException ex)
+            {
+                _reconnecting = false;
+                ConnectionState = ConnectionState.Disconnected;
+                HandshakeFailed?.Invoke(this, ex.Message);
+                return;
             }
             catch
             {

@@ -65,6 +65,7 @@ public class MainWindow : Window
         _connection.PoolStatusReceived += OnPoolStatus;
         _connection.DraftStatusReceived += OnDraftStatus;
         _connection.ContextCompactedReceived += OnContextCompacted;
+        _connection.HandshakeFailed += OnHandshakeFailed;
 
         // Layout: Header(3) | Messages(fill) | TopSep(1) | Input(1+) | BottomSep(1) | StatusBar(1)
         // Initial bottom reservation = 1 input + 2 separators + 1 statusbar = 4 rows
@@ -233,6 +234,11 @@ public class MainWindow : Window
     private void OnReconnectingIn(object? sender, int seconds)
     {
         App?.Invoke(() => AddMessage("lifecycle", "system", $"Reconnecting in {seconds}s..."));
+    }
+
+    private void OnHandshakeFailed(object? sender, string message)
+    {
+        App?.Invoke(() => AddMessage("error", "system", $"Handshake failed: {message}"));
     }
 
     private async Task RefreshPoolStatusAsync()
