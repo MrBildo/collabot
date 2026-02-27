@@ -17,7 +17,7 @@ The **harness** (`./harness/`) is the core orchestration engine — a persistent
 | Slack | DM the bot with a task | Requires `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` in `.env` |
 | CLI | One-shot dispatch | `npm run cli -- --project <project> --role <role> "prompt"` |
 | WebSocket | JSON-RPC 2.0 over WS | External processes connect to `ws://127.0.0.1:9800` |
-| TUI | Terminal UI (.NET 10) | `dotnet run` from `harness/tui/` |
+| TUI | Terminal UI (.NET 10) | Separate repo: `github.com/MrBildo/collabot-tui` |
 
 The harness runs with or without any specific interface. Source is in `./harness/src/`.
 
@@ -77,7 +77,7 @@ The harness dispatches agents programmatically and handles role resolution, even
 - **Slack adapter:** DM the bot with a task. Project context is required.
 - **CLI adapter:** `npm run cli -- --project <project> --role <role> "prompt"` for one-shot dispatch. No Slack required.
 - **WebSocket adapter:** JSON-RPC 2.0 over WebSocket (`ws://127.0.0.1:9800`). External processes connect here.
-- **TUI adapter:** .NET 10 Terminal.Gui client at `./harness/tui/`. Connects via WebSocket.
+- **TUI adapter:** .NET 10 Terminal.Gui client (separate repo: `github.com/MrBildo/collabot-tui`). Connects via WebSocket.
 
 ### Fallback: CLI Dispatch
 
