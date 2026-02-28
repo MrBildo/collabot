@@ -75,6 +75,18 @@ This order ensures each consumer has working endpoints to integrate with.
 
 ### 6. Plan Branching
 
+#### Collabot Platform (this repo)
+
+Simple feature-branch model. All branches start from `master`, all PRs target `master`.
+
+- `feature/{slug}` — new functionality
+- `bugfix/{slug}` — bug fixes
+- `hotfix/{slug}` — urgent fixes (user explicitly requests)
+
+CI (typecheck, build, test) must pass before merge. Squash merge to master. Releases are tags on master (GitHub Release with `vX.Y.Z` tag triggers npm publish).
+
+#### Sub-Projects (managed projects)
+
 Determine the correct branch name and parent branch for this feature. Check the project's release tracking for active releases.
 
 **Release active -> feature from release branch:**

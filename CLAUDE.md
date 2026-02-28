@@ -179,9 +179,12 @@ Above roles sits the **bot** — a persistent identity with personality, motivat
 
 ## Git Rules
 
-- NEVER commit directly to `master`
+- NEVER commit directly to `master` — all changes via feature branch + PR
+- Branch naming: `feature/`, `bugfix/`, `hotfix/` (e.g., `feature/add-cron-support`)
 - Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
-- Squash merge to master/main
+- Squash merge to master
+- CI must pass before merge (typecheck, build, test)
+- Releases: bump version in `harness/package.json`, merge to master, create GitHub Release with tag `vX.Y.Z`
 
 ## Path Conventions
 
