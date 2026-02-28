@@ -20,5 +20,8 @@ harness/tui/obj/
 # Environment
 harness/.env
 
+# npm pack artifacts
+*.tgz
+
 # Windows oddities
 nul

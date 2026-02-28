@@ -2,15 +2,38 @@
   "name": "collabot",
   "version": "0.1.0",
   "description": "Collabot — the collaborative agent platform",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrBildo/collabot.git",
+    "directory": "harness"
+  },
+  "homepage": "https://github.com/MrBildo/collabot",
+  "bugs": {
+    "url": "https://github.com/MrBildo/collabot/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "collabot",
+    "agent",
+    "orchestration",
+    "claude",
+    "ai"
+  ],
   "type": "module",
   "bin": {
     "collabot": "dist/entry.js"
   },
   "files": [
     "dist/",
-    "config.defaults.toml"
+    "config.defaults.toml",
+    "LICENSE"
   ],
   "scripts": {
+    "prepack": "cp ../LICENSE LICENSE",
+    "postpack": "rm -f LICENSE",
     "dev": "tsx watch src/index.ts | pino-pretty",
     "build": "tsc",
     "start": "node dist/index.js",
