@@ -3,9 +3,9 @@
 | Field | Value |
 |-------|-------|
 | **Source** | Design discussion, 2026-02-22 |
-| **Status** | Draft |
+| **Status** | **Complete** |
 | **Created** | 2026-02-22 |
-| **Last Updated** | 2026-02-22 |
+| **Last Updated** | 2026-02-28 |
 
 ---
 
