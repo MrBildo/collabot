@@ -184,7 +184,7 @@ Above roles sits the **bot** — a persistent identity with personality, motivat
 - Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
 - Squash merge to master
 - CI must pass before merge (typecheck, build, test)
-- Releases: bump version in `harness/package.json`, merge to master, create GitHub Release with tag `vX.Y.Z`
+- Releases: create GitHub Release with tag `vX.Y.Z` — the publish workflow sets `package.json` version from the tag automatically
 
 ## Path Conventions
 
