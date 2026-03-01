@@ -1,11 +1,31 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LegacyCapturedEvent, LegacyCapturedEventType, LegacyEventLog } from './types.js';
+export type CapturedEventType =
+  | 'dispatch_start'
+  | 'dispatch_end'
+  | 'text'
+  | 'thinking'
+  | 'tool_use'
+  | 'tool_result'
+  | 'compaction'
+  | 'loop_warning'
+  | 'loop_kill'
+  | 'stall'
+  | 'abort'
+  | 'error';
 
-// Re-export legacy names used by dispatch.ts and draft.ts (Phase 2 will remove these)
-export type CapturedEvent = LegacyCapturedEvent;
-export type CapturedEventType = LegacyCapturedEventType;
-export type EventLog = LegacyEventLog;
+export type CapturedEvent = {
+  type: CapturedEventType;
+  timestamp: string;           // RFC 3339
+  data?: Record<string, unknown>;
+};
+
+export type EventLog = {
+  taskSlug: string;
+  role: string;
+  startedAt: string;           // RFC 3339
+  events: CapturedEvent[];
+};
 
 /**
  * Abstraction layer for event storage (D7).

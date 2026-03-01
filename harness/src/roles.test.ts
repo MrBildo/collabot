@@ -6,7 +6,7 @@ import { parseFrontmatter } from './roles.js';
 // parseFrontmatter — basic parsing (unchanged, format-agnostic)
 // ============================================================
 
-const VALID_ROLE_V2 = `---
+const VALID_ROLE = `---
 id: 01HXYZ01234567890ABCDEFGH
 version: 1.0.0
 name: ts-dev
@@ -19,8 +19,8 @@ model-hint: sonnet-latest
 You are a TypeScript developer. You build, test, and maintain TypeScript applications.
 `;
 
-test('valid v2 frontmatter + body splits correctly', () => {
-  const { frontmatter, body } = parseFrontmatter(VALID_ROLE_V2, 'ts-dev.md');
+test('valid frontmatter + body splits correctly', () => {
+  const { frontmatter, body } = parseFrontmatter(VALID_ROLE, 'ts-dev.md');
   const fm = frontmatter as Record<string, unknown>;
   assert.strictEqual(fm['name'], 'ts-dev');
   assert.strictEqual(fm['description'], 'TypeScript development and maintenance.');
@@ -61,7 +61,7 @@ body here
   );
 });
 
-test('v2 frontmatter with permissions parses correctly', () => {
+test('frontmatter with permissions parses correctly', () => {
   const content = `---
 id: 01HXYZ01234567890ABCDEFGH
 version: 1.0.0
@@ -83,7 +83,7 @@ You are the Product Analyst.
   assert.ok(body.includes('Product Analyst'));
 });
 
-test('v2 frontmatter with optional fields parses correctly', () => {
+test('frontmatter with optional fields parses correctly', () => {
   const content = `---
 id: 01HXYZ01234567890ABCDEFGH
 version: 1.2.0

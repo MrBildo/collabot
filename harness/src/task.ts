@@ -259,24 +259,3 @@ export function nextJournalFile(taskDir: string, roleName: string): string {
   return `${roleName}-${n}.md`;
 }
 
-// --- Legacy compatibility ---
-
-/**
- * @deprecated Use createTask/findTaskByThread instead. Retained for backward compatibility during migration.
- */
-export function getOrCreateTask(threadTs: string, firstMessage: string, tasksDir: string): TaskContext & { threadTs: string } {
-  // Search existing
-  const existing = findTaskByThread(tasksDir, threadTs);
-  if (existing) {
-    return { ...existing, threadTs };
-  }
-
-  // Create new
-  const result = createTask(tasksDir, {
-    name: firstMessage,
-    project: 'legacy',
-    threadId: threadTs,
-    description: firstMessage,
-  });
-  return { ...result, threadTs };
-}

@@ -145,36 +145,7 @@ export type DraftSummary = {
   durationMs: number;
 };
 
-// ── Event Capture (legacy — removed in Phase 3) ────────────────
-
-export type LegacyCapturedEventType =
-  | 'dispatch_start'
-  | 'dispatch_end'
-  | 'text'
-  | 'thinking'
-  | 'tool_use'
-  | 'tool_result'
-  | 'compaction'
-  | 'loop_warning'
-  | 'loop_kill'
-  | 'stall'
-  | 'abort'
-  | 'error';
-
-export type LegacyCapturedEvent = {
-  type: LegacyCapturedEventType;
-  timestamp: string;           // RFC 3339
-  data?: Record<string, unknown>;
-};
-
-export type LegacyEventLog = {
-  taskSlug: string;
-  role: string;
-  startedAt: string;           // RFC 3339
-  events: LegacyCapturedEvent[];
-};
-
-// ── Event System v2 ───────────────────────────────────────────
+// ── Event Capture ────────────────────────────────────────────
 
 export type EventCategory = 'agent' | 'session' | 'harness' | 'user' | 'system';
 

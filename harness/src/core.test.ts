@@ -107,12 +107,6 @@ mock.module('./task.js', {
     deduplicateSlug: mock.fn(() => ({ slug: 'test-task', deduplicated: false })),
     listTasks: mock.fn(() => []),
     closeTask: mock.fn(() => {}),
-    getOrCreateTask: mock.fn((_threadTs: string, _msg: string, _dir: string) => ({
-      slug: 'test-task',
-      taskDir: mockTaskDir!,
-      threadTs: _threadTs,
-      created: '2026-02-19T10:00:00.000Z',
-    })),
   },
 });
 

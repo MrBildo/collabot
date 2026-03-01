@@ -44,7 +44,7 @@ Phase 4: PR review + merge
 Remove the existing event capture types (lines 148-175) and replace with:
 
 ```typescript
-// ── Event System v2 ───────────────────────────────────────
+// ── Event Capture ────────────────────────────────────────
 
 export type EventCategory = 'agent' | 'session' | 'harness' | 'user' | 'system';
 
@@ -339,13 +339,13 @@ This is the view used for TUI session reconstruction and PM check-ins.
 
 Open Claude Code in `../collabot/harness/`
 
-> Check out branch `feature/event-system-v2` (from `master`). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 1: Foundation** — new v2 event types in `types.ts`, `DispatchStoreProvider` interface and `JsonFileDispatchStore` implementation in a new `dispatch-store.ts`, and tests in `dispatch-store.test.ts`. Do NOT modify `dispatch.ts`, `draft.ts`, `context.ts`, or `mcp.ts` — those are Phase 2. Do NOT remove old event types — they're still used and will be removed in Phase 3. Run `npm run typecheck` and `npm test` to verify everything passes.
+> Check out branch `feature/event-system-v2` (from `master`). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 1: Foundation** — replace old event types in `types.ts` with the new types (no v2 suffixes — just replace in place, breaking changes are fine), `DispatchStoreProvider` interface and `JsonFileDispatchStore` implementation in a new `dispatch-store.ts`, and tests in `dispatch-store.test.ts`. Do NOT modify `dispatch.ts`, `draft.ts`, `context.ts`, or `mcp.ts` — those are Phase 2. The old `events.ts` will have broken imports after type replacement — that's expected, it gets removed in Phase 3. Run `npm run typecheck` and `npm test` to verify everything passes (exclude `events.ts` import errors if needed).
 
 ### Phase 2A — Write Path
 
 Open Claude Code in `../collabot/harness/`
 
-> Check out branch `feature/event-system-v2` (should have Phase 1 already committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 2A: Write Path** — refactor `dispatch.ts` and `draft.ts` to emit v2 events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK event types we're currently dropping. Emit `user:message` events in draft sessions. Link tool call/result pairs via `toolCallId`. Create dispatch envelopes at start, update at end. Do NOT modify `context.ts` or `mcp.ts` — a parallel agent is handling those. Do NOT remove `events.ts` — Phase 3. Run `npm run typecheck` and `npm test`.
+> Check out branch `feature/event-system-v2` (should have Phase 1 already committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 2A: Write Path** — refactor `dispatch.ts` and `draft.ts` to emit events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK event types we're currently dropping. Emit `user:message` events in draft sessions. Link tool call/result pairs via `toolCallId`. Create dispatch envelopes at start, update at end. Do NOT modify `context.ts` or `mcp.ts` — a parallel agent is handling those. Do NOT remove `events.ts` — Phase 3. Run `npm run typecheck` and `npm test`.
 
 ### Phase 2B — Read Path
 
@@ -357,4 +357,4 @@ Open Claude Code in `../collabot/harness/`
 
 Open Claude Code in `../collabot/harness/`
 
-> Check out branch `feature/event-system-v2` (should have Phases 1, 2A, 2B committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 3: Migration + Cleanup** — remove `events.ts` and `events.test.ts`, remove old event types from `types.ts` (`CapturedEventType`, `CapturedEvent`, `EventLog`), move `extractToolTarget()` from `journal.ts` to a shared util, remove `watchJournals()` and `getJournalStatus()` from `journal.ts`, update `TaskManifest` in `task.ts` to use `DispatchIndexEntry[]`, update `core.ts` to use the new dispatch store. Fix all broken imports. Run `npm run typecheck` and `npm test` to verify clean build.
+> Check out branch `feature/event-system-v2` (should have Phases 1, 2A, 2B committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 3: Migration + Cleanup** — remove `events.ts` and `events.test.ts`, move `extractToolTarget()` from `journal.ts` to a shared util, remove `watchJournals()` and `getJournalStatus()` from `journal.ts`, update `TaskManifest` in `task.ts` to use `DispatchIndexEntry[]`, update `core.ts` to use the new dispatch store. Old event types were already replaced in Phase 1 — fix any remaining broken imports. Run `npm run typecheck` and `npm test` to verify clean build.
