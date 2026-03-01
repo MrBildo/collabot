@@ -7,6 +7,7 @@ import { getTask, createTask, findTaskByThread, recordDispatch, nextJournalFile 
 import { getProject, getProjectTasksDir, projectHasPaths } from './project.js';
 import type { Project } from './project.js';
 import type { TaskManifest } from './task.js';
+import { getDispatchStore } from './dispatch-store.js';
 import type { DispatchResult, RoleDefinition, AgentEvent } from './types.js';
 import type { InboundMessage, ChannelMessage, CommAdapter } from './comms.js';
 import { filteredSend } from './comms.js';
@@ -169,21 +170,19 @@ export async function handleTask(
   // Context reconstruction for follow-up dispatches
   let contentForDispatch = message.content;
   try {
-    const manifestPath = path.join(task.taskDir, 'task.json');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
-    const dispatchesWithResults = Array.isArray(manifest.dispatches)
-      ? manifest.dispatches.filter((d) => d.result != null)
-      : [];
-    if (dispatchesWithResults.length > 0) {
+    const store = getDispatchStore();
+    const envelopes = store.getDispatchEnvelopes(task.taskDir);
+    const withResults = envelopes.filter((d) => d.structuredResult != null);
+    if (withResults.length > 0) {
       const taskContext = buildTaskContext(task.taskDir);
       contentForDispatch = taskContext + '\n---\n\n' + message.content;
       logger.info(
-        { taskSlug: task.slug, dispatchCount: dispatchesWithResults.length },
+        { taskSlug: task.slug, dispatchCount: withResults.length },
         'reconstructing context for follow-up dispatch',
       );
     }
   } catch {
-    // If manifest read fails, proceed without context reconstruction
+    // If dispatch store read fails, proceed without context reconstruction
   }
 
   // Preflight checks (warn-only, never block dispatch)

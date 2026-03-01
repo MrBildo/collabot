@@ -59,7 +59,7 @@ export class DispatchTracker {
 export type DraftAgentFn = (
   roleName: string,
   taskContext: string,
-  options?: { taskSlug?: string; taskDir?: string; cwd?: string },
+  options?: { taskSlug?: string; taskDir?: string; cwd?: string; parentDispatchId?: string },
 ) => Promise<DispatchResult>;
 
 // ============================================================
@@ -79,6 +79,7 @@ export type HarnessServerOptions = {
   parentTaskSlug?: string;
   parentTaskDir?: string;
   parentProject?: string;
+  parentDispatchId?: string;
 };
 
 // ============================================================
@@ -272,6 +273,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
           taskSlug: resolvedSlug,
           taskDir,
           cwd,
+          parentDispatchId: options.parentDispatchId,
         });
 
         tracker.track(agentId, {
