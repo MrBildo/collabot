@@ -9,7 +9,7 @@ import { logger } from './logger.js';
 import { getProjectTasksDir } from './project.js';
 import type { Project } from './project.js';
 import { buildChildEnv, extractUsageMetrics } from './dispatch.js';
-import { extractToolTarget } from './journal.js';
+import { extractToolTarget } from './util.js';
 import { getDispatchStore, makeCapturedEvent } from './dispatch-store.js';
 import { detectErrorLoop, detectNonRetryable } from './monitor.js';
 import { makeChannelMessage } from './core.js';
@@ -490,10 +490,9 @@ export async function resumeDraft(
                     errorSnippet: nonRetryable.errorSnippet,
                     count: nonRetryable.count,
                   }, 'draft: non-retryable error detected');
-                  emitEvent('harness:loop_kill', {
-                    pattern: `${nonRetryable.tool}::${nonRetryable.target}`,
-                    count: nonRetryable.count,
-                    reason: 'non_retryable_error',
+                  emitEvent('harness:error', {
+                    message: `Non-retryable error: ${nonRetryable.tool}::${nonRetryable.target} (${nonRetryable.count}x)`,
+                    snippet: nonRetryable.errorSnippet,
                   });
                   await filteredSend(adapter, makeChannelMessage(
                     session.channelId, 'system', 'warning',

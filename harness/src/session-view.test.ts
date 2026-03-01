@@ -300,7 +300,7 @@ test('renders session:status event', () => {
   store.appendEvent(taskDir, '01JSVIEW001', makeEvent({
     type: 'session:status',
     timestamp: '2026-03-01T10:01:00.000Z',
-    data: { message: 'Agent is working' },
+    data: { status: 'Agent is working' },
   }));
 
   const view = renderSessionView(taskDir, '01JSVIEW001')!;

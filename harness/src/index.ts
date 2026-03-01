@@ -5,7 +5,6 @@ import { startSlackApp } from './slack.js';
 import { loadConfig, resolveModelId } from './config.js';
 import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
 import { loadProjects } from './project.js';
-import { watchJournals } from './journal.js';
 import { AgentPool } from './pool.js';
 import { draftAgent, handleTask } from './core.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
@@ -15,7 +14,6 @@ import { registerWsMethods } from './ws-methods.js';
 import { loadActiveDraft } from './draft.js';
 import { getInstancePath, getPackagePath } from './paths.js';
 import type { DraftAgentFn } from './mcp.js';
-import type { FSWatcher } from 'chokidar';
 import type { App } from '@slack/bolt';
 
 // Read version from package.json (adjacent to src/ in the package)
@@ -110,6 +108,7 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
     cwd: opts?.cwd,
+    parentDispatchId: opts?.parentDispatchId,
     pool,
   });
 };
@@ -200,18 +199,6 @@ if (wsEnabled) {
   logger.info('WS config not found — WS adapter disabled');
 }
 
-// Journal watcher — monitors .agents/journals/ in the instance root (debug-level only)
-const usePolling = process.env.HARNESS_POLL_JOURNALS === 'true';
-const journalsDir = getInstancePath('.agents', 'journals');
-logger.info(`journal watcher started${usePolling ? ' (polling mode)' : ''}`);
-const journalWatcher: FSWatcher = watchJournals(
-  journalsDir,
-  (journalPath, entries) => {
-    logger.debug({ journalPath, entries }, 'journal update');
-  },
-  usePolling,
-);
-
 // Heartbeat — debug log every 60s, gated on verbose tier
 let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
 if (logTier === 'verbose') {
@@ -225,7 +212,6 @@ async function shutdown(): Promise<void> {
   if (heartbeatInterval !== undefined) {
     clearInterval(heartbeatInterval);
   }
-  await journalWatcher.close();
   if (app) {
     await app.stop();
   }

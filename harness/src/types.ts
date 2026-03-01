@@ -105,6 +105,7 @@ export type DispatchOptions = {
   featureSlug: string;   // for journal path construction
   taskDir?: string;      // Milestone C: task directory for journal placement
   journalFileName?: string; // Milestone C: custom journal filename
+  parentDispatchId?: string; // v2: parent dispatch ID for child agent tracking
   maxTurns?: number;
   maxBudgetUsd?: number;
   model?: string;        // per-dispatch override (highest priority)

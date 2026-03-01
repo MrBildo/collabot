@@ -83,7 +83,7 @@ function renderEvent(event: CapturedEvent): string {
       return `${time} [rate_limit] Rate limited`;
 
     case 'session:status':
-      return `${time} [status] ${data.message ?? 'Status update'}`;
+      return `${time} [status] ${data.status ?? 'Status update'}`;
 
     case 'harness:loop_warning':
       return `${time} [loop_warning] ${data.pattern ?? 'Pattern detected'}`;
@@ -107,13 +107,13 @@ function renderEvent(event: CapturedEvent): string {
       return `${time} [system] Files persisted`;
 
     case 'system:hook_started':
-      return `${time} [system] Hook started: ${data.hook ?? 'unknown'}`;
+      return `${time} [system] Hook started: ${data.hookName ?? 'unknown'}`;
 
     case 'system:hook_progress':
-      return `${time} [system] Hook progress: ${data.hook ?? 'unknown'}`;
+      return `${time} [system] Hook progress: ${data.hookName ?? 'unknown'}`;
 
     case 'system:hook_response':
-      return `${time} [system] Hook response: ${data.hook ?? 'unknown'}`;
+      return `${time} [system] Hook response: ${data.hookName ?? 'unknown'}`;
 
     default:
       return `${time} [${event.type}] ${JSON.stringify(data)}`;

@@ -7,7 +7,7 @@ import type { DispatchResult, DispatchOptions, RoleDefinition, ToolCall, ErrorTr
 import { AgentResultSchema } from "./types.js";
 import { resolveModelId, type Config } from "./config.js";
 import { assemblePrompt } from "./prompts.js";
-import { extractToolTarget } from "./journal.js";
+import { extractToolTarget } from "./util.js";
 import { detectErrorLoop, detectNonRetryable } from "./monitor.js";
 import { getDispatchStore, makeCapturedEvent } from "./dispatch-store.js";
 
@@ -181,6 +181,7 @@ export async function dispatch(
         cwd: absoluteCwd,
         startedAt: new Date().toISOString(),
         status: 'running',
+        parentDispatchId: options.parentDispatchId,
       });
     } catch { /* non-fatal */ }
   }
@@ -232,7 +233,7 @@ export async function dispatch(
             if (text.trim()) {
               logger.info({ sessionId, text: text.slice(0, 200) }, "agent text");
               options.onEvent?.({ type: 'chat', content: text });
-              emitEvent('agent:text', { text });
+              emitEvent('agent:text', { text: text.slice(0, 2000) });
             }
           }
 
@@ -242,7 +243,7 @@ export async function dispatch(
             if (thinking.trim()) {
               logger.info({ sessionId, thinking: thinking.slice(0, 200) }, "agent thinking");
               options.onEvent?.({ type: 'thinking', content: thinking });
-              emitEvent('agent:thinking', { text: thinking });
+              emitEvent('agent:thinking', { text: thinking.slice(0, 2000) });
             }
           }
 

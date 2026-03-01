@@ -102,7 +102,6 @@ mock.module('./task.js', {
       taskDir: mockTaskDir!,
       created: '2026-02-19T10:00:00.000Z',
     })),
-    recordDispatch: mock.fn(() => {}),
     nextJournalFile: mock.fn(() => 'api-dev.md'),
     generateSlug: mock.fn(() => ({ slug: 'test-task', modified: false })),
     deduplicateSlug: mock.fn(() => ({ slug: 'test-task', deduplicated: false })),

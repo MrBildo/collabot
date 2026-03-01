@@ -3,10 +3,9 @@ import path from 'node:path';
 import { logger } from './logger.js';
 import { dispatch } from './dispatch.js';
 import { buildTaskContext } from './context.js';
-import { getTask, createTask, findTaskByThread, recordDispatch, nextJournalFile } from './task.js';
+import { getTask, createTask, findTaskByThread, nextJournalFile } from './task.js';
 import { getProject, getProjectTasksDir, projectHasPaths } from './project.js';
 import type { Project } from './project.js';
-import type { TaskManifest } from './task.js';
 import { getDispatchStore } from './dispatch-store.js';
 import type { DispatchResult, RoleDefinition, AgentEvent } from './types.js';
 import type { InboundMessage, ChannelMessage, CommAdapter } from './comms.js';
@@ -220,7 +219,6 @@ export async function handleTask(
   ));
 
   // Dispatch the agent — pick MCP server based on role category
-  const dispatchStartedAt = new Date().toISOString();
   let selectedMcpServer: McpSdkServerConfigWithInstance | undefined;
   if (mcpServers) {
     const isFullAccess = role.permissions?.includes('agent-draft') ?? false;
@@ -236,31 +234,6 @@ export async function handleTask(
     pool,
     mcpServer: selectedMcpServer,
   });
-
-  // Record dispatch in task manifest
-  try {
-    const dispatchResult = result.structuredResult
-      ? {
-          summary: result.structuredResult.summary,
-          changes: result.structuredResult.changes,
-          issues: result.structuredResult.issues,
-          questions: result.structuredResult.questions,
-        }
-      : undefined;
-
-    recordDispatch(task.taskDir, {
-      role: roleName,
-      cwd,
-      model: result.model ?? config.models.default,
-      startedAt: dispatchStartedAt,
-      completedAt: new Date().toISOString(),
-      status: result.status,
-      journalFile: result.journalFile ?? `${roleName}.md`,
-      result: dispatchResult,
-    });
-  } catch (err) {
-    logger.error({ err }, 'failed to record dispatch in task manifest');
-  }
 
   // Set final status
   if (result.status === 'completed') {
@@ -298,6 +271,7 @@ export async function draftAgent(
     taskDir?: string;
     channelId?: string;
     cwd?: string;
+    parentDispatchId?: string;
     pool?: AgentPool;
     mcpServer?: McpSdkServerConfigWithInstance;
   },
@@ -363,6 +337,7 @@ export async function draftAgent(
       featureSlug: taskSlug,
       taskDir,
       journalFileName,
+      parentDispatchId: options?.parentDispatchId,
       onLoopWarning,
       onEvent,
       abortController: agentController,
