@@ -10,7 +10,7 @@ Collabot is a general-purpose agent orchestration platform. It dispatches, coord
 
 The **harness** (`./harness/`) is the core orchestration engine — a persistent Node.js/TypeScript process that manages agent lifecycle, task state, context reconstruction, and the MCP tool surface. It dispatches Claude Code agents via the Agent SDK (`@anthropic-ai/claude-agent-sdk`).
 
-**Interfaces are adapters.** They connect to the harness via the `CommAdapter` interface. No interface is primary. No interface owns the harness.
+**Interfaces are adapters.** They connect to the harness via the `CommunicationProvider` interface, managed by a `CommunicationRegistry` that handles broadcast, lifecycle, and provider discovery. No interface is primary. No interface owns the harness.
 
 | Adapter | Description | How to use |
 |---------|-------------|------------|

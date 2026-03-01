@@ -1,20 +1,21 @@
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
-import { startSlackApp } from './slack.js';
 import { loadConfig, resolveModelId } from './config.js';
 import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
 import { loadProjects } from './project.js';
 import { AgentPool } from './pool.js';
 import { draftAgent, handleTask } from './core.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
+import { CommunicationRegistry } from './registry.js';
 import { CliAdapter } from './adapters/cli.js';
 import { WsAdapter } from './adapters/ws.js';
+import { SlackAdapter } from './adapters/slack.js';
 import { registerWsMethods } from './ws-methods.js';
 import { loadActiveDraft } from './draft.js';
 import { getInstancePath, getPackagePath } from './paths.js';
+import type { InboundHandler } from './comms.js';
 import type { DraftAgentFn } from './mcp.js';
-import type { App } from '@slack/bolt';
 
 // Read version from package.json (adjacent to src/ in the package)
 const pkgPath = getPackagePath('package.json');
@@ -99,12 +100,17 @@ const projectNames = [...projects.values()].map((p) => p.name).join(', ');
 // Initialize agent pool
 const pool = new AgentPool(config.pool.maxConcurrent);
 
+// ── Communication Registry ──────────────────────────────────────
+
+const registry = new CommunicationRegistry();
+
+// CLI always present
+registry.register(new CliAdapter());
+
 // Initialize MCP servers — shared tracker and draftFn for lifecycle tools
 const tracker = new DispatchTracker();
-// draftFn wraps core.draftAgent with a headless adapter for MCP-initiated dispatches
-const headlessAdapter = new CliAdapter();
 const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
-  return draftAgent(roleName, taskContext, headlessAdapter, roles, config, {
+  return draftAgent(roleName, taskContext, registry, roles, config, {
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
     cwd: opts?.cwd,
@@ -127,6 +133,33 @@ const mcpServers = {
 const { SLACK_BOT_TOKEN, SLACK_APP_TOKEN } = process.env;
 const slackEnabled = !!(SLACK_BOT_TOKEN && SLACK_APP_TOKEN);
 const wsEnabled = !!config.ws;
+
+// Conditional WS registration
+if (wsEnabled) {
+  const ws = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
+  registerWsMethods({ wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers });
+  pool.setOnChange((agents) => {
+    ws.broadcastNotification('pool_status', { agents });
+  });
+  registry.register(ws);
+}
+
+// Conditional Slack registration
+if (slackEnabled) {
+  registry.register(new SlackAdapter(SLACK_BOT_TOKEN!, SLACK_APP_TOKEN!, config));
+}
+
+// Register inbound handler on all providers
+const inboundHandler: InboundHandler = async (msg) => {
+  const result = await handleTask(msg, registry, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
+  return {
+    status: result.status === 'completed' ? 'completed' as const : result.status === 'aborted' ? 'aborted' as const : 'crashed' as const,
+    summary: result.structuredResult?.summary ?? result.result?.slice(0, 200),
+  };
+};
+for (const provider of registry.providers()) {
+  provider.onInbound(inboundHandler);
+}
 
 // Startup banner — printed before any pino output
 const interfaceList = [
@@ -176,25 +209,20 @@ logger.info({ roleCount, roleNames }, 'roles loaded');
 logger.info({ projectCount, projectNames }, 'projects loaded');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
 
-// Conditional Slack startup
-let app: App | undefined;
+// Start all providers (best-effort — failures logged, provider stays not-ready)
+await registry.startAll();
+
 if (slackEnabled) {
-  app = await startSlackApp(SLACK_BOT_TOKEN!, SLACK_APP_TOKEN!, roles, config, mcpServers);
   logger.info('Slack interface enabled');
 } else {
   logger.info('Slack tokens not found — Slack adapter disabled, CLI available');
 }
 
-// Conditional WS startup
-let wsAdapter: WsAdapter | undefined;
 if (wsEnabled) {
-  wsAdapter = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
-  registerWsMethods({ wsAdapter, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers });
-  pool.setOnChange((agents) => {
-    wsAdapter!.broadcastNotification('pool_status', { agents });
-  });
-  await wsAdapter.start();
-  logger.info({ port: wsAdapter.port, host: config.ws!.host }, 'WS interface enabled');
+  const ws = registry.get<WsAdapter>('ws');
+  if (ws?.isReady()) {
+    logger.info({ port: ws.port, host: config.ws!.host }, 'WS interface enabled');
+  }
 } else {
   logger.info('WS config not found — WS adapter disabled');
 }
@@ -212,12 +240,7 @@ async function shutdown(): Promise<void> {
   if (heartbeatInterval !== undefined) {
     clearInterval(heartbeatInterval);
   }
-  if (app) {
-    await app.stop();
-  }
-  if (wsAdapter) {
-    await wsAdapter.stop();
-  }
+  await registry.stopAll();
   process.exit(0);
 }
 

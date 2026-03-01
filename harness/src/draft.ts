@@ -13,8 +13,7 @@ import { extractToolTarget } from './util.js';
 import { getDispatchStore, makeCapturedEvent } from './dispatch-store.js';
 import { detectErrorLoop, detectNonRetryable } from './monitor.js';
 import { makeChannelMessage } from './core.js';
-import { filteredSend } from './comms.js';
-import type { CommAdapter } from './comms.js';
+import type { CommunicationRegistry } from './registry.js';
 import type { AgentPool } from './pool.js';
 import type { RoleDefinition, DraftSession, DraftSummary, ToolCall, ErrorTriplet, LoopDetectionThresholds, EventType } from './types.js';
 import { resolveModelId, type Config } from './config.js';
@@ -214,7 +213,7 @@ export function getDraftController(pool: AgentPool): AbortController | undefined
 
 export async function resumeDraft(
   prompt: string,
-  adapter: CommAdapter,
+  registry: CommunicationRegistry,
   roles: Map<string, RoleDefinition>,
   config: Config,
   pool: AgentPool,
@@ -366,7 +365,7 @@ export async function resumeDraft(
             if (text.trim()) {
               logger.info({ sessionId: session.sessionId, text: text.slice(0, 200) }, 'agent text');
               emitEvent('agent:text', { text: text.slice(0, 2000) });
-              await filteredSend(adapter, makeChannelMessage(
+              await registry.broadcast(makeChannelMessage(
                 session.channelId, role.displayName ?? role.name, 'chat', text,
               ));
             }
@@ -378,7 +377,7 @@ export async function resumeDraft(
             if (thinking.trim()) {
               logger.info({ sessionId: session.sessionId, thinking: thinking.slice(0, 200) }, 'agent thinking');
               emitEvent('agent:thinking', { text: thinking.slice(0, 2000) });
-              await filteredSend(adapter, makeChannelMessage(
+              await registry.broadcast(makeChannelMessage(
                 session.channelId, role.displayName ?? role.name, 'thinking', thinking,
               ));
             }
@@ -395,7 +394,7 @@ export async function resumeDraft(
             if (block.name !== 'StructuredOutput') {
               emitEvent('agent:tool_call', { toolCallId: block.id, tool: block.name, target });
               const summary = target ? `${block.name} ${target}` : block.name;
-              await filteredSend(adapter, makeChannelMessage(
+              await registry.broadcast(makeChannelMessage(
                 session.channelId, role.name, 'tool_use', summary,
                 { tool: block.name, target },
               ));
@@ -415,7 +414,7 @@ export async function resumeDraft(
               if (loopDetection.severity === 'kill') {
                 abortReason = 'error_loop';
                 emitEvent('harness:loop_kill', { pattern: loopDetection.pattern, count: loopDetection.count });
-                await filteredSend(adapter, makeChannelMessage(
+                await registry.broadcast(makeChannelMessage(
                   session.channelId, 'system', 'warning',
                   `Agent killed: error loop detected (${loopDetection.pattern}, ${loopDetection.count} repetitions). Draft session is still active — send another message to continue.`,
                 ));
@@ -425,7 +424,7 @@ export async function resumeDraft(
                 logger.warn({ pattern: loopDetection.pattern, count: loopDetection.count }, 'draft: error loop detected');
                 emitEvent('harness:loop_warning', { pattern: loopDetection.pattern, count: loopDetection.count });
                 loopWarningPosted = true;
-                await filteredSend(adapter, makeChannelMessage(
+                await registry.broadcast(makeChannelMessage(
                   session.channelId, 'system', 'warning',
                   `Agent appears stuck in a loop: \`${loopDetection.pattern}\` (${loopDetection.count} repetitions). Still running.`,
                 ));
@@ -494,7 +493,7 @@ export async function resumeDraft(
                     message: `Non-retryable error: ${nonRetryable.tool}::${nonRetryable.target} (${nonRetryable.count}x)`,
                     snippet: nonRetryable.errorSnippet,
                   });
-                  await filteredSend(adapter, makeChannelMessage(
+                  await registry.broadcast(makeChannelMessage(
                     session.channelId, 'system', 'warning',
                     `Agent killed: non-retryable error (${nonRetryable.tool}::${nonRetryable.target}). Draft session is still active.`,
                   ));
@@ -572,7 +571,7 @@ export async function resumeDraft(
       if (abortReason === 'stall') {
         logger.warn({ sessionId: session.sessionId }, 'draft: agent stalled (inactivity timeout)');
         emitEvent('harness:stall', { timeoutMs: stallTimeoutMs });
-        await filteredSend(adapter, makeChannelMessage(
+        await registry.broadcast(makeChannelMessage(
           session.channelId, 'system', 'warning',
           'Agent stalled (inactivity timeout). Draft session is still active — send another message to continue.',
         ));
@@ -581,7 +580,7 @@ export async function resumeDraft(
       } else {
         logger.warn({ sessionId: session.sessionId }, 'draft: agent aborted');
         emitEvent('harness:abort', { reason: abortReason ?? 'unknown' });
-        await filteredSend(adapter, makeChannelMessage(
+        await registry.broadcast(makeChannelMessage(
           session.channelId, 'system', 'warning',
           'Agent turn was aborted. Draft session is still active.',
         ));
@@ -607,7 +606,7 @@ export async function resumeDraft(
 
     // If it's a resume-specific error, auto-close draft
     if (message.includes('session') || message.includes('resume')) {
-      await filteredSend(adapter, makeChannelMessage(
+      await registry.broadcast(makeChannelMessage(
         session.channelId, 'system', 'error',
         `Draft session error: ${message}. Session auto-closed. Use /draft to start a new session.`,
       ));
@@ -620,7 +619,7 @@ export async function resumeDraft(
         });
       } catch { /* non-fatal */ }
     } else {
-      await filteredSend(adapter, makeChannelMessage(
+      await registry.broadcast(makeChannelMessage(
         session.channelId, 'system', 'error',
         `Draft turn failed: ${message}`,
       ));

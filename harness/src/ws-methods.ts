@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { JSONRPCErrorException } from 'json-rpc-2.0';
 import type { WsAdapter } from './adapters/ws.js';
-import type { CommAdapter, InboundMessage } from './comms.js';
+import type { InboundMessage } from './comms.js';
+import type { CommunicationRegistry } from './registry.js';
 import type { AgentPool } from './pool.js';
 import type { Config } from './config.js';
 import type { RoleDefinition, DispatchResult, Project } from './types.js';
@@ -24,9 +25,10 @@ const WS_ERROR_PROJECT_NOT_FOUND = -32006;
 
 export type WsMethodDeps = {
   wsAdapter: WsAdapter;
+  registry: CommunicationRegistry;
   handleTask: (
     message: InboundMessage,
-    adapter: CommAdapter,
+    registry: CommunicationRegistry,
     roles: Map<string, RoleDefinition>,
     config: Config,
     pool: AgentPool | undefined,
@@ -146,7 +148,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       }
 
       // Fire-and-forget resume
-      resumeDraft(content, deps.wsAdapter, deps.roles, deps.config, deps.pool, {
+      resumeDraft(content, deps.registry, deps.roles, deps.config, deps.pool, {
         cwd: draftCwd,
         mcpServer,
         onCompaction: (event) => {
@@ -209,7 +211,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       metadata: { taskSlug },
     };
 
-    deps.handleTask(message, deps.wsAdapter, deps.roles, deps.config, deps.pool, deps.mcpServers, deps.projects, deps.projectsDir)
+    deps.handleTask(message, deps.registry, deps.roles, deps.config, deps.pool, deps.mcpServers, deps.projects, deps.projectsDir)
       .catch((err: unknown) => {
         logger.error({ err }, 'ws submit_prompt: handleTask error');
       });

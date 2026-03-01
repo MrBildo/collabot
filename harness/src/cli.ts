@@ -10,6 +10,7 @@ import { handleTask, draftAgent } from './core.js';
 import { buildTaskContext } from './context.js';
 import { listTasks } from './task.js';
 import { CliAdapter } from './adapters/cli.js';
+import { CommunicationRegistry } from './registry.js';
 import { AgentPool } from './pool.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
 import { scaffoldEntity, validateEntityFrontmatter, validateLinks } from './entity-tools.js';
@@ -284,13 +285,14 @@ const message: InboundMessage = {
   metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
 };
 
-const adapter = new CliAdapter();
+const registry = new CommunicationRegistry();
+registry.register(new CliAdapter());
 const pool = new AgentPool(config.pool.maxConcurrent);
 
 // Create MCP servers
 const tracker = new DispatchTracker();
 const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
-  return draftAgent(roleName, taskContext, adapter, roles, config, {
+  return draftAgent(roleName, taskContext, registry, roles, config, {
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
     cwd: opts?.cwd,
@@ -313,7 +315,8 @@ const mcpServers = {
 logger.info({ role, project: project.name, taskSlug, prompt: prompt.slice(0, 80) }, 'CLI dispatch starting');
 
 try {
-  const result = await handleTask(message, adapter, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
+  await registry.startAll();
+  const result = await handleTask(message, registry, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.status === 'completed' || result.status === 'aborted' ? 0 : 1);
 } catch (err) {

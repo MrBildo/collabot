@@ -8,6 +8,7 @@ import type {
   DispatchIndexEntry,
   EventType,
 } from './types.js';
+import type { PluginManifest } from './comms.js';
 
 /**
  * Create a CapturedEvent with ULID id and RFC 3339 timestamp.
@@ -24,6 +25,8 @@ export function makeCapturedEvent(type: EventType, data?: Record<string, unknown
 // ── DispatchStoreProvider interface ──────────────────────────────
 
 export interface DispatchStoreProvider {
+  readonly manifest: PluginManifest;
+
   // Dispatch lifecycle
   createDispatch(taskDir: string, envelope: DispatchEnvelope): void;
   updateDispatch(taskDir: string, dispatchId: string, updates: Partial<DispatchEnvelope>): void;
@@ -130,6 +133,14 @@ function upsertDispatchIndex(taskDir: string, entry: DispatchIndexEntry): void {
 }
 
 export class JsonFileDispatchStore implements DispatchStoreProvider {
+  readonly manifest: PluginManifest = {
+    id: 'collabot.dispatch-store.json-file',
+    name: 'JSON File Dispatch Store',
+    version: '1.0.0',
+    description: 'File-based dispatch store using JSON files in task directories.',
+    providerType: 'dispatch-store',
+  };
+
   createDispatch(taskDir: string, envelope: DispatchEnvelope): void {
     const file: DispatchFile = { ...envelope, events: [] };
     writeDispatchFile(taskDir, file);

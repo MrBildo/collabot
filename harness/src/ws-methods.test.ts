@@ -6,6 +6,7 @@ import path from 'node:path';
 import { JSONRPCErrorException } from 'json-rpc-2.0';
 import { AgentPool } from './pool.js';
 import { registerWsMethods, type WsMethodDeps } from './ws-methods.js';
+import { CommunicationRegistry } from './registry.js';
 import type { WsAdapter } from './adapters/ws.js';
 import type { InboundMessage } from './comms.js';
 import type { Config } from './config.js';
@@ -63,8 +64,11 @@ function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, Ro
   let handleTaskCalled = false;
   let lastMessage: InboundMessage | undefined;
 
+  const registry = new CommunicationRegistry();
+
   const deps: WsMethodDeps = {
     wsAdapter: mockWsAdapter,
+    registry,
     handleTask: async (msg) => {
       handleTaskCalled = true;
       lastMessage = msg;
