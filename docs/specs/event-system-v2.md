@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Source** | Spec discussion 2026-02-28 |
-| **Status** | Draft (in progress) |
+| **Status** | **Signed off** |
 | **Created** | 2026-02-28 |
 | **Last Updated** | 2026-03-01 |
 
@@ -315,4 +315,4 @@ The full plugin/provider pattern (manifest schema, registration API, discovery m
 
 ## Sign-off
 
-- [ ] Design discussion in progress — 2026-03-01
+- [x] Design discussion completed — 2026-03-01
