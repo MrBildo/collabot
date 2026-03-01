@@ -106,6 +106,37 @@ claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 - **Ask, don't guess:** Include in dispatch prompts: "If you get stuck or are unsure about something, report back with your question rather than guessing."
 - **Locked DLL warning:** If a child agent reports build failure due to locked DLLs (MSB3027), the compilation itself succeeded — the running API process holds the file lock.
 
+### Parallel Agent Dispatch (Worktrees)
+
+When multiple agents need to work on the same repo simultaneously, use **git worktrees** to give each agent a physically separate working directory. Separate branches alone don't work — agents in the same directory clobber each other's checkout.
+
+**When to use:** Two or more agents working the same repo in parallel (e.g., Phase 2A + 2B of a multi-phase implementation).
+
+**Setup:**
+```powershell
+# From the main repo, create worktrees as sibling directories
+git worktree add ../<repo>-wt-<short-name> -b feature/<branch-name> <start-point>
+
+# Install dependencies in each worktree
+cd ../<repo>-wt-<short-name>/harness && npm install
+```
+
+**Naming conventions:**
+- Worktree path: `../<repo>-wt-<short-name>/` (sibling to main repo)
+- Branch: `feature/<initiative>-<purpose>` (e.g., `feature/esv2-write-path`)
+
+**Dispatch prompts** point each agent to its worktree directory:
+```
+Open Claude Code in `../<repo>-wt-<short-name>/harness/`
+```
+
+**After agents finish:**
+1. Review each worktree's changes
+2. Merge feature branches into the release/integration branch
+3. Clean up: `git worktree remove ../<repo>-wt-<short-name>` + `git branch -d feature/<branch-name>`
+
+**Important:** Each worktree needs its own `npm install` — they have separate `node_modules/`. The `.git` store is shared, so commits in a worktree are immediately visible to the main repo.
+
 ### Knowledge Base
 
 Before starting any development work, coding agents MUST check `.agents/kb/` for relevant knowledge bases. Start with `meta.md` and `index.md` — these are wiki-style and designed to minimize context window usage.

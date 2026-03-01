@@ -33,18 +33,18 @@ Phase 4: PR review + merge
 **Files to create/modify:**
 - `harness/src/dispatch-store.ts` — NEW: `DispatchStoreProvider` interface + `JsonFileDispatchStore` implementation
 - `harness/src/dispatch-store.test.ts` — NEW: tests for the store
-- `harness/src/types.ts` — replace old event types (`CapturedEventType`, `CapturedEvent`, `EventLog`) with new types in place. Breaking changes are fine.
+- `harness/src/types.ts` — update: new event types, dispatch envelope type, replace old event types
 
 **Files NOT to touch:**
 - `dispatch.ts`, `draft.ts`, `context.ts`, `mcp.ts` — Phase 2 work
-- `events.ts` — still imported by current code, will have broken imports until Phase 3 removes it (that's fine)
+- `events.ts` — still used by current code, removed in Phase 3
 
 ### Types to define in `types.ts`
 
-Remove the existing event capture types (lines 148-175) and replace with:
+Replace the existing event capture types (lines 148-175) with:
 
 ```typescript
-// ── Event Capture ────────────────────────────────────────
+// ── Event System v2 ───────────────────────────────────────
 
 export type EventCategory = 'agent' | 'session' | 'harness' | 'user' | 'system';
 
@@ -74,7 +74,7 @@ export type EventType =
   | 'system:hook_progress'
   | 'system:hook_response';
 
-export type CapturedEvent = {
+export type CapturedEventV2 = {
   id: string;                          // ULID
   type: EventType;
   timestamp: string;                   // RFC 3339
@@ -98,7 +98,7 @@ export type DispatchEnvelope = {
 };
 
 export type DispatchFile = DispatchEnvelope & {
-  events: CapturedEvent[];
+  events: CapturedEventV2[];
 };
 
 export type DispatchIndexEntry = {
@@ -117,11 +117,11 @@ export type DispatchIndexEntry = {
 export interface DispatchStoreProvider {
   createDispatch(taskDir: string, envelope: DispatchEnvelope): void;
   updateDispatch(taskDir: string, dispatchId: string, updates: Partial<DispatchEnvelope>): void;
-  appendEvent(taskDir: string, dispatchId: string, event: CapturedEvent): void;
+  appendEvent(taskDir: string, dispatchId: string, event: CapturedEventV2): void;
   getDispatchEnvelopes(taskDir: string): DispatchEnvelope[];
   getDispatchEnvelope(taskDir: string, dispatchId: string): DispatchEnvelope | null;
-  getDispatchEvents(taskDir: string, dispatchId: string): CapturedEvent[];
-  getRecentEvents(taskDir: string, dispatchId: string, count: number): CapturedEvent[];
+  getDispatchEvents(taskDir: string, dispatchId: string): CapturedEventV2[];
+  getRecentEvents(taskDir: string, dispatchId: string, count: number): CapturedEventV2[];
 }
 ```
 
@@ -150,8 +150,8 @@ export interface DispatchStoreProvider {
 - [ ] `JsonFileDispatchStore` implements the interface
 - [ ] All tests pass
 - [ ] `task.json` dispatch index maintained correctly
-- [ ] Old types (`CapturedEventType`, `CapturedEvent`, `EventLog`) replaced in place — no v2 suffixes
-- [ ] `npm run typecheck` passes (note: `events.ts` will have broken imports — that's expected, it's removed in Phase 3)
+- [ ] Old types (`CapturedEventType`, `CapturedEvent`, `EventLog`) still exist (not removed yet — Phase 3)
+- [ ] `npm run typecheck` passes
 - [ ] `npm test` passes (existing tests still work)
 
 ---
@@ -160,22 +160,22 @@ export interface DispatchStoreProvider {
 
 **Depends on:** Phase 1 complete
 
-**Goal:** Refactor `dispatch.ts` and `draft.ts` to emit events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK events we're currently dropping.
+**Goal:** Refactor `dispatch.ts` and `draft.ts` to emit v2 events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK events we're currently dropping.
 
 **Files to modify:**
-- `harness/src/dispatch.ts` — use `DispatchStoreProvider`, emit events, capture new SDK message types
+- `harness/src/dispatch.ts` — use `DispatchStoreProvider`, emit v2 events, capture new SDK message types
 - `harness/src/draft.ts` — same treatment, plus `user:message` events for conversation turns
 
 **Files NOT to touch:**
 - `context.ts`, `mcp.ts` — Phase 2B work
-- `events.ts` — removed in Phase 3
+- `events.ts` — still exists, removed in Phase 3
 - `types.ts`, `dispatch-store.ts` — Phase 1 (already done)
 
 ### dispatch.ts changes
 
 1. Import `DispatchStoreProvider` and get the singleton (or accept as parameter)
 2. At dispatch start: call `createDispatch()` with envelope (status: 'running')
-3. Replace all `emitEvent()` calls with `appendEvent()` using new event types:
+3. Replace all `emitEvent()` calls with `appendEvent()` using v2 event types:
    - `dispatch_start` → `session:init`
    - `text` → `agent:text`
    - `thinking` → `agent:thinking`
@@ -206,7 +206,7 @@ Same event mapping as dispatch.ts, plus:
 
 ### Tests
 
-- Verify events are emitted for each SDK message type
+- Verify v2 events are emitted for each SDK message type
 - Verify dispatch envelope is created at start and updated at end
 - Verify `agent:tool_call` + `agent:tool_result` pairs are linked by `toolCallId`
 - Verify `user:message` events appear in draft session dispatches
@@ -214,8 +214,8 @@ Same event mapping as dispatch.ts, plus:
 
 ### Acceptance criteria
 
-- [ ] dispatch.ts emits all event types through DispatchStoreProvider
-- [ ] draft.ts emits all event types including user:message
+- [ ] dispatch.ts emits all v2 event types through DispatchStoreProvider
+- [ ] draft.ts emits all v2 event types including user:message
 - [ ] All currently-dropped SDK events are now captured
 - [ ] Tool call/result pairs linked by toolCallId
 - [ ] Dispatch envelope created at start, updated at end with cost/usage/result
@@ -242,7 +242,7 @@ Same event mapping as dispatch.ts, plus:
 
 **Files NOT to touch:**
 - `dispatch.ts`, `draft.ts` — Phase 2A work
-- `events.ts` — removed in Phase 3
+- `events.ts` — still exists, removed in Phase 3
 
 ### context.ts rewrite
 
@@ -295,66 +295,100 @@ This is the view used for TUI session reconstruction and PM check-ins.
 
 ---
 
-## Phase 3: Migration + Cleanup
+## Phase 3: Migration + Cleanup + Phase 2 Fixes
 
-**Depends on:** Phase 2A and 2B complete
+**Depends on:** Phase 2A and 2B complete (merged into `release/event-system-v2`)
 
-**Goal:** Remove old code, handle existing task data, verify end-to-end.
+**Goal:** Remove old code, fix issues found in Phase 2 review, verify end-to-end.
+
+### Original Phase 3 scope
 
 **Files to modify/remove:**
 - `harness/src/events.ts` — REMOVE (replaced by dispatch-store.ts)
 - `harness/src/events.test.ts` — REMOVE
 - `harness/src/journal.ts` — REMOVE `watchJournals()`, `getJournalStatus()`. KEEP `extractToolTarget()` (move to `dispatch.ts` or a shared util)
+- `harness/src/types.ts` — REMOVE old event types (`CapturedEventType`, `CapturedEvent`, `EventLog`)
 - `harness/src/task.ts` — update `TaskManifest` type: `dispatches` becomes `DispatchIndexEntry[]`
-- `harness/src/core.ts` — update `recordDispatch` calls to use new store
+- `harness/src/core.ts` — remove `recordDispatch` calls (new dispatch store handles this)
 - Any remaining imports of old event types (old types were already removed from `types.ts` in Phase 1)
 
-**Migration considerations:**
-- Existing tasks have `events.json` + old-format `task.json` with `DispatchRecord[]`
-- Options: (a) ignore old data (it's dev data, not production), (b) write a one-time migrator
-- Recommendation: option (a) — old tasks stay readable but the old files are just ignored by the new code. No migration needed. This is pre-production.
+### Phase 2 review fixes (folded into Phase 3)
 
-**Integration testing:**
-- Start harness, dispatch an agent, verify dispatch file created with correct events
-- Draft a session, send messages, verify user:message events
-- PM dispatches child agents, verify parentDispatchId
-- `get_task_context` MCP tool returns context from new dispatch envelopes
-- TUI session view renders correctly (manual verification or snapshot test)
+**Issue 1 (HIGH): `parentDispatchId` not propagated end-to-end.**
+MCP layer (`mcp.ts`) correctly passes `parentDispatchId` to `draftFn`, but it's dropped before reaching `dispatch.ts`. Fix:
+- Add `parentDispatchId?: string` to `DispatchOptions` in `types.ts`
+- Pass it through `draftFn` in `index.ts` and `cli.ts` to `draftAgent()` in `core.ts`
+- Pass it through `core.ts` `draftAgent()` to `dispatch()` in `dispatch.ts`
+- Set it on the `DispatchEnvelope` in `dispatch.ts` `createDispatch()` call
+
+**Issue 2 (HIGH): Dual-write — old `recordDispatch()` still called.**
+- Remove `recordDispatch()` call from `core.ts` `handleTask()` (lines ~251-263)
+- Remove `recordDispatch()` call from `mcp.ts` `await_agent` (lines ~320-329)
+- The new dispatch store already handles this via `createDispatch()` / `updateDispatch()`
+
+**Issue 3 (MEDIUM): Field name mismatches in `session-view.ts`.**
+- `session:status` events: `dispatch.ts` emits `{ status }` but `session-view.ts` reads `data.message`. Fix renderer to read `data.status`.
+- `system:hook_*` events: `dispatch.ts` emits `{ hookName }` but `session-view.ts` reads `data.hook`. Fix renderer to read `data.hookName`.
+
+**Issue 4 (LOW): Text truncation inconsistency.**
+- `draft.ts` truncates `agent:text` / `agent:thinking` to 2000 chars, `dispatch.ts` captures full text
+- Normalize: both should truncate to 2000 chars
+
+**Issue 5 (LOW): Wrong event type for non-retryable errors in `draft.ts`.**
+- `draft.ts` emits `harness:loop_kill` for non-retryable error detection — should be `harness:error`
+
+### Migration considerations
+
+- Existing tasks have `events.json` + old-format `task.json` with `DispatchRecord[]`
+- Recommendation: ignore old data — it's pre-production dev data. Old files are just ignored by the new code.
 
 ### Acceptance criteria
 
-- [ ] Old `events.ts` removed
+- [ ] Old `events.ts` and `events.test.ts` removed
 - [ ] `extractToolTarget()` preserved (moved to shared location)
 - [ ] No remaining imports of old event types
 - [ ] `task.json` uses `DispatchIndexEntry[]` format
+- [ ] `parentDispatchId` propagated end-to-end from MCP through to dispatch envelope
+- [ ] Old `recordDispatch()` calls removed — no dual-write
+- [ ] `session-view.ts` field names match emitter (`data.status`, `data.hookName`)
+- [ ] Text truncation consistent between `dispatch.ts` and `draft.ts`
+- [ ] Non-retryable error in `draft.ts` emits `harness:error` not `harness:loop_kill`
 - [ ] `npm run typecheck` passes
 - [ ] `npm test` passes
-- [ ] End-to-end: dispatch creates correct dispatch file with events
 
 ---
 
 ## Dispatch Prompts
 
-### Phase 1 — Foundation
+### Phase 1 — Foundation (COMPLETE)
 
-Open Claude Code in `../collabot/harness/`
-
-> Check out branch `feature/event-system-v2` (from `master`). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 1: Foundation** — replace old event types in `types.ts` with the new types (no v2 suffixes — just replace in place, breaking changes are fine), `DispatchStoreProvider` interface and `JsonFileDispatchStore` implementation in a new `dispatch-store.ts`, and tests in `dispatch-store.test.ts`. Do NOT modify `dispatch.ts`, `draft.ts`, `context.ts`, or `mcp.ts` — those are Phase 2. The old `events.ts` will have broken imports after type replacement — that's expected, it gets removed in Phase 3. Run `npm run typecheck` and `npm test` to verify everything passes (exclude `events.ts` import errors if needed).
+Implemented on `release/event-system-v2` at commits `c096e26` + `26ed369`.
 
 ### Phase 2A — Write Path
 
-Open Claude Code in `../collabot/harness/`
+Open Claude Code in `../collabot-wt-write-path/harness/`
 
-> Check out branch `feature/event-system-v2` (should have Phase 1 already committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 2A: Write Path** — refactor `dispatch.ts` and `draft.ts` to emit events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK event types we're currently dropping. Emit `user:message` events in draft sessions. Link tool call/result pairs via `toolCallId`. Create dispatch envelopes at start, update at end. Do NOT modify `context.ts` or `mcp.ts` — a parallel agent is handling those. Do NOT remove `events.ts` — Phase 3. Run `npm run typecheck` and `npm test`.
+> You are in a git worktree on branch `feature/esv2-write-path` (branched from `release/event-system-v2` with Phase 1 complete). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 2A: Write Path** — refactor `dispatch.ts` and `draft.ts` to emit events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK event types we're currently dropping. Emit `user:message` events in draft sessions. Link tool call/result pairs via `toolCallId`. Create dispatch envelopes at start, update at end. Do NOT modify `context.ts` or `mcp.ts` — a parallel agent is handling those in a separate worktree. Do NOT remove `events.ts` — Phase 3. Run `npm run typecheck` and `npm test`. When everything passes, commit your changes and push to origin.
 
 ### Phase 2B — Read Path
 
+Open Claude Code in `../collabot-wt-read-path/harness/`
+
+> You are in a git worktree on branch `feature/esv2-read-path` (branched from `release/event-system-v2` with Phase 1 complete). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 2B: Read Path** — rewrite `buildTaskContext()` in `context.ts` to read from `DispatchStoreProvider`, update MCP tools in `mcp.ts` to use the new dispatch store (including propagating `parentDispatchId` for child dispatches), and create a new `session-view.ts` with `renderSessionView()` that reconstructs a full session log from dispatch events. Write tests in `session-view.test.ts`. Do NOT modify `dispatch.ts` or `draft.ts` — a parallel agent is handling those in a separate worktree. Do NOT remove `events.ts` — Phase 3. Run `npm run typecheck` and `npm test`. When everything passes, commit your changes and push to origin.
+
+### Phase 3 — Migration + Cleanup + Phase 2 Fixes
+
 Open Claude Code in `../collabot/harness/`
 
-> Check out branch `feature/event-system-v2` (should have Phase 1 already committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 2B: Read Path** — rewrite `buildTaskContext()` in `context.ts` to read from `DispatchStoreProvider`, update MCP tools in `mcp.ts` to use the new dispatch store (including propagating `parentDispatchId` for child dispatches), and create a new `session-view.ts` with `renderSessionView()` that reconstructs a full session log from dispatch events. Write tests in `session-view.test.ts`. Do NOT modify `dispatch.ts` or `draft.ts` — a parallel agent is handling those. Do NOT remove `events.ts` — Phase 3. Run `npm run typecheck` and `npm test`.
-
-### Phase 3 — Migration + Cleanup
-
-Open Claude Code in `../collabot/harness/`
-
-> Check out branch `feature/event-system-v2` (should have Phases 1, 2A, 2B committed). Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 3: Migration + Cleanup** — remove `events.ts` and `events.test.ts`, move `extractToolTarget()` from `journal.ts` to a shared util, remove `watchJournals()` and `getJournalStatus()` from `journal.ts`, update `TaskManifest` in `task.ts` to use `DispatchIndexEntry[]`, update `core.ts` to use the new dispatch store. Old event types were already replaced in Phase 1 — fix any remaining broken imports. Run `npm run typecheck` and `npm test` to verify clean build.
+> You are on branch `release/event-system-v2` with Phases 1, 2A, and 2B merged. Read the spec at `docs/specs/event-system-v2.md` and the implementation plan at `docs/specs/event-system-v2-implementation.md`. Implement **Phase 3: Migration + Cleanup + Phase 2 Fixes**. This phase has two parts:
+>
+> **Part A — Original cleanup:** Remove `events.ts` and `events.test.ts`. Move `extractToolTarget()` from `journal.ts` to a shared util. Remove `watchJournals()` and `getJournalStatus()` from `journal.ts`. Update `TaskManifest` in `task.ts` to use `DispatchIndexEntry[]`. Fix any remaining broken imports.
+>
+> **Part B — Phase 2 review fixes:**
+> 1. **(HIGH) Wire `parentDispatchId` end-to-end.** Add `parentDispatchId?: string` to `DispatchOptions` in `types.ts`. Pass it through `draftFn` in `index.ts` and `cli.ts`, through `draftAgent()` in `core.ts`, into `dispatch()` in `dispatch.ts`, and set it on the `DispatchEnvelope` in the `createDispatch()` call. The MCP layer in `mcp.ts` already passes it — the gap is downstream.
+> 2. **(HIGH) Remove dual-write.** Remove the old `recordDispatch()` call from `core.ts` `handleTask()` and from `mcp.ts` `await_agent`. The new dispatch store already handles persistence.
+> 3. **(MEDIUM) Fix field name mismatches in `session-view.ts`.** For `session:status` events, read `data.status` not `data.message`. For `system:hook_*` events, read `data.hookName` not `data.hook`.
+> 4. **(LOW) Normalize text truncation.** `draft.ts` truncates `agent:text`/`agent:thinking` to 2000 chars but `dispatch.ts` captures full text. Make both truncate to 2000.
+> 5. **(LOW) Fix non-retryable error event type in `draft.ts`.** It emits `harness:loop_kill` for non-retryable errors — should be `harness:error`.
+>
+> Run `npm run typecheck` and `npm test` to verify clean build. When everything passes, commit and push to origin.
