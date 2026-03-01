@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { Project } from './project.js';
+import { JsonFileDispatchStore } from './dispatch-store.js';
 
 // --- Test helpers ---
 function makeTempTaskDir(slug: string, manifest: Record<string, unknown>): string {
@@ -101,18 +102,11 @@ mock.module('./task.js', {
       taskDir: mockTaskDir!,
       created: '2026-02-19T10:00:00.000Z',
     })),
-    recordDispatch: mock.fn(() => {}),
     nextJournalFile: mock.fn(() => 'api-dev.md'),
     generateSlug: mock.fn(() => ({ slug: 'test-task', modified: false })),
     deduplicateSlug: mock.fn(() => ({ slug: 'test-task', deduplicated: false })),
     listTasks: mock.fn(() => []),
     closeTask: mock.fn(() => {}),
-    getOrCreateTask: mock.fn((_threadTs: string, _msg: string, _dir: string) => ({
-      slug: 'test-task',
-      taskDir: mockTaskDir!,
-      threadTs: _threadTs,
-      created: '2026-02-19T10:00:00.000Z',
-    })),
   },
 });
 
@@ -128,20 +122,27 @@ test('follow-up dispatch with prior results — content includes task history', 
     created: '2026-02-19T10:00:00.000Z',
     threadTs: 'thread-123',
     description: 'Build the login feature',
-    dispatches: [{
-      role: 'api-dev',
-      cwd: '../backend-api',
-      model: 'claude-sonnet-4-6',
-      startedAt: '2026-02-19T10:00:00.000Z',
-      completedAt: '2026-02-19T10:05:00.000Z',
-      status: 'completed',
-      journalFile: 'api-dev.md',
-      result: {
-        summary: 'Added login endpoint',
-        changes: ['AuthController.cs'],
-      },
-    }],
+    dispatches: [],
   });
+
+  // Create dispatch via dispatch store so buildTaskContext() can read it
+  const store = new JsonFileDispatchStore();
+  store.createDispatch(taskDir, {
+    dispatchId: '01JCORE0001',
+    taskSlug: 'test-task',
+    role: 'api-dev',
+    model: 'claude-sonnet-4-6',
+    cwd: '../backend-api',
+    startedAt: '2026-02-19T10:00:00.000Z',
+    completedAt: '2026-02-19T10:05:00.000Z',
+    status: 'completed',
+    structuredResult: {
+      status: 'success',
+      summary: 'Added login endpoint',
+      changes: ['AuthController.cs'],
+    },
+  });
+
   mockTaskDir = taskDir;
   capturedContent = undefined;
 

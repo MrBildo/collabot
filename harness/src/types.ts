@@ -105,6 +105,7 @@ export type DispatchOptions = {
   featureSlug: string;   // for journal path construction
   taskDir?: string;      // Milestone C: task directory for journal placement
   journalFileName?: string; // Milestone C: custom journal filename
+  parentDispatchId?: string; // v2: parent dispatch ID for child agent tracking
   maxTurns?: number;
   maxBudgetUsd?: number;
   model?: string;        // per-dispatch override (highest priority)
@@ -129,6 +130,7 @@ export type DraftSession = {
   turnCount: number;
   status: 'active' | 'closed';
   sessionInitialized: boolean;  // true after first query() starts — SDK session files exist on disk
+  dispatchId?: string;           // ULID — v2 dispatch envelope ID (one per draft session, D11)
   cumulativeCostUsd: number;
   lastInputTokens: number;
   lastOutputTokens: number;
@@ -145,31 +147,68 @@ export type DraftSummary = {
   durationMs: number;
 };
 
-// ── Event Capture (D5-D8) ───────────────────────────────────────
+// ── Event Capture ────────────────────────────────────────────
 
-export type CapturedEventType =
-  | 'dispatch_start'
-  | 'dispatch_end'
-  | 'text'
-  | 'thinking'
-  | 'tool_use'
-  | 'tool_result'
-  | 'compaction'
-  | 'loop_warning'
-  | 'loop_kill'
-  | 'stall'
-  | 'abort'
-  | 'error';
+export type EventCategory = 'agent' | 'session' | 'harness' | 'user' | 'system';
+
+export type EventType =
+  // Agent activity
+  | 'agent:text'
+  | 'agent:thinking'
+  | 'agent:tool_call'
+  | 'agent:tool_result'
+  // Session lifecycle
+  | 'session:init'
+  | 'session:complete'
+  | 'session:compaction'
+  | 'session:rate_limit'
+  | 'session:status'
+  // Harness interventions
+  | 'harness:loop_warning'
+  | 'harness:loop_kill'
+  | 'harness:stall'
+  | 'harness:abort'
+  | 'harness:error'
+  // Interaction
+  | 'user:message'
+  // System observations
+  | 'system:files_persisted'
+  | 'system:hook_started'
+  | 'system:hook_progress'
+  | 'system:hook_response';
 
 export type CapturedEvent = {
-  type: CapturedEventType;
-  timestamp: string;           // RFC 3339
+  id: string;                          // ULID
+  type: EventType;
+  timestamp: string;                   // RFC 3339
   data?: Record<string, unknown>;
 };
 
-export type EventLog = {
+export type DispatchEnvelope = {
+  dispatchId: string;                  // ULID
   taskSlug: string;
   role: string;
-  startedAt: string;           // RFC 3339
+  model: string;
+  cwd: string;
+  startedAt: string;                   // RFC 3339
+  completedAt?: string;                // RFC 3339 — null while running
+  status: 'running' | 'completed' | 'aborted' | 'crashed';
+  cost?: number;
+  usage?: UsageMetrics;
+  structuredResult?: AgentResult;
+  parentDispatchId?: string;           // null for top-level
+  botId?: string;                      // null (future)
+};
+
+export type DispatchFile = DispatchEnvelope & {
   events: CapturedEvent[];
+};
+
+export type DispatchIndexEntry = {
+  dispatchId: string;
+  role: string;
+  status: string;
+  cost?: number;
+  startedAt: string;
+  parentDispatchId?: string;
 };

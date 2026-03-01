@@ -12,6 +12,7 @@ import os from 'node:os';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
 import type { DraftAgentFn } from './mcp.js';
 import { AgentPool } from './pool.js';
+import { JsonFileDispatchStore } from './dispatch-store.js';
 import type { RoleDefinition, DispatchResult, Project } from './types.js';
 
 // --- Helpers ---
@@ -83,16 +84,21 @@ test('integration: draft_agent → list → await → get_task_context (full flo
     status: 'open',
     created: '2026-02-20T10:00:00Z',
     description: 'Integration test task',
-    dispatches: [{
-      role: 'api-dev',
-      cwd: '../backend-api',
-      model: 'claude-sonnet-4-6',
-      startedAt: '2026-02-20T10:00:00Z',
-      completedAt: '2026-02-20T10:05:00Z',
-      status: 'completed',
-      journalFile: 'api-dev.md',
-      result: { summary: 'Built the endpoint', changes: ['AuthController.cs'] },
-    }],
+    dispatches: [],
+  });
+
+  // Create dispatch via dispatch store so buildTaskContext() can read it
+  const dispatchStore = new JsonFileDispatchStore();
+  dispatchStore.createDispatch(taskDir, {
+    dispatchId: '01JINTEG001',
+    taskSlug: 'existing-task',
+    role: 'api-dev',
+    model: 'claude-sonnet-4-6',
+    cwd: '../backend-api',
+    startedAt: '2026-02-20T10:00:00Z',
+    completedAt: '2026-02-20T10:05:00Z',
+    status: 'completed',
+    structuredResult: { status: 'success', summary: 'Built the endpoint', changes: ['AuthController.cs'] },
   });
 
   // Mock draftFn

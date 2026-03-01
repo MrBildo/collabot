@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createTask, findTaskByThread, getTask, listTasks, closeTask, recordDispatch, generateSlug, deduplicateSlug, nextJournalFile } from './task.js';
-import type { DispatchRecord, TaskManifest } from './task.js';
+import { createTask, findTaskByThread, getTask, listTasks, closeTask, generateSlug, deduplicateSlug, nextJournalFile } from './task.js';
+import type { TaskManifest } from './task.js';
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'task-test-'));
@@ -118,59 +118,6 @@ test('closeTask throws for non-existent task', () => {
     () => closeTask(tasksDir, 'nonexistent'),
     /not found/,
   );
-});
-
-// ── recordDispatch ──────────────────────────────────────────────
-
-test('recordDispatch with result persists full result', () => {
-  const tasksDir = makeTempDir();
-  const task = createTask(tasksDir, { name: 'Add user settings', project: 'acme' });
-
-  const dispatch: DispatchRecord = {
-    role: 'api-dev',
-    cwd: '../backend-api',
-    model: 'claude-sonnet-4-6',
-    startedAt: '2026-02-19T10:00:00.000Z',
-    completedAt: '2026-02-19T10:05:00.000Z',
-    status: 'completed',
-    journalFile: 'api-dev.md',
-    result: {
-      summary: 'Added user settings endpoint',
-      changes: ['src/Controllers/SettingsController.cs'],
-      issues: ['Migration needed'],
-      questions: ['Per-device or per-account?'],
-    },
-  };
-
-  recordDispatch(task.taskDir, dispatch);
-  const manifest = readManifest(task.taskDir);
-
-  assert.strictEqual(manifest.dispatches.length, 1);
-  const recorded = manifest.dispatches[0]!;
-  assert.strictEqual(recorded.role, 'api-dev');
-  assert.strictEqual(recorded.result!.summary, 'Added user settings endpoint');
-});
-
-test('multiple dispatches accumulate', () => {
-  const tasksDir = makeTempDir();
-  const task = createTask(tasksDir, { name: 'Multi-step', project: 'acme' });
-
-  recordDispatch(task.taskDir, {
-    role: 'api-dev', cwd: '../api', model: 'claude-sonnet-4-6',
-    startedAt: '2026-02-19T10:00:00.000Z', completedAt: '2026-02-19T10:05:00.000Z',
-    status: 'completed', journalFile: 'api-dev.md',
-    result: { summary: 'API done' },
-  });
-
-  recordDispatch(task.taskDir, {
-    role: 'portal-dev', cwd: '../portal', model: 'claude-sonnet-4-6',
-    startedAt: '2026-02-19T10:06:00.000Z', completedAt: '2026-02-19T10:10:00.000Z',
-    status: 'completed', journalFile: 'portal-dev.md',
-    result: { summary: 'Portal done' },
-  });
-
-  const manifest = readManifest(task.taskDir);
-  assert.strictEqual(manifest.dispatches.length, 2);
 });
 
 // ── Slug generation ─────────────────────────────────────────────

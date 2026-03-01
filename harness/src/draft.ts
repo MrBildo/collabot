@@ -4,18 +4,19 @@ import { randomUUID } from 'node:crypto';
 import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import { ulid } from 'ulid';
 import { logger } from './logger.js';
 import { getProjectTasksDir } from './project.js';
 import type { Project } from './project.js';
 import { buildChildEnv, extractUsageMetrics } from './dispatch.js';
-import { extractToolTarget } from './journal.js';
-import { getEventStore, makeEvent } from './events.js';
+import { extractToolTarget } from './util.js';
+import { getDispatchStore, makeCapturedEvent } from './dispatch-store.js';
 import { detectErrorLoop, detectNonRetryable } from './monitor.js';
 import { makeChannelMessage } from './core.js';
 import { filteredSend } from './comms.js';
 import type { CommAdapter } from './comms.js';
 import type { AgentPool } from './pool.js';
-import type { RoleDefinition, DraftSession, DraftSummary, ToolCall, ErrorTriplet, LoopDetectionThresholds } from './types.js';
+import type { RoleDefinition, DraftSession, DraftSummary, ToolCall, ErrorTriplet, LoopDetectionThresholds, EventType } from './types.js';
 import { resolveModelId, type Config } from './config.js';
 import { assemblePrompt } from './prompts.js';
 
@@ -44,6 +45,7 @@ export function createDraft(opts: {
 
   const sessionId = randomUUID();
   const agentId = `draft-${opts.role.name}-${Date.now()}`;
+  const dispatchId = ulid();
 
   const { taskSlug, taskDir } = opts;
 
@@ -71,6 +73,7 @@ export function createDraft(opts: {
     turnCount: 0,
     status: 'active',
     sessionInitialized: false,
+    dispatchId,
     cumulativeCostUsd: 0,
     lastInputTokens: 0,
     lastOutputTokens: 0,
@@ -80,7 +83,7 @@ export function createDraft(opts: {
 
   persistDraft(session);
   activeDraft = session;
-  logger.info({ sessionId, role: opts.role.name, project: opts.project.name, taskSlug }, 'draft session created');
+  logger.info({ sessionId, dispatchId, role: opts.role.name, project: opts.project.name, taskSlug }, 'draft session created');
   return session;
 }
 
@@ -93,6 +96,22 @@ export function closeDraft(pool: AgentPool): DraftSummary {
   session.status = 'closed';
   session.lastActivityAt = new Date().toISOString();
   persistDraft(session);
+
+  // Emit session:complete and update dispatch envelope
+  if (session.dispatchId) {
+    try {
+      const dispatchStore = getDispatchStore();
+      dispatchStore.appendEvent(session.taskDir, session.dispatchId, makeCapturedEvent('session:complete', {
+        status: 'completed',
+        cost: session.cumulativeCostUsd,
+      }));
+      dispatchStore.updateDispatch(session.taskDir, session.dispatchId, {
+        status: 'completed',
+        completedAt: session.lastActivityAt,
+        cost: session.cumulativeCostUsd,
+      });
+    } catch { /* non-fatal */ }
+  }
 
   pool.release(session.agentId);
 
@@ -226,13 +245,20 @@ export async function resumeDraft(
     throw new Error('Draft agent not found in pool');
   }
 
+  // Ensure dispatchId exists (backcompat for recovered drafts without one)
+  if (!session.dispatchId) {
+    session.dispatchId = ulid();
+    persistDraft(session);
+  }
+  const dispatchId = session.dispatchId;
+
   // Stall timer (global default)
   const stallTimeoutMs = config.defaults.stallTimeoutSeconds * 1000;
   let stallTimer: ReturnType<typeof setTimeout> | undefined;
   let abortReason: string | undefined;
   const toolCallWindow: ToolCall[] = [];
   const errorWindow: ErrorTriplet[] = [];
-  const pendingToolCalls = new Map<string, { tool: string; target: string }>();
+  const pendingToolCalls = new Map<string, { tool: string; target: string; startedAt: number }>();
   let loopWarningPosted = false;
 
   const draftThresholds: LoopDetectionThresholds = {
@@ -268,15 +294,32 @@ export async function resumeDraft(
     turnCount: session.turnCount,
   }, 'resuming draft session');
 
-  // Event capture helper (non-fatal)
-  const eventStore = getEventStore();
-  function emitEvent(type: Parameters<typeof makeEvent>[0], data?: Record<string, unknown>) {
+  // v2 event capture
+  const dispatchStore = getDispatchStore();
+  function emitEvent(type: EventType, data?: Record<string, unknown>) {
     try {
-      eventStore.append(session.taskDir, session.role, session.taskSlug, makeEvent(type, data));
+      dispatchStore.appendEvent(session.taskDir, dispatchId, makeCapturedEvent(type, data));
     } catch { /* event capture failure is non-fatal */ }
   }
 
-  emitEvent('dispatch_start', { role: role.name, model: resolvedModel, mode: 'draft', isFirstTurn });
+  // Create dispatch envelope on first turn (when we have resolved model)
+  const existingEnvelope = dispatchStore.getDispatchEnvelope(session.taskDir, dispatchId);
+  if (!existingEnvelope) {
+    try {
+      dispatchStore.createDispatch(session.taskDir, {
+        dispatchId,
+        taskSlug: session.taskSlug,
+        role: role.name,
+        model: resolvedModel,
+        cwd: absoluteCwd,
+        startedAt: session.startedAt,
+        status: 'running',
+      });
+    } catch { /* non-fatal */ }
+  }
+
+  // Emit user:message for this turn's prompt
+  emitEvent('user:message', { text: prompt });
 
   try {
     resetStallTimer();
@@ -310,6 +353,7 @@ export async function resumeDraft(
 
       if (msg.type === 'system' && msg.subtype === 'init') {
         logger.info({ sessionId: msg.session_id, model: msg.model }, 'draft agent session started');
+        emitEvent('session:init', { sessionId: msg.session_id, model: msg.model });
         if (!session.sessionInitialized) {
           session.sessionInitialized = true;
           persistDraft(session);
@@ -321,7 +365,7 @@ export async function resumeDraft(
             const text = (block as Record<string, unknown>).text as string;
             if (text.trim()) {
               logger.info({ sessionId: session.sessionId, text: text.slice(0, 200) }, 'agent text');
-              emitEvent('text', { text: text.slice(0, 2000) });
+              emitEvent('agent:text', { text: text.slice(0, 2000) });
               await filteredSend(adapter, makeChannelMessage(
                 session.channelId, role.displayName ?? role.name, 'chat', text,
               ));
@@ -333,7 +377,7 @@ export async function resumeDraft(
             const thinking = (block as Record<string, unknown>).thinking as string;
             if (thinking.trim()) {
               logger.info({ sessionId: session.sessionId, thinking: thinking.slice(0, 200) }, 'agent thinking');
-              emitEvent('thinking', { text: thinking.slice(0, 2000) });
+              emitEvent('agent:thinking', { text: thinking.slice(0, 2000) });
               await filteredSend(adapter, makeChannelMessage(
                 session.channelId, role.displayName ?? role.name, 'thinking', thinking,
               ));
@@ -347,9 +391,9 @@ export async function resumeDraft(
               logger.info({ sessionId: session.sessionId, tool: block.name, target }, 'tool use');
             }
 
-            // Emit tool_use event (skip StructuredOutput — SDK internal)
+            // Emit agent:tool_call (skip StructuredOutput — SDK internal)
             if (block.name !== 'StructuredOutput') {
-              emitEvent('tool_use', { tool: block.name, target });
+              emitEvent('agent:tool_call', { toolCallId: block.id, tool: block.name, target });
               const summary = target ? `${block.name} ${target}` : block.name;
               await filteredSend(adapter, makeChannelMessage(
                 session.channelId, role.name, 'tool_use', summary,
@@ -359,7 +403,7 @@ export async function resumeDraft(
 
             // Track tool_use_id for matching tool results
             if (block.id) {
-              pendingToolCalls.set(block.id, { tool: block.name, target });
+              pendingToolCalls.set(block.id, { tool: block.name, target, startedAt: Date.now() });
             }
 
             // Sliding window error loop detection
@@ -370,7 +414,7 @@ export async function resumeDraft(
             if (loopDetection) {
               if (loopDetection.severity === 'kill') {
                 abortReason = 'error_loop';
-                emitEvent('loop_kill', { pattern: loopDetection.pattern, count: loopDetection.count });
+                emitEvent('harness:loop_kill', { pattern: loopDetection.pattern, count: loopDetection.count });
                 await filteredSend(adapter, makeChannelMessage(
                   session.channelId, 'system', 'warning',
                   `Agent killed: error loop detected (${loopDetection.pattern}, ${loopDetection.count} repetitions). Draft session is still active — send another message to continue.`,
@@ -379,7 +423,7 @@ export async function resumeDraft(
                 break;
               } else if (loopDetection.severity === 'warning' && !loopWarningPosted) {
                 logger.warn({ pattern: loopDetection.pattern, count: loopDetection.count }, 'draft: error loop detected');
-                emitEvent('loop_warning', { pattern: loopDetection.pattern, count: loopDetection.count });
+                emitEvent('harness:loop_warning', { pattern: loopDetection.pattern, count: loopDetection.count });
                 loopWarningPosted = true;
                 await filteredSend(adapter, makeChannelMessage(
                   session.channelId, 'system', 'warning',
@@ -390,7 +434,7 @@ export async function resumeDraft(
           }
         }
       } else if (msg.type === 'user') {
-        // Non-retryable error detection
+        // Capture tool results and detect errors
         const content = msg.message?.content;
         if (Array.isArray(content)) {
           for (const block of content) {
@@ -398,49 +442,64 @@ export async function resumeDraft(
               typeof block === 'object' &&
               block !== null &&
               'type' in block &&
-              (block as Record<string, unknown>).type === 'tool_result' &&
-              (block as Record<string, unknown>).is_error === true
+              (block as Record<string, unknown>).type === 'tool_result'
             ) {
               const toolResultBlock = block as Record<string, unknown>;
               const toolUseId = typeof toolResultBlock.tool_use_id === 'string' ? toolResultBlock.tool_use_id : '';
+              const isError = toolResultBlock.is_error === true;
               const pending = pendingToolCalls.get(toolUseId);
-              if (pending) pendingToolCalls.delete(toolUseId);
               const tool = pending?.tool ?? 'unknown';
               const target = pending?.target ?? '';
+              const durationMs = pending?.startedAt ? Date.now() - pending.startedAt : undefined;
+              if (pending) pendingToolCalls.delete(toolUseId);
 
-              let errorSnippet = '';
-              if (typeof toolResultBlock.content === 'string') {
-                errorSnippet = toolResultBlock.content;
-              } else if (Array.isArray(toolResultBlock.content)) {
-                errorSnippet = (toolResultBlock.content as Array<Record<string, unknown>>)
-                  .filter(b => b.type === 'text' && typeof b.text === 'string')
-                  .map(b => b.text as string)
-                  .join(' ');
-              }
-              errorSnippet = errorSnippet.replace(/\s+/g, ' ').trim().slice(0, 200);
+              // Skip SDK-internal StructuredOutput tool results
+              if (tool === 'StructuredOutput') continue;
 
-              errorWindow.push({ tool, target, errorSnippet, timestamp: Date.now() });
-              if (errorWindow.length > 20) errorWindow.shift();
+              // Emit agent:tool_result for all tool results
+              emitEvent('agent:tool_result', {
+                toolCallId: toolUseId,
+                tool,
+                target,
+                status: isError ? 'error' : 'completed',
+                ...(durationMs !== undefined ? { durationMs } : {}),
+              });
 
-              const nonRetryable = detectNonRetryable(errorWindow);
-              if (nonRetryable) {
-                abortReason = 'non_retryable_error';
-                logger.warn({
-                  tool: nonRetryable.tool,
-                  target: nonRetryable.target,
-                  errorSnippet: nonRetryable.errorSnippet,
-                  count: nonRetryable.count,
-                }, 'draft: non-retryable error detected');
-                emitEvent('loop_kill', {
-                  pattern: `${nonRetryable.tool}::${nonRetryable.target}`,
-                  count: nonRetryable.count,
-                  reason: 'non_retryable_error',
-                });
-                await filteredSend(adapter, makeChannelMessage(
-                  session.channelId, 'system', 'warning',
-                  `Agent killed: non-retryable error (${nonRetryable.tool}::${nonRetryable.target}). Draft session is still active.`,
-                ));
-                controller.abort();
+              // Error detection (only for errors)
+              if (isError) {
+                let errorSnippet = '';
+                if (typeof toolResultBlock.content === 'string') {
+                  errorSnippet = toolResultBlock.content;
+                } else if (Array.isArray(toolResultBlock.content)) {
+                  errorSnippet = (toolResultBlock.content as Array<Record<string, unknown>>)
+                    .filter(b => b.type === 'text' && typeof b.text === 'string')
+                    .map(b => b.text as string)
+                    .join(' ');
+                }
+                errorSnippet = errorSnippet.replace(/\s+/g, ' ').trim().slice(0, 200);
+
+                errorWindow.push({ tool, target, errorSnippet, timestamp: Date.now() });
+                if (errorWindow.length > 20) errorWindow.shift();
+
+                const nonRetryable = detectNonRetryable(errorWindow);
+                if (nonRetryable) {
+                  abortReason = 'non_retryable_error';
+                  logger.warn({
+                    tool: nonRetryable.tool,
+                    target: nonRetryable.target,
+                    errorSnippet: nonRetryable.errorSnippet,
+                    count: nonRetryable.count,
+                  }, 'draft: non-retryable error detected');
+                  emitEvent('harness:error', {
+                    message: `Non-retryable error: ${nonRetryable.tool}::${nonRetryable.target} (${nonRetryable.count}x)`,
+                    snippet: nonRetryable.errorSnippet,
+                  });
+                  await filteredSend(adapter, makeChannelMessage(
+                    session.channelId, 'system', 'warning',
+                    `Agent killed: non-retryable error (${nonRetryable.tool}::${nonRetryable.target}). Draft session is still active.`,
+                  ));
+                  controller.abort();
+                }
               }
             }
           }
@@ -449,16 +508,33 @@ export async function resumeDraft(
         logger.warn({ sessionId: session.sessionId }, 'draft: context compacted');
         const compactTrigger = (msg as any).compact_metadata?.trigger ?? 'auto';
         const preTokens = (msg as any).compact_metadata?.pre_tokens ?? 0;
-        emitEvent('compaction', { trigger: compactTrigger, preTokens });
+        emitEvent('session:compaction', { trigger: compactTrigger, preTokens });
         opts?.onCompaction?.({ trigger: compactTrigger, preTokens });
+      } else if (msg.type === 'system') {
+        // Capture system events we were previously dropping
+        const subtype = (msg as any).subtype as string | undefined;
+        switch (subtype) {
+          case 'status':
+            emitEvent('session:status', { status: (msg as any).status });
+            break;
+          case 'files_persisted':
+            emitEvent('system:files_persisted', { files: (msg as any).files });
+            break;
+          case 'hook_started':
+            emitEvent('system:hook_started', { hookName: (msg as any).hook_name });
+            break;
+          case 'hook_progress':
+            emitEvent('system:hook_progress', { output: typeof (msg as any).output === 'string' ? ((msg as any).output as string).slice(0, 500) : undefined });
+            break;
+          case 'hook_response':
+            emitEvent('system:hook_response', {});
+            break;
+          case 'rate_limit':
+            emitEvent('session:rate_limit', { retryAfterMs: (msg as any).retry_after_ms });
+            break;
+        }
       } else if (msg.type === 'result') {
         resultMsg = msg;
-        emitEvent('dispatch_end', {
-          status: msg.subtype,
-          cost: msg.total_cost_usd,
-          durationMs: msg.duration_api_ms,
-          mode: 'draft',
-        });
         logger.info({
           sessionId: session.sessionId,
           status: msg.subtype,
@@ -473,7 +549,7 @@ export async function resumeDraft(
       }
     }
 
-    // Update metrics from result
+    // Update metrics and envelope from result
     if (resultMsg) {
       const usage = extractUsageMetrics(resultMsg);
       updateDraftMetrics({
@@ -483,21 +559,28 @@ export async function resumeDraft(
         contextWindow: usage?.contextWindow,
         maxOutputTokens: usage?.maxOutputTokens,
       });
+      // Update envelope with accumulated cost/usage (status stays 'running')
+      try {
+        dispatchStore.updateDispatch(session.taskDir, dispatchId, {
+          cost: session.cumulativeCostUsd,
+          usage,
+        });
+      } catch { /* non-fatal */ }
     }
   } catch (err) {
     if (err instanceof AbortError) {
       if (abortReason === 'stall') {
         logger.warn({ sessionId: session.sessionId }, 'draft: agent stalled (inactivity timeout)');
-        emitEvent('stall');
+        emitEvent('harness:stall', { timeoutMs: stallTimeoutMs });
         await filteredSend(adapter, makeChannelMessage(
           session.channelId, 'system', 'warning',
           'Agent stalled (inactivity timeout). Draft session is still active — send another message to continue.',
         ));
       } else if (abortReason === 'error_loop' || abortReason === 'non_retryable_error') {
-        // Already emitted above (loop_kill)
+        // Already emitted above (harness:loop_kill)
       } else {
         logger.warn({ sessionId: session.sessionId }, 'draft: agent aborted');
-        emitEvent('abort', { reason: abortReason ?? 'unknown' });
+        emitEvent('harness:abort', { reason: abortReason ?? 'unknown' });
         await filteredSend(adapter, makeChannelMessage(
           session.channelId, 'system', 'warning',
           'Agent turn was aborted. Draft session is still active.',
@@ -520,7 +603,7 @@ export async function resumeDraft(
     // Non-abort error — likely SDK/session issue
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err, sessionId: session.sessionId }, 'draft turn error');
-    emitEvent('error', { message: message.slice(0, 500) });
+    emitEvent('harness:error', { message: message.slice(0, 500) });
 
     // If it's a resume-specific error, auto-close draft
     if (message.includes('session') || message.includes('resume')) {
@@ -529,6 +612,13 @@ export async function resumeDraft(
         `Draft session error: ${message}. Session auto-closed. Use /draft to start a new session.`,
       ));
       try { closeDraft(pool); } catch { /* best effort */ }
+      // Override to crashed (closeDraft sets completed)
+      try {
+        dispatchStore.updateDispatch(session.taskDir, dispatchId, {
+          status: 'crashed',
+          completedAt: new Date().toISOString(),
+        });
+      } catch { /* non-fatal */ }
     } else {
       await filteredSend(adapter, makeChannelMessage(
         session.channelId, 'system', 'error',

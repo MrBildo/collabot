@@ -7,8 +7,7 @@ import { buildTaskContext } from './context.js';
 import { getProjectTasksDir } from './project.js';
 import type { Project } from './project.js';
 import type { AgentPool } from './pool.js';
-import { recordDispatch, listTasks } from './task.js';
-import type { TaskManifest } from './task.js';
+import { listTasks } from './task.js';
 import { logger } from './logger.js';
 import type { DispatchResult, RoleDefinition } from './types.js';
 
@@ -59,7 +58,7 @@ export class DispatchTracker {
 export type DraftAgentFn = (
   roleName: string,
   taskContext: string,
-  options?: { taskSlug?: string; taskDir?: string; cwd?: string },
+  options?: { taskSlug?: string; taskDir?: string; cwd?: string; parentDispatchId?: string },
 ) => Promise<DispatchResult>;
 
 // ============================================================
@@ -79,6 +78,7 @@ export type HarnessServerOptions = {
   parentTaskSlug?: string;
   parentTaskDir?: string;
   parentProject?: string;
+  parentDispatchId?: string;
 };
 
 // ============================================================
@@ -272,6 +272,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
           taskSlug: resolvedSlug,
           taskDir,
           cwd,
+          parentDispatchId: options.parentDispatchId,
         });
 
         tracker.track(agentId, {
@@ -302,34 +303,6 @@ function buildLifecycleTools(options: HarnessServerOptions) {
 
         try {
           const result = await tracker.await(agentId);
-
-          // Record child dispatch in task.json
-          if (tracked.taskDir) {
-            try {
-              const dispatchResult = result.structuredResult
-                ? {
-                    summary: result.structuredResult.summary,
-                    changes: result.structuredResult.changes,
-                    issues: result.structuredResult.issues,
-                    questions: result.structuredResult.questions,
-                  }
-                : (result.result ? { summary: result.result } : undefined);
-
-              recordDispatch(tracked.taskDir, {
-                role: tracked.role,
-                cwd: tracked.cwd ?? 'unknown',
-                model: result.model ?? 'unknown',
-                startedAt: tracked.startedAt.toISOString(),
-                completedAt: new Date().toISOString(),
-                status: result.status,
-                journalFile: result.journalFile ?? `${tracked.role}.md`,
-                result: dispatchResult,
-              });
-            } catch (err) {
-              logger.error({ err, agentId }, 'failed to record child dispatch in task manifest');
-            }
-          }
-
           tracker.delete(agentId);
 
           return {

@@ -1,28 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { DispatchIndexEntry } from './types.js';
 
 export type TaskContext = {
   slug: string;
   taskDir: string;      // absolute path to .projects/{project}/tasks/{slug}/
   created: string;       // ISO timestamp
-};
-
-export type DispatchRecordResult = {
-  summary: string;
-  changes?: string[];
-  issues?: string[];
-  questions?: string[];
-};
-
-export type DispatchRecord = {
-  role: string;
-  cwd: string;
-  model: string;
-  startedAt: string;
-  completedAt: string;
-  status: string;
-  journalFile: string;
-  result?: DispatchRecordResult;
 };
 
 export type TaskManifest = {
@@ -33,7 +16,7 @@ export type TaskManifest = {
   status: 'open' | 'closed';
   created: string;
   threadTs?: string;     // optional — only set when created from a thread
-  dispatches: DispatchRecord[];
+  dispatches: DispatchIndexEntry[];
 };
 
 // Common words to strip from slug generation
@@ -233,16 +216,6 @@ export function closeTask(tasksDir: string, slug: string): void {
 }
 
 /**
- * Records a dispatch in the task manifest.
- */
-export function recordDispatch(taskDir: string, dispatch: DispatchRecord): void {
-  const manifestPath = path.join(taskDir, 'task.json');
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
-  manifest.dispatches.push(dispatch);
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
-}
-
-/**
  * Returns the next journal filename for a role within a task directory.
  * First dispatch: {role}.md. Subsequent: {role}-2.md, {role}-3.md, etc.
  */
@@ -259,24 +232,3 @@ export function nextJournalFile(taskDir: string, roleName: string): string {
   return `${roleName}-${n}.md`;
 }
 
-// --- Legacy compatibility ---
-
-/**
- * @deprecated Use createTask/findTaskByThread instead. Retained for backward compatibility during migration.
- */
-export function getOrCreateTask(threadTs: string, firstMessage: string, tasksDir: string): TaskContext & { threadTs: string } {
-  // Search existing
-  const existing = findTaskByThread(tasksDir, threadTs);
-  if (existing) {
-    return { ...existing, threadTs };
-  }
-
-  // Create new
-  const result = createTask(tasksDir, {
-    name: firstMessage,
-    project: 'legacy',
-    threadId: threadTs,
-    description: firstMessage,
-  });
-  return { ...result, threadTs };
-}
