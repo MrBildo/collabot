@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CapturedEvent, CapturedEventType, EventLog } from './types.js';
+import type { LegacyCapturedEvent, LegacyCapturedEventType, LegacyEventLog } from './types.js';
+
+// Re-export legacy names used by dispatch.ts and draft.ts (Phase 2 will remove these)
+export type CapturedEvent = LegacyCapturedEvent;
+export type CapturedEventType = LegacyCapturedEventType;
+export type EventLog = LegacyEventLog;
 
 /**
  * Abstraction layer for event storage (D7).

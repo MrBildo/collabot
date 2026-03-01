@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { getEventStore, makeEvent, renderJournalView } from './events.js';
-import type { EventLog, CapturedEvent } from './types.js';
+import type { LegacyEventLog as EventLog, LegacyCapturedEvent as CapturedEvent } from './types.js';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'events-test-'));

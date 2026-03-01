@@ -145,9 +145,9 @@ export type DraftSummary = {
   durationMs: number;
 };
 
-// ── Event Capture (D5-D8) ───────────────────────────────────────
+// ── Event Capture (legacy — removed in Phase 3) ────────────────
 
-export type CapturedEventType =
+export type LegacyCapturedEventType =
   | 'dispatch_start'
   | 'dispatch_end'
   | 'text'
@@ -161,15 +161,81 @@ export type CapturedEventType =
   | 'abort'
   | 'error';
 
-export type CapturedEvent = {
-  type: CapturedEventType;
+export type LegacyCapturedEvent = {
+  type: LegacyCapturedEventType;
   timestamp: string;           // RFC 3339
   data?: Record<string, unknown>;
 };
 
-export type EventLog = {
+export type LegacyEventLog = {
   taskSlug: string;
   role: string;
   startedAt: string;           // RFC 3339
+  events: LegacyCapturedEvent[];
+};
+
+// ── Event System v2 ───────────────────────────────────────────
+
+export type EventCategory = 'agent' | 'session' | 'harness' | 'user' | 'system';
+
+export type EventType =
+  // Agent activity
+  | 'agent:text'
+  | 'agent:thinking'
+  | 'agent:tool_call'
+  | 'agent:tool_result'
+  // Session lifecycle
+  | 'session:init'
+  | 'session:complete'
+  | 'session:compaction'
+  | 'session:rate_limit'
+  | 'session:status'
+  // Harness interventions
+  | 'harness:loop_warning'
+  | 'harness:loop_kill'
+  | 'harness:stall'
+  | 'harness:abort'
+  | 'harness:error'
+  // Interaction
+  | 'user:message'
+  // System observations
+  | 'system:files_persisted'
+  | 'system:hook_started'
+  | 'system:hook_progress'
+  | 'system:hook_response';
+
+export type CapturedEvent = {
+  id: string;                          // ULID
+  type: EventType;
+  timestamp: string;                   // RFC 3339
+  data?: Record<string, unknown>;
+};
+
+export type DispatchEnvelope = {
+  dispatchId: string;                  // ULID
+  taskSlug: string;
+  role: string;
+  model: string;
+  cwd: string;
+  startedAt: string;                   // RFC 3339
+  completedAt?: string;                // RFC 3339 — null while running
+  status: 'running' | 'completed' | 'aborted' | 'crashed';
+  cost?: number;
+  usage?: UsageMetrics;
+  structuredResult?: AgentResult;
+  parentDispatchId?: string;           // null for top-level
+  botId?: string;                      // null (future)
+};
+
+export type DispatchFile = DispatchEnvelope & {
   events: CapturedEvent[];
+};
+
+export type DispatchIndexEntry = {
+  dispatchId: string;
+  role: string;
+  status: string;
+  cost?: number;
+  startedAt: string;
+  parentDispatchId?: string;
 };

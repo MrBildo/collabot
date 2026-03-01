@@ -33,15 +33,15 @@ Phase 4: PR review + merge
 **Files to create/modify:**
 - `harness/src/dispatch-store.ts` — NEW: `DispatchStoreProvider` interface + `JsonFileDispatchStore` implementation
 - `harness/src/dispatch-store.test.ts` — NEW: tests for the store
-- `harness/src/types.ts` — update: new event types, dispatch envelope type, replace old event types
+- `harness/src/types.ts` — replace old event types (`CapturedEventType`, `CapturedEvent`, `EventLog`) with new types in place. Breaking changes are fine.
 
 **Files NOT to touch:**
 - `dispatch.ts`, `draft.ts`, `context.ts`, `mcp.ts` — Phase 2 work
-- `events.ts` — still used by current code, removed in Phase 3
+- `events.ts` — still imported by current code, will have broken imports until Phase 3 removes it (that's fine)
 
 ### Types to define in `types.ts`
 
-Replace the existing event capture types (lines 148-175) with:
+Remove the existing event capture types (lines 148-175) and replace with:
 
 ```typescript
 // ── Event System v2 ───────────────────────────────────────
@@ -74,7 +74,7 @@ export type EventType =
   | 'system:hook_progress'
   | 'system:hook_response';
 
-export type CapturedEventV2 = {
+export type CapturedEvent = {
   id: string;                          // ULID
   type: EventType;
   timestamp: string;                   // RFC 3339
@@ -98,7 +98,7 @@ export type DispatchEnvelope = {
 };
 
 export type DispatchFile = DispatchEnvelope & {
-  events: CapturedEventV2[];
+  events: CapturedEvent[];
 };
 
 export type DispatchIndexEntry = {
@@ -117,11 +117,11 @@ export type DispatchIndexEntry = {
 export interface DispatchStoreProvider {
   createDispatch(taskDir: string, envelope: DispatchEnvelope): void;
   updateDispatch(taskDir: string, dispatchId: string, updates: Partial<DispatchEnvelope>): void;
-  appendEvent(taskDir: string, dispatchId: string, event: CapturedEventV2): void;
+  appendEvent(taskDir: string, dispatchId: string, event: CapturedEvent): void;
   getDispatchEnvelopes(taskDir: string): DispatchEnvelope[];
   getDispatchEnvelope(taskDir: string, dispatchId: string): DispatchEnvelope | null;
-  getDispatchEvents(taskDir: string, dispatchId: string): CapturedEventV2[];
-  getRecentEvents(taskDir: string, dispatchId: string, count: number): CapturedEventV2[];
+  getDispatchEvents(taskDir: string, dispatchId: string): CapturedEvent[];
+  getRecentEvents(taskDir: string, dispatchId: string, count: number): CapturedEvent[];
 }
 ```
 
@@ -150,8 +150,8 @@ export interface DispatchStoreProvider {
 - [ ] `JsonFileDispatchStore` implements the interface
 - [ ] All tests pass
 - [ ] `task.json` dispatch index maintained correctly
-- [ ] Old types (`CapturedEventType`, `CapturedEvent`, `EventLog`) still exist (not removed yet — Phase 3)
-- [ ] `npm run typecheck` passes
+- [ ] Old types (`CapturedEventType`, `CapturedEvent`, `EventLog`) replaced in place — no v2 suffixes
+- [ ] `npm run typecheck` passes (note: `events.ts` will have broken imports — that's expected, it's removed in Phase 3)
 - [ ] `npm test` passes (existing tests still work)
 
 ---
@@ -160,22 +160,22 @@ export interface DispatchStoreProvider {
 
 **Depends on:** Phase 1 complete
 
-**Goal:** Refactor `dispatch.ts` and `draft.ts` to emit v2 events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK events we're currently dropping.
+**Goal:** Refactor `dispatch.ts` and `draft.ts` to emit events through `DispatchStoreProvider` instead of the old `EventStore`. Capture all SDK events we're currently dropping.
 
 **Files to modify:**
-- `harness/src/dispatch.ts` — use `DispatchStoreProvider`, emit v2 events, capture new SDK message types
+- `harness/src/dispatch.ts` — use `DispatchStoreProvider`, emit events, capture new SDK message types
 - `harness/src/draft.ts` — same treatment, plus `user:message` events for conversation turns
 
 **Files NOT to touch:**
 - `context.ts`, `mcp.ts` — Phase 2B work
-- `events.ts` — still exists, removed in Phase 3
+- `events.ts` — removed in Phase 3
 - `types.ts`, `dispatch-store.ts` — Phase 1 (already done)
 
 ### dispatch.ts changes
 
 1. Import `DispatchStoreProvider` and get the singleton (or accept as parameter)
 2. At dispatch start: call `createDispatch()` with envelope (status: 'running')
-3. Replace all `emitEvent()` calls with `appendEvent()` using v2 event types:
+3. Replace all `emitEvent()` calls with `appendEvent()` using new event types:
    - `dispatch_start` → `session:init`
    - `text` → `agent:text`
    - `thinking` → `agent:thinking`
@@ -206,7 +206,7 @@ Same event mapping as dispatch.ts, plus:
 
 ### Tests
 
-- Verify v2 events are emitted for each SDK message type
+- Verify events are emitted for each SDK message type
 - Verify dispatch envelope is created at start and updated at end
 - Verify `agent:tool_call` + `agent:tool_result` pairs are linked by `toolCallId`
 - Verify `user:message` events appear in draft session dispatches
@@ -214,8 +214,8 @@ Same event mapping as dispatch.ts, plus:
 
 ### Acceptance criteria
 
-- [ ] dispatch.ts emits all v2 event types through DispatchStoreProvider
-- [ ] draft.ts emits all v2 event types including user:message
+- [ ] dispatch.ts emits all event types through DispatchStoreProvider
+- [ ] draft.ts emits all event types including user:message
 - [ ] All currently-dropped SDK events are now captured
 - [ ] Tool call/result pairs linked by toolCallId
 - [ ] Dispatch envelope created at start, updated at end with cost/usage/result
@@ -242,7 +242,7 @@ Same event mapping as dispatch.ts, plus:
 
 **Files NOT to touch:**
 - `dispatch.ts`, `draft.ts` — Phase 2A work
-- `events.ts` — still exists, removed in Phase 3
+- `events.ts` — removed in Phase 3
 
 ### context.ts rewrite
 
@@ -305,10 +305,9 @@ This is the view used for TUI session reconstruction and PM check-ins.
 - `harness/src/events.ts` — REMOVE (replaced by dispatch-store.ts)
 - `harness/src/events.test.ts` — REMOVE
 - `harness/src/journal.ts` — REMOVE `watchJournals()`, `getJournalStatus()`. KEEP `extractToolTarget()` (move to `dispatch.ts` or a shared util)
-- `harness/src/types.ts` — REMOVE old event types (`CapturedEventType`, `CapturedEvent`, `EventLog`)
 - `harness/src/task.ts` — update `TaskManifest` type: `dispatches` becomes `DispatchIndexEntry[]`
 - `harness/src/core.ts` — update `recordDispatch` calls to use new store
-- Any remaining imports of old event types
+- Any remaining imports of old event types (old types were already removed from `types.ts` in Phase 1)
 
 **Migration considerations:**
 - Existing tasks have `events.json` + old-format `task.json` with `DispatchRecord[]`
@@ -324,7 +323,7 @@ This is the view used for TUI session reconstruction and PM check-ins.
 
 ### Acceptance criteria
 
-- [ ] Old `events.ts` and `EventLog` types removed
+- [ ] Old `events.ts` removed
 - [ ] `extractToolTarget()` preserved (moved to shared location)
 - [ ] No remaining imports of old event types
 - [ ] `task.json` uses `DispatchIndexEntry[]` format
