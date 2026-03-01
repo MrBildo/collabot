@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 import { WsAdapter, PROTOCOL_VERSION } from './adapters/ws.js';
 import { AgentPool } from './pool.js';
+import { CommunicationRegistry } from './registry.js';
 import { registerWsMethods } from './ws-methods.js';
-import type { CommAdapter, InboundMessage } from './comms.js';
+import type { InboundMessage } from './comms.js';
 import type { Config } from './config.js';
 import type { RoleDefinition, Project } from './types.js';
 
@@ -79,9 +80,12 @@ function makeProjects(): Map<string, Project> {
 test('integration: list_agents RPC returns empty agents list', async () => {
   const adapter = new WsAdapter({ port: 0, host: '127.0.0.1' });
   const pool = new AgentPool();
+  const registry = new CommunicationRegistry();
+  registry.register(adapter);
 
   registerWsMethods({
     wsAdapter: adapter,
+    registry,
     handleTask: async () => ({ status: 'completed' }),
     roles: new Map([['api-dev', makeRole()]]),
     config: {} as Config,
@@ -109,11 +113,14 @@ test('integration: list_agents RPC returns empty agents list', async () => {
 test('integration: submit_prompt fires handleTask and client receives channel_message notification', async () => {
   const adapter = new WsAdapter({ port: 0, host: '127.0.0.1' });
   const pool = new AgentPool();
+  const registry = new CommunicationRegistry();
+  registry.register(adapter);
 
   registerWsMethods({
     wsAdapter: adapter,
-    handleTask: async (msg: InboundMessage, adp: CommAdapter) => {
-      await adp.send({
+    registry,
+    handleTask: async (msg: InboundMessage, reg: CommunicationRegistry) => {
+      await reg.broadcast({
         id: msg.id,
         channelId: msg.threadId,
         from: 'harness',

@@ -8,8 +8,8 @@ import { getProject, getProjectTasksDir, projectHasPaths } from './project.js';
 import type { Project } from './project.js';
 import { getDispatchStore } from './dispatch-store.js';
 import type { DispatchResult, RoleDefinition, AgentEvent } from './types.js';
-import type { InboundMessage, ChannelMessage, CommAdapter } from './comms.js';
-import { filteredSend } from './comms.js';
+import type { InboundMessage, ChannelMessage } from './comms.js';
+import type { CommunicationRegistry } from './registry.js';
 import type { Config } from './config.js';
 import type { AgentPool } from './pool.js';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
@@ -104,7 +104,7 @@ export type McpServers = {
 
 export async function handleTask(
   message: InboundMessage,
-  adapter: CommAdapter,
+  registry: CommunicationRegistry,
   roles: Map<string, RoleDefinition>,
   config: Config,
   pool: AgentPool | undefined,
@@ -187,7 +187,7 @@ export async function handleTask(
   // Preflight checks (warn-only, never block dispatch)
   if (!fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
     logger.warn({ cwd }, `No CLAUDE.md found in ${cwd} — agent will have no project context`);
-    await adapter.send(makeChannelMessage(
+    await registry.broadcast(makeChannelMessage(
       message.metadata?.['channelId'] as string ?? message.threadId,
       'Collabot', 'warning',
       `No CLAUDE.md found in ${cwd} — agent will have no project context`,
@@ -195,7 +195,7 @@ export async function handleTask(
   }
   if (!fs.existsSync(path.join(cwd, '.agents', 'kb'))) {
     logger.warn({ cwd }, `No .agents/kb/ found in ${cwd} — agent will have no knowledge base`);
-    await adapter.send(makeChannelMessage(
+    await registry.broadcast(makeChannelMessage(
       message.metadata?.['channelId'] as string ?? message.threadId,
       'Collabot', 'warning',
       `No .agents/kb/ found in ${cwd} — agent will have no knowledge base`,
@@ -208,10 +208,10 @@ export async function handleTask(
   const channelId = message.metadata?.['channelId'] as string | undefined ?? message.threadId;
 
   // Set working status
-  await adapter.setStatus(channelId, 'working');
+  await registry.broadcastStatus(channelId, 'working');
 
   // Post dispatching notification
-  await adapter.send(makeChannelMessage(
+  await registry.broadcast(makeChannelMessage(
     channelId,
     'Collabot',
     'lifecycle',
@@ -226,7 +226,7 @@ export async function handleTask(
       ? mcpServers.createFull(task.slug, task.taskDir, project.name)
       : mcpServers.readonly;
   }
-  const result = await draftAgent(roleName, contentForDispatch, adapter, roles, config, {
+  const result = await draftAgent(roleName, contentForDispatch, registry, roles, config, {
     taskSlug: task.slug,
     taskDir: task.taskDir,
     channelId,
@@ -237,14 +237,14 @@ export async function handleTask(
 
   // Set final status
   if (result.status === 'completed') {
-    await adapter.setStatus(channelId, 'completed');
+    await registry.broadcastStatus(channelId, 'completed');
   } else {
-    await adapter.setStatus(channelId, 'failed');
+    await registry.broadcastStatus(channelId, 'failed');
   }
 
   // Post result
   const responseText = formatResult(result);
-  await adapter.send(makeChannelMessage(
+  await registry.broadcast(makeChannelMessage(
     channelId,
     persona,
     'result',
@@ -263,7 +263,7 @@ export async function handleTask(
 export async function draftAgent(
   roleName: string,
   taskContext: string,
-  adapter: CommAdapter,
+  registry: CommunicationRegistry,
   roles: Map<string, RoleDefinition>,
   config: Config,
   options?: {
@@ -288,10 +288,10 @@ export async function draftAgent(
   // Determine journal file
   const journalFileName = taskDir ? nextJournalFile(taskDir, roleName) : undefined;
 
-  // Wire onLoopWarning to adapter.send
+  // Wire onLoopWarning to registry.broadcast
   const onLoopWarning = channelId
     ? (pattern: string, count: number) => {
-        adapter.send(makeChannelMessage(
+        registry.broadcast(makeChannelMessage(
           channelId,
           'Collabot',
           'warning',
@@ -302,10 +302,10 @@ export async function draftAgent(
       }
     : undefined;
 
-  // Wire onEvent to adapter via filteredSend (adapter.acceptedTypes gates delivery)
+  // Wire onEvent to registry broadcast (acceptedTypes filtering handled by broadcast)
   const onEvent = channelId
     ? (event: AgentEvent) => {
-        filteredSend(adapter, makeChannelMessage(
+        registry.broadcast(makeChannelMessage(
           channelId,
           roleName,
           event.type,

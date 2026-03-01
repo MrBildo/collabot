@@ -5,6 +5,8 @@ import path from 'node:path';
 import os from 'node:os';
 import type { Project } from './project.js';
 import { JsonFileDispatchStore } from './dispatch-store.js';
+import { CommunicationRegistry } from './registry.js';
+import type { CommunicationProvider, ChannelMessage, PluginManifest, InboundHandler } from './comms.js';
 
 // --- Test helpers ---
 function makeTempTaskDir(slug: string, manifest: Record<string, unknown>): string {
@@ -19,12 +21,20 @@ function makeTempTaskDir(slug: string, manifest: Record<string, unknown>): strin
   return taskDir;
 }
 
-function makeAdapter() {
-  return {
+function makeRegistry(): CommunicationRegistry {
+  const registry = new CommunicationRegistry();
+  const provider: CommunicationProvider = {
     name: 'test',
-    send: mock.fn(async () => {}),
-    setStatus: mock.fn(async () => {}),
+    manifest: { id: 'test', name: 'Test', version: '1.0.0', description: 'Test', providerType: 'communication' },
+    async start() {},
+    async stop() {},
+    isReady() { return true; },
+    async send() {},
+    async setStatus() {},
+    onInbound() {},
   };
+  registry.register(provider);
+  return registry;
 }
 
 function makeConfig() {
@@ -156,7 +166,7 @@ test('follow-up dispatch with prior results — content includes task history', 
     metadata: { taskSlug: 'test-task' },
   };
 
-  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
+  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
   const content = getCaptured();
   assert.ok(content.includes('## Task History'), 'should include Task History header');
@@ -187,7 +197,7 @@ test('new task (no prior dispatches) — content is NOT enriched', async () => {
     metadata: { taskSlug: 'test-task-new' },
   };
 
-  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
+  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
   const content = getCaptured();
   assert.ok(!content.includes('## Task History'), 'should NOT include Task History for new task');
@@ -225,7 +235,7 @@ test('task with failed dispatch (no result) — content is NOT enriched', async 
     metadata: { taskSlug: 'test-task-failed' },
   };
 
-  await handleTask(message, makeAdapter(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
+  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
   const content = getCaptured();
   assert.ok(!content.includes('## Task History'), 'should NOT include Task History when no dispatches have results');

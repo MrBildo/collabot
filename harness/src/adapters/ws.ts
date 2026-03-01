@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { JSONRPCServer } from 'json-rpc-2.0';
-import type { CommAdapter, ChannelMessage } from '../comms.js';
+import type { CommunicationProvider, ChannelMessage, PluginManifest, InboundHandler } from '../comms.js';
 import { logger } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -19,10 +19,18 @@ export interface WsAdapterOptions {
   host: string;
 }
 
-export class WsAdapter implements CommAdapter {
+export class WsAdapter implements CommunicationProvider {
   readonly name = 'ws';
+  readonly manifest: PluginManifest = {
+    id: 'collabot.communication.ws',
+    name: 'WebSocket Adapter',
+    version: '1.0.0',
+    description: 'JSON-RPC 2.0 over WebSocket. Supports TUI and external clients.',
+    providerType: 'communication',
+  };
 
   private wss: WebSocketServer | null = null;
+  private inboundHandler: InboundHandler | undefined;
   private clients: Set<WebSocket> = new Set();
   private handshaked: Set<WebSocket> = new Set();
   private handshakeTimeouts: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
@@ -39,6 +47,14 @@ export class WsAdapter implements CommAdapter {
       return addr.port;
     }
     throw new Error('WS server is not listening');
+  }
+
+  isReady(): boolean {
+    return this.wss !== null;
+  }
+
+  onInbound(handler: InboundHandler): void {
+    this.inboundHandler = handler;
   }
 
   addMethod(name: string, handler: (params: unknown) => unknown): void {
