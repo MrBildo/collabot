@@ -1,11 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { ulid } from 'ulid';
 import type {
   CapturedEvent,
   DispatchEnvelope,
   DispatchFile,
   DispatchIndexEntry,
+  EventType,
 } from './types.js';
+
+/**
+ * Create a CapturedEvent with ULID id and RFC 3339 timestamp.
+ */
+export function makeCapturedEvent(type: EventType, data?: Record<string, unknown>): CapturedEvent {
+  return {
+    id: ulid(),
+    type,
+    timestamp: new Date().toISOString(),
+    ...(data !== undefined ? { data } : {}),
+  };
+}
 
 // ── DispatchStoreProvider interface ──────────────────────────────
 

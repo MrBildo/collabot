@@ -129,6 +129,7 @@ export type DraftSession = {
   turnCount: number;
   status: 'active' | 'closed';
   sessionInitialized: boolean;  // true after first query() starts — SDK session files exist on disk
+  dispatchId?: string;           // ULID — v2 dispatch envelope ID (one per draft session, D11)
   cumulativeCostUsd: number;
   lastInputTokens: number;
   lastOutputTokens: number;
