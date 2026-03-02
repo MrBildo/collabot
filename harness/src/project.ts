@@ -11,6 +11,7 @@ export const ProjectManifestSchema = z.object({
   description: z.string().min(1),
   paths: z.array(z.string()),
   roles: z.array(z.string()).min(1),
+  virtual: z.boolean().default(false),
 });
 
 export type Project = z.infer<typeof ProjectManifestSchema>;
@@ -82,6 +83,54 @@ export function loadProjects(
 
 export function projectHasPaths(project: Project): boolean {
   return project.paths.length > 0;
+}
+
+export function isVirtualProject(project: Project): boolean {
+  return project.virtual === true;
+}
+
+/**
+ * Ensure a virtual project exists on disk. Creates it if missing, returns the existing one if present.
+ * Virtual projects use the instance root as their sole path and accept all provided role names.
+ */
+export function ensureVirtualProject(
+  projectsDir: string,
+  name: string,
+  description: string,
+  roleNames: string[],
+  instanceRoot: string,
+): Project {
+  const key = name.toLowerCase();
+  const projectDir = path.join(projectsDir, key);
+  const manifestPath = path.join(projectDir, 'project.yaml');
+
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const content = fs.readFileSync(manifestPath, 'utf-8');
+      const raw = yaml.load(content);
+      const result = ProjectManifestSchema.safeParse(raw);
+      if (result.success) {
+        return result.data;
+      }
+    } catch {
+      // Corrupt YAML — recreate below
+    }
+  }
+
+  fs.mkdirSync(projectDir, { recursive: true });
+
+  const project: Project = {
+    name,
+    description,
+    paths: [instanceRoot],
+    roles: roleNames,
+    virtual: true,
+  };
+
+  const yamlContent = yaml.dump(project, { lineWidth: -1 });
+  fs.writeFileSync(manifestPath, yamlContent, 'utf-8');
+
+  return project;
 }
 
 /**

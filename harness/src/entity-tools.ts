@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ulid } from 'ulid';
 import { parseFrontmatter, RoleFrontmatterSchema } from './roles.js';
+import { BotFrontmatterSchema } from './bots.js';
 
-export type EntityType = 'role';
+export type EntityType = 'role' | 'bot';
 
 export type ScaffoldResult = {
   content: string;
@@ -38,6 +39,18 @@ function formatHumanDate(isoDate: string): string {
   const ss = String(d.getUTCSeconds()).padStart(2, '0');
   return `${month}/${day}/${year} ${hh}:${mm}:${ss} ${ampm}`;
 }
+
+const BOT_BODY_TEMPLATE = `You are [BOT NAME]. [DESCRIBE YOUR PERSONALITY AND VOICE].
+
+## Identity
+
+[What makes this bot unique — motivations, style, quirks.]
+
+## Boundaries
+
+- Stay in character
+- Ask for help when stuck rather than guessing
+`;
 
 const ROLE_BODY_TEMPLATE = `You are a [ROLE DESCRIPTION]. You [WHAT YOU DO].
 
@@ -81,6 +94,19 @@ export function scaffoldEntity(type: EntityType, name: string, author: string): 
       filePath = `${name}.md`;
       break;
     }
+    case 'bot': {
+      frontmatter = [
+        '---',
+        `id: ${id}`,
+        `version: 1.0.0`,
+        `name: ${name}`,
+        `description: TODO — describe this bot's purpose.`,
+        '---',
+      ].join('\n');
+      body = BOT_BODY_TEMPLATE;
+      filePath = `${name}.md`;
+      break;
+    }
     default:
       throw new Error(`Unknown entity type: ${type}`);
   }
@@ -105,6 +131,9 @@ export function validateEntityFrontmatter(content: string, type: EntityType): Va
   switch (type) {
     case 'role':
       schema = RoleFrontmatterSchema;
+      break;
+    case 'bot':
+      schema = BotFrontmatterSchema;
       break;
     default:
       return { valid: false, errors: [`Unknown entity type: ${type}`] };
