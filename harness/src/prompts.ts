@@ -38,3 +38,16 @@ export function assemblePrompt(rolePrompt: string, permissions?: string[]): stri
   }
   return parts.join('\n\n');
 }
+
+/**
+ * Assemble the full prompt for a bot session: system prompt + role prompt + optional tool docs + soul prompt.
+ * The soul prompt defines the bot's personality and is appended last (highest context priority).
+ */
+export function assembleBotPrompt(soulPrompt: string, rolePrompt: string, permissions?: string[]): string {
+  const parts = [loadSystemPrompt(), rolePrompt];
+  if (permissions?.includes('agent-draft')) {
+    parts.push(loadToolDocs());
+  }
+  parts.push('\n## Bot Identity\n\n' + soulPrompt);
+  return parts.join('\n\n');
+}
