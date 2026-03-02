@@ -33,12 +33,6 @@ export const ConfigSchema = z.object({
   slack: z.object({
     defaultRole: z.string().optional(),
     taskRotationIntervalHours: z.number().positive().default(24),
-    reactions: z.object({
-      received: z.string().default('eyes'),
-      working: z.string().default('hammer'),
-      success: z.string().default('white_check_mark'),
-      failure: z.string().default('x'),
-    }).default({ received: 'eyes', working: 'hammer', success: 'white_check_mark', failure: 'x' }),
     bots: z.record(z.string(), z.object({
       botTokenEnv: z.string().min(1),
       appTokenEnv: z.string().min(1),

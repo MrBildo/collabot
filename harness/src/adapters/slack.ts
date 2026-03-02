@@ -18,14 +18,6 @@ export function decodeSlackChannelId(channelId: string): { channel: string; time
   return { channel: channelId.slice(0, idx), timestamp: channelId.slice(idx + 1) };
 }
 
-async function safeReaction(action: () => Promise<unknown>): Promise<void> {
-  try {
-    await action();
-  } catch (_err: unknown) {
-    // Reactions fail silently (already added/removed, or missing scope)
-  }
-}
-
 // ── Types ────────────────────────────────────────────────────────
 
 export type SlackBotConfig = {
@@ -37,12 +29,6 @@ export type SlackBotConfig = {
 export type SlackConfig = {
   defaultRole?: string;
   taskRotationIntervalHours: number;
-  reactions: {
-    received: string;
-    working: string;
-    success: string;
-    failure: string;
-  };
   bots: Record<string, SlackBotConfig>;
 };
 
@@ -116,14 +102,6 @@ export class SlackAdapter implements CommunicationProvider {
 
         logger.info({ botName, user, channel, text: text.slice(0, 200) }, 'slack bot inbound message');
 
-        // Set received reaction
-        const reactions = this.slackConfig.reactions;
-        await safeReaction(() => app.client.reactions.add({
-          channel,
-          timestamp: messageTs,
-          name: reactions.received,
-        }));
-
         this.botQueue.enqueue({
           botName,
           content: text,
@@ -140,13 +118,6 @@ export class SlackAdapter implements CommunicationProvider {
         const messageTs = event.ts;
 
         logger.info({ botName, user, channel, text: text.slice(0, 200) }, 'slack bot @mention');
-
-        const reactions = this.slackConfig.reactions;
-        await safeReaction(() => app.client.reactions.add({
-          channel,
-          timestamp: messageTs,
-          name: reactions.received,
-        }));
 
         this.botQueue.enqueue({
           botName,
@@ -210,50 +181,19 @@ export class SlackAdapter implements CommunicationProvider {
     if (!instance) return;
 
     const { channel } = decodeSlackChannelId(msg.channelId);
-    const threadTs = msg.channelId.includes(':')
-      ? decodeSlackChannelId(msg.channelId).timestamp
-      : undefined;
 
     try {
       await instance.app.client.chat.postMessage({
         channel,
         text: msg.content,
-        thread_ts: threadTs || undefined,
-        username: msg.from,
       });
     } catch (err) {
       logger.error({ err, channelId: msg.channelId, botName: instance.botName }, 'SlackAdapter: failed to send message');
     }
   }
 
-  async setStatus(channelId: string, status: 'received' | 'working' | 'completed' | 'failed'): Promise<void> {
-    // Find bot by checking metadata or use first available
-    const instance = this.instances.values().next().value;
-    if (!instance) return;
-
-    const { channel, timestamp } = decodeSlackChannelId(channelId);
-    if (!timestamp) return;
-
-    const reactions = this.slackConfig.reactions;
-    const client = instance.app.client;
-
-    switch (status) {
-      case 'received':
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.received }));
-        break;
-      case 'working':
-        await safeReaction(() => client.reactions.remove({ channel, timestamp, name: reactions.received }));
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.working }));
-        break;
-      case 'completed':
-        await safeReaction(() => client.reactions.remove({ channel, timestamp, name: reactions.working }));
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.success }));
-        break;
-      case 'failed':
-        await safeReaction(() => client.reactions.remove({ channel, timestamp, name: reactions.working }));
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.failure }));
-        break;
-    }
+  async setStatus(_channelId: string, _status: 'received' | 'working' | 'completed' | 'failed'): Promise<void> {
+    // No-op — bots handle acknowledgment conversationally, not via mechanical reactions
   }
 
   /** Get the config for a specific bot (used by integration wiring). */

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { ConfigSchema, resolveModelId } from './config.js';
 
 const validSlack = {
-  reactions: { received: 'eyes', working: 'hammer', success: 'white_check_mark', failure: 'x' },
   bots: {
     hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
   },
@@ -61,11 +60,11 @@ test('explicit routing section still parses', () => {
   assert.strictEqual(result.data.routing.rules.length, 1);
 });
 
-test('slack reactions parse correctly', () => {
+test('slack section parses with bots', () => {
   const raw = validConfig();
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
+  assert.ok(result.data.slack?.bots['hazel']);
 });
 
 test('config without slack section is valid with defaults', () => {
@@ -89,12 +88,11 @@ test('config with pool.maxConcurrent: 3 parses correctly', () => {
   assert.strictEqual(result.data.pool.maxConcurrent, 3);
 });
 
-test('slack section with defaults fills in reaction names', () => {
+test('slack section with empty object gets default bots', () => {
   const raw = validConfig({ slack: {} });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
-  assert.strictEqual(result.data.slack?.reactions.working, 'hammer');
+  assert.deepStrictEqual(result.data.slack!.bots, {});
 });
 
 // ============================================================

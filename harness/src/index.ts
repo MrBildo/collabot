@@ -152,12 +152,13 @@ const mcpServers = {
 // ── Virtual Projects + Bot Infrastructure ───────────────────────
 
 // Ensure lobby virtual project (uses all loaded roles so bots can use any)
+let lobbyEnsured = false;
 if (botCount > 0) {
   try {
     const allRoleNames = [...roles.keys()];
     const lobby = ensureVirtualProject(PROJECTS_DIR, 'lobby', 'Default virtual project for bot sessions', allRoleNames, getInstanceRoot());
     projects.set('lobby', lobby);
-    logger.info('lobby virtual project ensured');
+    lobbyEnsured = true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.warn({ msg }, 'failed to ensure lobby virtual project');
@@ -194,9 +195,6 @@ const lobbyTask = botCount > 0 ? ensureLobbyTask() : undefined;
 
 const botQueue = new BotMessageQueue();
 const botSessionManager = new BotSessionManager(config, roles, bots, pool);
-
-// Load persisted bot sessions
-botSessionManager.loadSessions(PROJECTS_DIR, projects);
 
 // Detect interface modes
 const slackBotCount = config.slack ? Object.keys(config.slack.bots).length : 0;
@@ -264,19 +262,15 @@ botQueue.setHandler(async (msg) => {
 
   // Build response sink that posts via the correct Slack bot
   const channel = msg.metadata['channel'] as string;
-  const messageTs = msg.metadata['messageTs'] as string;
 
   const responseSink = async (text: string) => {
     if (slackAdapter) {
       const instance = slackAdapter.getInstance(msg.botName);
       if (instance) {
         try {
-          const bot = bots.get(msg.botName);
           await instance.app.client.chat.postMessage({
             channel,
             text,
-            thread_ts: messageTs,
-            username: bot?.displayName ?? msg.botName,
           });
         } catch (err) {
           logger.error({ err, botName: msg.botName }, 'failed to post bot response');
@@ -284,18 +278,6 @@ botQueue.setHandler(async (msg) => {
       }
     }
   };
-
-  // Set working reaction
-  if (slackAdapter) {
-    const instance = slackAdapter.getInstance(msg.botName);
-    if (instance && config.slack?.reactions) {
-      const reactions = config.slack.reactions;
-      try {
-        await instance.app.client.reactions.remove({ channel, timestamp: messageTs, name: reactions.received }).catch(() => {});
-        await instance.app.client.reactions.add({ channel, timestamp: messageTs, name: reactions.working });
-      } catch { /* non-fatal */ }
-    }
-  }
 
   try {
     await botSessionManager.handleBotMessage({
@@ -308,35 +290,9 @@ botQueue.setHandler(async (msg) => {
       cwd,
       responseSink,
     });
-
-    // Set success reaction
-    if (slackAdapter) {
-      const instance = slackAdapter.getInstance(msg.botName);
-      if (instance && config.slack?.reactions) {
-        const reactions = config.slack.reactions;
-        try {
-          await instance.app.client.reactions.remove({ channel, timestamp: messageTs, name: reactions.working }).catch(() => {});
-          await instance.app.client.reactions.add({ channel, timestamp: messageTs, name: reactions.success });
-        } catch { /* non-fatal */ }
-      }
-    }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     logger.error({ err, botName: msg.botName }, 'bot session handler error');
-
-    // Set failure reaction
-    if (slackAdapter) {
-      const instance = slackAdapter.getInstance(msg.botName);
-      if (instance && config.slack?.reactions) {
-        const reactions = config.slack.reactions;
-        try {
-          await instance.app.client.reactions.remove({ channel, timestamp: messageTs, name: reactions.working }).catch(() => {});
-          await instance.app.client.reactions.add({ channel, timestamp: messageTs, name: reactions.failure });
-        } catch { /* non-fatal */ }
-      }
-    }
-
-    // Notify user
     await responseSink(`Something went wrong: ${errMsg.slice(0, 200)}`);
   }
 });
@@ -440,7 +396,11 @@ logger.info({ defaultModel, aliasCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
 logger.info({ botCount, botNames }, 'bots loaded');
 logger.info({ projectCount, projectNames }, 'projects loaded');
+if (lobbyEnsured) logger.info('lobby virtual project ensured');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
+
+// Load persisted bot sessions (after banner so recovery logs don't precede it)
+botSessionManager.loadSessions(PROJECTS_DIR, projects);
 
 // Start all providers (best-effort — failures logged, provider stays not-ready)
 await registry.startAll();

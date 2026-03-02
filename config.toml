@@ -17,13 +17,12 @@ maxBudgetUsd = 1.00
 level = "debug"     # minimal | debug | verbose
 
 [slack]
-debounceMs = 2000
+taskRotationIntervalHours = 24
 
-[slack.reactions]
-received = "eyes"
-working = "hammer"
-success = "white_check_mark"
-failure = "x"
+[slack.bots.hazel]
+botTokenEnv = "HAZEL_BOT_TOKEN"
+appTokenEnv = "HAZEL_APP_TOKEN"
+role = "researcher"
 
 [pool]
 maxConcurrent = 3

@@ -29,12 +29,6 @@ test('decodeSlackChannelId handles no colon', () => {
 function makeSlackConfig(overrides?: Partial<SlackConfig>): SlackConfig {
   return {
     taskRotationIntervalHours: 24,
-    reactions: {
-      received: 'eyes',
-      working: 'hammer',
-      success: 'white_check_mark',
-      failure: 'x',
-    },
     bots: {
       hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
     },
