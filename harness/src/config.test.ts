@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { ConfigSchema, resolveModelId } from './config.js';
 
 const validSlack = {
-  debounceMs: 2000,
   reactions: { received: 'eyes', working: 'hammer', success: 'white_check_mark', failure: 'x' },
+  bots: {
+    hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
+  },
 };
 
 function validConfig(overrides: Record<string, unknown> = {}) {
@@ -64,7 +66,6 @@ test('slack reactions parse correctly', () => {
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
   assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
-  assert.strictEqual(result.data.slack?.debounceMs, 2000);
 });
 
 test('config without slack section is valid with defaults', () => {
@@ -94,7 +95,59 @@ test('slack section with defaults fills in reaction names', () => {
   assert.ok(result.success);
   assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
   assert.strictEqual(result.data.slack?.reactions.working, 'hammer');
-  assert.strictEqual(result.data.slack?.debounceMs, 2000);
+});
+
+// ============================================================
+// Slack multi-bot config tests
+// ============================================================
+
+test('slack bots config parses per-bot entries', () => {
+  const raw = validConfig({
+    slack: {
+      bots: {
+        hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
+        greg: { botTokenEnv: 'GREG_BOT_TOKEN', appTokenEnv: 'GREG_APP_TOKEN', role: 'dotnet-dev' },
+      },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(Object.keys(result.data.slack!.bots).length, 2);
+  assert.strictEqual(result.data.slack!.bots['hazel']!.role, 'ts-dev');
+  assert.strictEqual(result.data.slack!.bots['greg']!.role, 'dotnet-dev');
+});
+
+test('slack bots default to empty record when not provided', () => {
+  const raw = validConfig({ slack: {} });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.deepStrictEqual(result.data.slack!.bots, {});
+});
+
+test('slack bot config missing botTokenEnv fails', () => {
+  const raw = validConfig({
+    slack: {
+      bots: {
+        bad: { appTokenEnv: 'APP_TOKEN', role: 'ts-dev' },
+      },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+});
+
+test('slack taskRotationIntervalHours defaults to 24', () => {
+  const raw = validConfig({ slack: {} });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.slack!.taskRotationIntervalHours, 24);
+});
+
+test('slack taskRotationIntervalHours accepts custom value', () => {
+  const raw = validConfig({ slack: { taskRotationIntervalHours: 12 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.slack!.taskRotationIntervalHours, 12);
 });
 
 // ============================================================
