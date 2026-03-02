@@ -160,6 +160,7 @@ export function createProject(
     description: manifest.description,
     paths: [],
     roles: manifest.roles,
+    virtual: false,
   };
 
   const yamlContent = yaml.dump(project, { lineWidth: -1 });

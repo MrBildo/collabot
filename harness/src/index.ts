@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
 import { loadConfig, resolveModelId } from './config.js';
 import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
-import { loadProjects } from './project.js';
+import { loadProjects, ensureVirtualProject, getProjectTasksDir } from './project.js';
+import { loadBots } from './bots.js';
 import { AgentPool } from './pool.js';
 import { draftAgent, handleTask } from './core.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
@@ -11,9 +12,13 @@ import { CommunicationRegistry } from './registry.js';
 import { CliAdapter } from './adapters/cli.js';
 import { WsAdapter } from './adapters/ws.js';
 import { SlackAdapter } from './adapters/slack.js';
+import { BotMessageQueue } from './bot-queue.js';
+import { BotSessionManager } from './bot-session.js';
+import { CronScheduler } from './cron.js';
+import { createTask, getOpenTasks, closeTask } from './task.js';
 import { registerWsMethods } from './ws-methods.js';
 import { loadActiveDraft } from './draft.js';
-import { getInstancePath, getPackagePath } from './paths.js';
+import { getInstancePath, getInstanceRoot, getPackagePath } from './paths.js';
 import type { InboundHandler } from './comms.js';
 import type { DraftAgentFn } from './mcp.js';
 
@@ -84,7 +89,7 @@ const roleCount = roles.size;
 const roleNames = [...roles.keys()].join(', ');
 
 // Load projects (fail fast on schema errors)
-let projects;
+let projects: ReturnType<typeof loadProjects>;
 try {
   projects = loadProjects(PROJECTS_DIR, roles);
 } catch (err) {
@@ -93,6 +98,21 @@ try {
   logger.error({ msg }, 'project load failed');
   process.exit(1);
 }
+
+// Load bots (optional — empty is fine)
+const botsDir = getInstancePath('bots');
+let bots;
+try {
+  bots = loadBots(botsDir);
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.log('\n  Collabot — bots load failed\n');
+  logger.error({ msg }, 'bots load failed');
+  process.exit(1);
+}
+
+const botCount = bots.size;
+const botNames = [...bots.keys()].join(', ');
 
 const projectCount = projects.size;
 const projectNames = [...projects.values()].map((p) => p.name).join(', ');
@@ -129,9 +149,58 @@ const mcpServers = {
   }),
 };
 
-// Detect interface mode
-const { SLACK_BOT_TOKEN, SLACK_APP_TOKEN } = process.env;
-const slackEnabled = !!(SLACK_BOT_TOKEN && SLACK_APP_TOKEN);
+// ── Virtual Projects + Bot Infrastructure ───────────────────────
+
+// Ensure lobby virtual project (uses all loaded roles so bots can use any)
+if (botCount > 0) {
+  try {
+    const allRoleNames = [...roles.keys()];
+    const lobby = ensureVirtualProject(PROJECTS_DIR, 'lobby', 'Default virtual project for bot sessions', allRoleNames, getInstanceRoot());
+    projects.set('lobby', lobby);
+    logger.info('lobby virtual project ensured');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ msg }, 'failed to ensure lobby virtual project');
+  }
+}
+
+// Ensure active task in lobby for bot sessions
+function ensureLobbyTask(): { slug: string; taskDir: string } | undefined {
+  if (!projects.has('lobby')) return undefined;
+
+  const tasksDir = getProjectTasksDir(PROJECTS_DIR, 'lobby');
+  try {
+    const open = getOpenTasks(tasksDir);
+    if (open.length > 0) {
+      return open[0];
+    }
+    // Create today's session task
+    const today = new Date().toISOString().split('T')[0];
+    return createTask(tasksDir, {
+      name: `session-${today}`,
+      project: 'lobby',
+      description: `Bot session task for ${today}`,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ msg }, 'failed to ensure lobby task');
+    return undefined;
+  }
+}
+
+const lobbyTask = botCount > 0 ? ensureLobbyTask() : undefined;
+
+// ── Bot Session Infrastructure ──────────────────────────────────
+
+const botQueue = new BotMessageQueue();
+const botSessionManager = new BotSessionManager(config, roles, bots, pool);
+
+// Load persisted bot sessions
+botSessionManager.loadSessions(PROJECTS_DIR, projects);
+
+// Detect interface modes
+const slackBotCount = config.slack ? Object.keys(config.slack.bots).length : 0;
+const slackEnabled = slackBotCount > 0;
 const wsEnabled = !!config.ws;
 
 // Conditional WS registration
@@ -144,10 +213,133 @@ if (wsEnabled) {
   registry.register(ws);
 }
 
-// Conditional Slack registration
-if (slackEnabled) {
-  registry.register(new SlackAdapter(SLACK_BOT_TOKEN!, SLACK_APP_TOKEN!, config));
+// Conditional Slack registration (multi-bot)
+let slackAdapter: SlackAdapter | undefined;
+if (slackEnabled && config.slack) {
+  // Validate each bot config before creating adapter
+  const validBots: Record<string, { botTokenEnv: string; appTokenEnv: string; role: string }> = {};
+  for (const [botName, botConfig] of Object.entries(config.slack.bots)) {
+    if (!bots.has(botName)) {
+      logger.warn({ botName }, 'Slack config references unknown bot — skipping');
+      continue;
+    }
+    if (!roles.has(botConfig.role)) {
+      logger.warn({ botName, role: botConfig.role }, 'Slack config references unknown role — skipping');
+      continue;
+    }
+    const token = process.env[botConfig.botTokenEnv];
+    const appToken = process.env[botConfig.appTokenEnv];
+    if (!token || !appToken) {
+      logger.warn({ botName, botTokenEnv: botConfig.botTokenEnv, appTokenEnv: botConfig.appTokenEnv },
+        'Slack bot env vars not set — skipping');
+      continue;
+    }
+    validBots[botName] = botConfig;
+  }
+
+  if (Object.keys(validBots).length > 0) {
+    slackAdapter = new SlackAdapter(
+      { ...config.slack, bots: validBots },
+      bots,
+      botQueue,
+    );
+    registry.register(slackAdapter);
+  }
 }
+
+// Wire bot queue handler → bot session manager
+botQueue.setHandler(async (msg) => {
+  if (!lobbyTask) {
+    logger.warn({ botName: msg.botName }, 'No lobby task available — dropping message');
+    return;
+  }
+
+  // Determine role from slack config or default
+  const slackBotConfig = config.slack?.bots[msg.botName];
+  const roleName = slackBotConfig?.role ?? config.slack?.defaultRole ?? config.routing.default;
+
+  // Determine CWD (lobby virtual project uses instance root)
+  const lobby = projects.get('lobby');
+  const cwd = lobby?.paths[0] ?? getInstanceRoot();
+
+  // Build response sink that posts via the correct Slack bot
+  const channel = msg.metadata['channel'] as string;
+  const messageTs = msg.metadata['messageTs'] as string;
+
+  const responseSink = async (text: string) => {
+    if (slackAdapter) {
+      const instance = slackAdapter.getInstance(msg.botName);
+      if (instance) {
+        try {
+          const bot = bots.get(msg.botName);
+          await instance.app.client.chat.postMessage({
+            channel,
+            text,
+            thread_ts: messageTs,
+            username: bot?.displayName ?? msg.botName,
+          });
+        } catch (err) {
+          logger.error({ err, botName: msg.botName }, 'failed to post bot response');
+        }
+      }
+    }
+  };
+
+  // Set working reaction
+  if (slackAdapter) {
+    const instance = slackAdapter.getInstance(msg.botName);
+    if (instance && config.slack?.reactions) {
+      const reactions = config.slack.reactions;
+      try {
+        await instance.app.client.reactions.remove({ channel, timestamp: messageTs, name: reactions.received }).catch(() => {});
+        await instance.app.client.reactions.add({ channel, timestamp: messageTs, name: reactions.working });
+      } catch { /* non-fatal */ }
+    }
+  }
+
+  try {
+    await botSessionManager.handleBotMessage({
+      botName: msg.botName,
+      roleName,
+      message: msg.content,
+      project: 'lobby',
+      taskSlug: lobbyTask.slug,
+      taskDir: lobbyTask.taskDir,
+      cwd,
+      responseSink,
+    });
+
+    // Set success reaction
+    if (slackAdapter) {
+      const instance = slackAdapter.getInstance(msg.botName);
+      if (instance && config.slack?.reactions) {
+        const reactions = config.slack.reactions;
+        try {
+          await instance.app.client.reactions.remove({ channel, timestamp: messageTs, name: reactions.working }).catch(() => {});
+          await instance.app.client.reactions.add({ channel, timestamp: messageTs, name: reactions.success });
+        } catch { /* non-fatal */ }
+      }
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err, botName: msg.botName }, 'bot session handler error');
+
+    // Set failure reaction
+    if (slackAdapter) {
+      const instance = slackAdapter.getInstance(msg.botName);
+      if (instance && config.slack?.reactions) {
+        const reactions = config.slack.reactions;
+        try {
+          await instance.app.client.reactions.remove({ channel, timestamp: messageTs, name: reactions.working }).catch(() => {});
+          await instance.app.client.reactions.add({ channel, timestamp: messageTs, name: reactions.failure });
+        } catch { /* non-fatal */ }
+      }
+    }
+
+    // Notify user
+    await responseSink(`Something went wrong: ${errMsg.slice(0, 200)}`);
+  }
+});
 
 // Register inbound handler on all providers
 const inboundHandler: InboundHandler = async (msg) => {
@@ -161,9 +353,48 @@ for (const provider of registry.providers()) {
   provider.onInbound(inboundHandler);
 }
 
+// ── Cron Scheduler ──────────────────────────────────────────────
+
+const cronScheduler = new CronScheduler();
+
+if (botCount > 0 && config.slack) {
+  const rotationIntervalMs = (config.slack.taskRotationIntervalHours ?? 24) * 60 * 60 * 1000;
+
+  cronScheduler.register({
+    name: 'task-rotation',
+    intervalMs: rotationIntervalMs,
+    handler: async () => {
+      if (!projects.has('lobby')) return;
+
+      const tasksDir = getProjectTasksDir(PROJECTS_DIR, 'lobby');
+      try {
+        // Close all open tasks
+        const open = getOpenTasks(tasksDir);
+        for (const task of open) {
+          closeTask(tasksDir, task.slug);
+          logger.info({ slug: task.slug }, 'task rotation: closed task');
+        }
+
+        // Create new session task
+        const today = new Date().toISOString().split('T')[0];
+        const newTask = createTask(tasksDir, {
+          name: `session-${today}`,
+          project: 'lobby',
+          description: `Bot session task for ${today}`,
+        });
+        logger.info({ slug: newTask.slug }, 'task rotation: created new task');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error({ msg }, 'task rotation error');
+      }
+    },
+  });
+}
+
 // Startup banner — printed before any pino output
+const slackBotsList = slackAdapter ? slackAdapter.getBotNames().join(', ') || 'pending' : '';
 const interfaceList = [
-  slackEnabled ? 'Slack' : null,
+  slackEnabled ? `Slack (${slackBotCount} bot${slackBotCount !== 1 ? 's' : ''})` : null,
   'CLI',
   wsEnabled ? `WS (${config.ws!.host}:${config.ws!.port})` : null,
 ].filter(Boolean).join(', ');
@@ -187,6 +418,7 @@ console.log([
   `  config: OK | model: ${defaultModel} | aliases: ${aliasCount}`,
   `  projects: ${projectCount} (${projectNames || 'none'})`,
   `  roles: ${roleCount} (${roleNames})`,
+  `  bots: ${botCount} (${botNames || 'none'})`,
   `  pool: maxConcurrent=${config.pool.maxConcurrent || 'unlimited'}`,
   `  mcp: streamTimeout=${config.mcp.streamTimeout}ms`,
   `  interfaces: ${interfaceList}`,
@@ -206,6 +438,7 @@ if (recoveredDraft) {
 logger.info({ version }, 'collabot started');
 logger.info({ defaultModel, aliasCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
+logger.info({ botCount, botNames }, 'bots loaded');
 logger.info({ projectCount, projectNames }, 'projects loaded');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
 
@@ -213,9 +446,10 @@ logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialize
 await registry.startAll();
 
 if (slackEnabled) {
-  logger.info('Slack interface enabled');
+  const startedBots = slackAdapter?.getBotNames() ?? [];
+  logger.info({ bots: startedBots }, `Slack interface enabled (${startedBots.length} bot${startedBots.length !== 1 ? 's' : ''})`);
 } else {
-  logger.info('Slack tokens not found — Slack adapter disabled, CLI available');
+  logger.info('No Slack bots configured — Slack adapter disabled');
 }
 
 if (wsEnabled) {
@@ -225,6 +459,12 @@ if (wsEnabled) {
   }
 } else {
   logger.info('WS config not found — WS adapter disabled');
+}
+
+// Start cron scheduler (after providers so task rotation doesn't fire before Slack is ready)
+if (cronScheduler.list().length > 0) {
+  cronScheduler.startAll();
+  logger.info({ jobs: cronScheduler.list() }, 'cron scheduler started');
 }
 
 // Heartbeat — debug log every 60s, gated on verbose tier
@@ -237,6 +477,7 @@ if (logTier === 'verbose') {
 
 async function shutdown(): Promise<void> {
   logger.info('shutting down');
+  cronScheduler.stopAll();
   if (heartbeatInterval !== undefined) {
     clearInterval(heartbeatInterval);
   }

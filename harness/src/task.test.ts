@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createTask, findTaskByThread, getTask, listTasks, closeTask, generateSlug, deduplicateSlug, nextJournalFile } from './task.js';
+import { createTask, findTaskByThread, getTask, listTasks, closeTask, getOpenTasks, generateSlug, deduplicateSlug, nextJournalFile } from './task.js';
 import type { TaskManifest } from './task.js';
 
 function makeTempDir(): string {
@@ -231,4 +231,33 @@ test('nextJournalFile increments when base exists', () => {
   const dir = makeTempDir();
   fs.writeFileSync(path.join(dir, 'api-dev.md'), '', 'utf-8');
   assert.strictEqual(nextJournalFile(dir, 'api-dev'), 'api-dev-2.md');
+});
+
+// ── getOpenTasks ────────────────────────────────────────────────
+
+test('getOpenTasks returns open tasks only', () => {
+  const tasksDir = makeTempDir();
+
+  createTask(tasksDir, { name: 'open-task', project: 'test' });
+  const closed = createTask(tasksDir, { name: 'closed-task', project: 'test' });
+  closeTask(tasksDir, closed.slug);
+
+  const open = getOpenTasks(tasksDir);
+  assert.strictEqual(open.length, 1);
+  assert.strictEqual(open[0]!.slug, 'open-task');
+});
+
+test('getOpenTasks returns empty for nonexistent directory', () => {
+  const result = getOpenTasks('/nonexistent/path');
+  assert.deepStrictEqual(result, []);
+});
+
+test('getOpenTasks returns empty when all tasks are closed', () => {
+  const tasksDir = makeTempDir();
+
+  const t1 = createTask(tasksDir, { name: 'task-a', project: 'test' });
+  closeTask(tasksDir, t1.slug);
+
+  const open = getOpenTasks(tasksDir);
+  assert.strictEqual(open.length, 0);
 });
