@@ -3,8 +3,10 @@
 !.claude/skills/
 **/.claude/settings.local.json
 
-# Project manifests (local only)
+# Instance content (local only)
 .projects/
+bots/
+roles/
 
 # Agent workspace (local only)
 .agents/
