@@ -19,7 +19,7 @@
 
 ---
 
-Collabot is home base for your AI bots. It runs as a persistent service, dispatching bots via the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) [Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) to work on tasks across multiple projects. You define the projects, roles, and bots. Collabot handles the rest — dispatch, coordination, event capture, context reconstruction, and communication.
+Collabot is home base for your AI bots. It runs as a persistent service, dispatching bots to work on tasks across multiple projects. You define the projects, roles, and bots. Collabot handles the rest — dispatch, coordination, event capture, context reconstruction, and communication.
 
 A **project** is a logical product that may span multiple repositories. Collabot provides the infrastructure; projects bring the domain knowledge.
 
@@ -30,7 +30,7 @@ The **harness** is the core — a persistent Node.js/TypeScript process that man
 ```
                     ┌──────────┐
          Slack ────►│          │
-          CLI ─────►│  Harness │──── Agent SDK ────► Bots
+          CLI ─────►│  Harness │────────────────► Bots
     WebSocket ─────►│          │         │
           TUI ─────►│          │    ┌────┴────┐
                     └──────────┘    │ Project  │

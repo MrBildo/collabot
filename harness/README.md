@@ -6,7 +6,7 @@ The Collaborative Agent Platform. Dispatch, coordinate, and manage AI bots acros
 [![CI](https://github.com/MrBildo/collabot/actions/workflows/ci.yml/badge.svg)](https://github.com/MrBildo/collabot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MrBildo/collabot/blob/master/LICENSE)
 
-Collabot is home base for your AI bots. It dispatches bots via the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) [Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) to work on tasks across your projects. You define projects, roles, and bots. Collabot handles dispatch, coordination, event capture, context reconstruction, and communication across four adapters (Slack, CLI, WebSocket, TUI).
+Collabot is home base for your AI bots. It dispatches bots to work on tasks across your projects. You define projects, roles, and bots. Collabot handles dispatch, coordination, event capture, context reconstruction, and communication across four adapters (Slack, CLI, WebSocket, TUI).
 
 ## Install
 
@@ -55,8 +55,7 @@ Secrets (API keys, bot tokens) go in `~/.collabot/.env`.
 ## Requirements
 
 - Node.js >= 22
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed
-- Anthropic API key configured
+- An AI provider API key configured
 
 ## Links
 
