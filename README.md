@@ -28,14 +28,14 @@ A **project** is a logical product that may span multiple repositories. Collabot
 The **harness** is the core — a persistent Node.js/TypeScript process that manages everything. Interfaces connect to it through adapters. No adapter is primary. The harness runs with or without any of them.
 
 ```
-                    ┌──────────┐
-         Slack ────►│          │
-          CLI ─────►│  Harness │────────────────► Bots
-    WebSocket ─────►│          │         │
-          TUI ─────►│          │    ┌────┴────┐
-                    └──────────┘    │ Project  │
-                                   │  repos   │
-                                   └──────────┘
+                  +------------+
+       Slack ---->|            |
+        CLI ----->|  Harness   |-----------> Bots
+  WebSocket ----->|            |               |
+        TUI ----->|            |         +-----------+
+                  +------------+         |  Project  |
+                                         |   repos   |
+                                         +-----------+
 ```
 
 **Adapters** connect humans to the harness — DM a Slack bot, type in a TUI, send a WebSocket message, or fire a CLI one-liner. The harness resolves the right project, role, and bot, then dispatches.
@@ -81,10 +81,8 @@ Three principles drive the design:
 
 | Document | Description |
 |----------|-------------|
-| [Workflow Process](docs/process/WORKFLOW.md) | Step-by-step feature planning process |
-| [Architecture](docs/process/agent-orchestration-architecture.md) | Full orchestration architecture |
-| [Role System](docs/specs/role-system-v2.md) | Role schema, permissions, entity tooling |
-| [Platform Vision](docs/vision/authoring-and-knowledge.md) | Authoring conventions, knowledge model, growth philosophy |
+| [Architecture](docs/architecture.md) | Platform architecture |
+| [Vision](docs/vision.md) | Origin story, design philosophy, growth model |
 
 ## License
 
