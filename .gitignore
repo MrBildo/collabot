@@ -17,6 +17,9 @@ harness/dist/
 harness/tui/bin/
 harness/tui/obj/
 
+# Instance config (use config.defaults.toml as template)
+config.toml
+
 # Environment
 harness/.env
 
