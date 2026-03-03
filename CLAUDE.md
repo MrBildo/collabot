@@ -143,7 +143,7 @@ Before starting any development work, coding agents MUST check `.agents/kb/` for
 
 ## Planning Workflow
 
-See `docs/process/WORKFLOW.md` for the full step-by-step process.
+See `.agents/docs/process/WORKFLOW.md` for the full step-by-step process (instance-local, not shipped with platform).
 
 **Summary:** Task intake → impact analysis → feature spec (with test plan) → branch planning → sub-project handoff → testing → PR review
 
@@ -169,8 +169,7 @@ Tasks have explicit lifecycle: `open` → `closed`. They are created with a name
 
 | Document | Path | Purpose |
 |----------|------|---------|
-| Workflow | `docs/process/WORKFLOW.md` | Step-by-step feature planning process |
-| Architecture | `docs/process/agent-orchestration-architecture.md` | Full orchestration architecture |
+| Architecture | `docs/process/agent-orchestration-architecture.md` | Platform architecture |
 | Role System v2 | `docs/specs/role-system-v2.md` | Role schema, event capture, permissions, entity tooling |
 | Platform Vision | `docs/vision/authoring-and-knowledge.md` | Authoring conventions, knowledge model, growth philosophy |
 
