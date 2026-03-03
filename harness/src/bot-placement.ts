@@ -65,7 +65,6 @@ export function placeBots(
     };
 
     placements.set(botName, placement);
-    logger.info({ botName, project: projectName, role: roleName }, 'bot placed');
   }
 
   return placements;

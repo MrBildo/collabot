@@ -226,7 +226,6 @@ for (const provider of registry.providers()) {
         const roleNames = req.roles.length > 0 ? req.roles : [...roles.keys()];
         const vp = ensureVirtualProject(PROJECTS_DIR, req.name, req.description, roleNames, getInstanceRoot());
         projects.set(req.name.toLowerCase(), vp);
-        logger.info({ provider: provider.name, project: req.name }, 'virtual project ensured via provider interrogation');
 
         // Store meta (disallowedTools, skills) — runtime only, not persisted
         const meta: VirtualProjectMeta = {};
