@@ -5,7 +5,7 @@
 | **Source** | Spec discussion |
 | **Status** | **Signed off** |
 | **Created** | 2026-03-01 |
-| **Last Updated** | 2026-03-01 |
+| **Last Updated** | 2026-03-02 |
 
 ## Summary
 
@@ -168,6 +168,116 @@ This supersedes D7's `defaultBotRole` / `[slack.botRoles]` pattern — role assi
 
 **Per-bot isolation:** Alice can be busy while Greg is free. Busy state is per-bot, not global. This replaces the PoC's single `agentBusy` boolean.
 
+### D11: Bot default project + role live in harness config, not provider config
+
+Role assignment moves OUT of `[slack.bots.*]` and INTO `[bots.*]` in config.toml. This decouples role/project assignment from providers. This supersedes D7's provider-scoped role binding and D9's inline role field.
+
+```toml
+[bots.hazel]
+defaultProject = "slack-room"
+defaultRole = "researcher"
+
+[slack.bots.hazel]
+botTokenEnv = "HAZEL_BOT_TOKEN"
+appTokenEnv = "HAZEL_APP_TOKEN"
+# no role here — just credentials
+```
+
+- If `defaultProject` is not set, bot goes to `lobby`
+- Role and project assignment are harness concerns, not provider concerns
+- Slack config becomes purely about credentials ("this bot has a Slack account")
+- Future: provider-specific role overrides could exist but day-1 one default role per bot is sufficient
+
+### D12: `slack-room` is a provider-injected virtual project
+
+Two virtual projects exist day-1:
+
+- **`lobby`** — idle state, harness-owned, where bots go when not assigned
+- **`slack-room`** — Slack surface, Slack provider-owned, where bots go when active on Slack
+
+Behavior:
+- A bot in `slack-room` without a Slack account is just parked there (no-op)
+- A bot WITH a Slack account in `slack-room` shows as online in Slack
+- Bots join `slack-room` via `defaultProject` config (day-1), future: agency systems
+
+### D13: Provider interrogation via interface methods
+
+Providers implement optional methods the harness calls during startup:
+
+```typescript
+interface CommunicationProvider {
+  // existing required methods...
+  getVirtualProjects?(): VirtualProjectRequest[];
+}
+```
+
+Pattern: construct providers → register → interrogate (call `getVirtualProjects()`) → harness validates and creates virtual projects → start providers. Interrogation is a config-phase operation — providers do not need live connections to answer.
+
+### D14: Tool restrictions on virtual projects
+
+Virtual projects carry tool restrictions. When a bot is drafted into a project, the restrictions are passed to the SDK `query()` call:
+
+- `disallowedTools: ['Bash', 'Edit', 'Write', ...]` removes tools from model context entirely
+- Works even with `permissionMode: 'bypassPermissions'`
+- User-scoped `settings.json` cannot override — these are tool AVAILABILITY, not permission checks
+- Day-1 uses SDK options directly. Future: Collabot permissions abstraction layer.
+
+### D15: Bot presence tied to project membership
+
+- Bot in `slack-room` with a Slack account = presence online (`users.setPresence('auto')`)
+- Bot NOT in `slack-room` (lobby, or drafted to real project) = presence away
+- Harness shutdown = presence away (Slack handles this automatically when Socket Mode disconnects)
+
+### D16: Bots are autonomous entities, not provider widgets
+
+A bot having a Slack account does NOT make it a "Slack bot." Hazel is a bot. She has a Slack account. Sometimes she's on Slack, sometimes not. Her soul + role dictates WHAT she does. Slack/project is WHERE she is.
+
+The mental model: Bot → Role (WHAT) → Project (WHERE) → Provider account (HOW she's reachable there).
+
+Future: bots will have limited agency — schedules, goals, ability to decide what to work on. A cron-like system determines if bots should move projects. Bots not obligated into a role/project "sit" in lobby until drafted. The architecture must not conflict with this vision.
+
+### D17: Provider skills for surface context
+
+Slack "etiquette" and behavior instructions are NOT role concerns — they are SKILLS. Providers offer skills that get injected when a bot is in that provider's virtual project.
+
+- Example: `slack-etiquette` skill — how to use Slack mrkdwn, keep responses conversational, tool restrictions context
+- Skills are a property of the virtual PROJECT, not handed over separately by the provider
+- Any virtual project can carry skills, not just Slack ones
+- This solves the prompt gap (bots outputting full markdown because nothing told them they were in Slack)
+
+Composition at draft time: system prompt + role prompt + project skills + soul prompt.
+
+Day-1: `slack-etiquette` content injected via `systemPrompt.append` when bot is in `slack-room`. Full skill pipeline (discovery, activation, configurable paths) is a separate initiative.
+
+### D18: Startup flow — construct, register, interrogate, place, start
+
+Revised startup sequence:
+
+```
+1.  Load config
+2.  Load roles
+3.  Load projects
+4.  Load bots
+5.  Create agent pool
+6.  Create communication registry
+7.  Register CLI adapter
+8.  Ensure lobby virtual project + active task
+9.  Construct + register Slack adapter (conditional, not started)
+10. Construct + register WS adapter (conditional)
+11. Provider interrogation — foreach provider: getVirtualProjects() → ensure virtual projects
+12. Bot placement — read [bots.*] config, assign each bot to defaultProject (or lobby)
+13. Create botQueue + botSessionManager
+14. Wire queue handler (placement-aware: bot's project determines role, skills, restrictions)
+15. Banner
+16. Load persisted bot sessions
+17. Start all providers (Slack apps connect, presence set based on placement)
+18. Start cron + task rotation
+19. Register inbound handler
+20. Recover draft (if any)
+```
+
+Key principle: providers are constructed and registered early (config-phase), interrogated before bot placement, but started late (runtime-phase). This separates "what do you need?" from "connect now."
+
 ## Scope
 
 ### In this initiative
@@ -183,6 +293,9 @@ This supersedes D7's `defaultBotRole` / `[slack.botRoles]` pattern — role assi
 
 ### Deferred
 
+- **Skill pipeline** — full skill system with configurable discovery paths, three-layer loading (user/harness-project/CWD-project), activation mechanics (manual + agent-driven), agentskills.io standard compliance. Separate initiative. Research in `memory/skill-pipeline-research.md`.
+- **Model adapters** — abstraction layer over model providers. Skill discovery paths, prompt format, tool conventions are model-specific. Day-1 uses configurable paths as a bridge.
+- **Collabot permissions abstraction** — harness-level permission model mapping to SDK `disallowedTools`/`tools`. Day-1 uses SDK options directly.
 - **Memory synthesis / memory management** — converting task data and conversation history into bot memories. The directory structure (`./bots/<name>/memories/`) is created but not populated by any automated process.
 - **Bot personality system** — beyond the soul prompt. Rich personality traits, communication style preferences, per-bot threading/formatting choices.
 - **Unprompted responses** — bots proactively responding to channel activity without being @mentioned.
@@ -220,3 +333,4 @@ This supersedes D7's `defaultBotRole` / `[slack.botRoles]` pattern — role assi
 ## Sign-off
 
 - [x] Design discussion completed — 2026-03-01
+- [x] Spec extension: D11–D18 (slack-room, provider interrogation, bot placement, skills, startup flow) — 2026-03-02
