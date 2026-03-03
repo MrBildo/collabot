@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <strong>An operating system for AI agents.</strong><br>
-  Dispatch, coordinate, and manage coding agents across your projects.
+  <strong>The Collaborative Agent Platform</strong><br>
+  Dispatch, coordinate, and manage AI bots across your projects.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 ---
 
-Collabot is a general-purpose agent orchestration platform. It runs as a persistent service, dispatching [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents via the [Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) to work on tasks across multiple projects. You define the projects, roles, and bots. Collabot handles the rest — dispatch, coordination, event capture, context reconstruction, and communication.
+Collabot is home base for your AI bots. It runs as a persistent service, dispatching bots via the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) [Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) to work on tasks across multiple projects. You define the projects, roles, and bots. Collabot handles the rest — dispatch, coordination, event capture, context reconstruction, and communication.
 
 A **project** is a logical product that may span multiple repositories. Collabot provides the infrastructure; projects bring the domain knowledge.
 
@@ -30,7 +30,7 @@ The **harness** is the core — a persistent Node.js/TypeScript process that man
 ```
                     ┌──────────┐
          Slack ────►│          │
-          CLI ─────►│  Harness │──── Agent SDK ────► Claude Code agents
+          CLI ─────►│  Harness │──── Agent SDK ────► Bots
     WebSocket ─────►│          │         │
           TUI ─────►│          │    ┌────┴────┐
                     └──────────┘    │ Project  │
@@ -38,7 +38,7 @@ The **harness** is the core — a persistent Node.js/TypeScript process that man
                                    └──────────┘
 ```
 
-**Adapters** connect humans to the harness — DM a Slack bot, type in a TUI, send a WebSocket message, or fire a CLI one-liner. The harness resolves the right project, role, and bot, then dispatches an agent to do the work.
+**Adapters** connect humans to the harness — DM a Slack bot, type in a TUI, send a WebSocket message, or fire a CLI one-liner. The harness resolves the right project, role, and bot, then dispatches.
 
 **Roles** define behavioral profiles — identity, model preference, and permissions. They're tech-stack-focused, not project-specific. A `.NET developer` role works on any .NET project.
 
@@ -48,13 +48,13 @@ The **harness** is the core — a persistent Node.js/TypeScript process that man
 
 Collabot is pre-release (`0.x`) and under active development. What's working today:
 
-- **Multi-project orchestration** — register projects, dispatch agents with role-based context
+- **Multi-project orchestration** — register projects, dispatch bots with role-based context
 - **4 adapters** — Slack (multi-bot, per-bot Socket Mode), CLI, WebSocket (JSON-RPC 2.0), TUI (.NET 10)
 - **Bot session pattern** — persistent bot identities with resume-per-message SDK sessions
 - **Event system v2** — canonical event streams scoped to dispatches, full agent lifecycle capture
-- **Multi-agent coordination** — PM agents dispatch sub-agents via MCP tools, await results, synthesize
+- **Multi-bot coordination** — PM bots dispatch teammates via MCP tools, await results, synthesize
 - **Task lifecycle** — create, dispatch, capture, close — all scoped to projects
-- **Parallel agent dispatch** — git worktree isolation for concurrent agents on the same repo
+- **Parallel dispatch** — git worktree isolation for concurrent bots on the same repo
 - **333+ tests**, TypeScript strict mode, CI on every PR
 
 ## Quick start
@@ -69,22 +69,12 @@ See the [package README](https://npmjs.com/package/collabot) for configuration d
 
 ## Vision
 
-Collabot is, in a meaningful sense, an operating system for AI agents. The analogy maps well:
-
-| OS Concept | Collabot |
-|------------|----------|
-| Process scheduler | Dispatch, agent pool, task lifecycle |
-| Device drivers | Adapters (Slack, CLI, WebSocket, TUI) |
-| Filesystem | Entity documents (roles, bots, skills, knowledge) |
-| Memory management | Context window curation, event capture, future memory system |
-| User programs | Projects, tasks, agents doing actual work |
-
-The platform ships infrastructure, not content. A fresh install is essentially empty — you build up the roles, bots, skills, and knowledge that fit your team. Collabot provides the substrate for that knowledge to grow, link, and compound over time.
+We're building a team, not a workflow tool. Collabot is where your bots live — they have roles, personalities, projects they care about, and (eventually) memories of past work. The platform ships infrastructure, not content. A fresh install is essentially empty — you build up the team that fits your projects.
 
 Three principles drive the design:
 
 - **Curated context over large context.** The right 10K tokens beats 100K tokens of vibes. Collabot assembles precise context, not maximum context.
-- **Documentation is memory.** Agents have no memory between sessions. What's written down is what they know. Docs evolve in the same commit as code.
+- **Documentation is memory.** Bots have no memory between sessions. What's written down is what they know. Docs evolve in the same commit as code.
 - **Iterative formalization.** Start loose, use the system, let the shape emerge, then codify. The loose version isn't debt — it's research.
 
 ## Documentation

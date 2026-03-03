@@ -1,12 +1,12 @@
 # collabot
 
-An operating system for AI agents. Dispatch, coordinate, and manage coding agents across your projects.
+The Collaborative Agent Platform. Dispatch, coordinate, and manage AI bots across your projects.
 
 [![npm version](https://img.shields.io/npm/v/collabot.svg)](https://npmjs.com/package/collabot)
 [![CI](https://github.com/MrBildo/collabot/actions/workflows/ci.yml/badge.svg)](https://github.com/MrBildo/collabot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MrBildo/collabot/blob/master/LICENSE)
 
-Collabot is a persistent orchestration harness that dispatches [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents via the [Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk). You define projects, roles, and bots. Collabot handles dispatch, coordination, event capture, context reconstruction, and communication across four adapters (Slack, CLI, WebSocket, TUI).
+Collabot is home base for your AI bots. It dispatches bots via the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) [Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) to work on tasks across your projects. You define projects, roles, and bots. Collabot handles dispatch, coordination, event capture, context reconstruction, and communication across four adapters (Slack, CLI, WebSocket, TUI).
 
 ## Install
 
