@@ -81,8 +81,8 @@ Three principles drive the design:
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/process/agent-orchestration-architecture.md) | Platform architecture |
-| [Platform Vision](docs/vision/authoring-and-knowledge.md) | Authoring conventions, knowledge model, growth philosophy |
+| [Architecture](docs/architecture.md) | Platform architecture |
+| [Vision](docs/vision.md) | Origin story, design philosophy, growth model |
 
 ## License
 

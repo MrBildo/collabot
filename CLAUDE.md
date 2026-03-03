@@ -35,7 +35,7 @@ Projects can be scaffolded from the TUI (`/project init <name>`) or via the `cre
 
 ## Roles
 
-Roles are markdown files with YAML frontmatter, stored in `./roles/`. Each role defines a behavioral profile: identity, prompt, model hint, and permissions. Roles are tech-stack-focused (not project-specific) — any role can be assigned to any project. See `docs/specs/role-system-v2.md` for the full design.
+Roles are markdown files with YAML frontmatter, stored in `./roles/`. Each role defines a behavioral profile: identity, prompt, model hint, and permissions. Roles are tech-stack-focused (not project-specific) — any role can be assigned to any project. See `.agents/docs/specs/role-system-v2.md` for the full design.
 
 **Frontmatter fields:** `id` (ULID), `version` (semver), `name`, `description`, `createdOn`, `createdBy`, `displayName`, `model-hint` (alias from config), `permissions` (optional, controls MCP tool access).
 
@@ -96,7 +96,7 @@ claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 
 ### Dispatch Rules
 
-- **Spec first:** Write task specs to `docs/specs/` first, then dispatch with the spec content. No dispatch without a spec.
+- **Spec first:** Write task specs to `.agents/docs/specs/` first, then dispatch with the spec content. No dispatch without a spec.
 - Include ALL context the child needs — it has no memory of this session
 - Child agents return structured output (Status, Summary, Changes, Issues, Next Steps)
 - Dispatch in parallel when tasks are independent
@@ -169,9 +169,9 @@ Tasks have explicit lifecycle: `open` → `closed`. They are created with a name
 
 | Document | Path | Purpose |
 |----------|------|---------|
-| Architecture | `docs/process/agent-orchestration-architecture.md` | Platform architecture |
-| Role System v2 | `docs/specs/role-system-v2.md` | Role schema, event capture, permissions, entity tooling |
-| Platform Vision | `docs/vision/authoring-and-knowledge.md` | Authoring conventions, knowledge model, growth philosophy |
+| Architecture | `docs/architecture.md` | Platform architecture |
+| Vision | `docs/vision.md` | Origin story, design philosophy, growth model |
+| Role System v2 | `.agents/docs/specs/role-system-v2.md` | Role schema, event capture, permissions, entity tooling |
 
 Project-specific docs (ecosystem, API contracts, domain language, releases, CI/CD, PR workflow) live in their respective project repos, not here.
 
@@ -220,7 +220,8 @@ Above roles sits the **bot** — a persistent identity with personality, motivat
 
 - **Always use relative paths** in docs, specs, and CLAUDE.md files. Never hardcode absolute paths.
 - Reference project repos by their directory name, e.g. `../project-api/`, `../project-portal/`, etc.
-- Reference platform files as `./` (e.g., `./docs/specs/feature.md`)
+- Reference platform files as `./` (e.g., `./docs/architecture.md`)
+- Specs and PM artifacts live in `.agents/docs/` (instance-local, gitignored)
 
 ## Context Window Management
 
@@ -240,18 +241,18 @@ Above roles sits the **bot** — a persistent identity with personality, motivat
 
 Collabot was born as an agent hub — an orchestration workspace for a single project. Through 8 milestones, the harness evolved into a general-purpose platform.
 
-| Milestone | Status | Spec | Summary |
-|-----------|--------|------|---------|
-| A | Complete | `docs/specs/workflow-harness-milestone-a.md` | Foundation: harness core, Slack adapter, config, roles, basic dispatch |
-| B | Complete | `docs/specs/workflow-harness-milestone-b.md` | Workflow works: SDK dispatch, journals, structured output, error loop detection |
-| C | Complete | `docs/specs/workflow-harness-milestone-c.md` | Multi-project routing, task abstraction, ping-pong detection |
-| D | Complete | `docs/specs/workflow-harness-milestone-d.md` | Core decoupled from Slack, CommAdapter interface, CLI adapter, agent pool |
-| E | Complete | `docs/specs/workflow-harness-milestone-e.md` | Multi-agent handoff, context reconstruction, task-aware CLI, PM role |
-| F | Complete | `docs/specs/workflow-harness-milestone-f.md` | MCP tools — agent-callable harness (draft, await, kill, query) |
-| G | Complete | `docs/specs/workflow-harness-milestone-g-h.md` | WebSocket adapter — JSON-RPC 2.0 over WS, SDK event streaming |
-| H | Complete | `docs/specs/workflow-harness-milestone-g-h.md` | TUI client — .NET 10 Terminal.Gui v2, chat, slash commands, auto-reconnect |
+| Milestone | Summary |
+|-----------|---------|
+| A | Foundation: harness core, Slack adapter, config, roles, basic dispatch |
+| B | Workflow works: SDK dispatch, journals, structured output, error loop detection |
+| C | Multi-project routing, task abstraction, ping-pong detection |
+| D | Core decoupled from Slack, CommAdapter interface, CLI adapter, agent pool |
+| E | Multi-agent handoff, context reconstruction, task-aware CLI, PM role |
+| F | MCP tools — agent-callable harness (draft, await, kill, query) |
+| G | WebSocket adapter — JSON-RPC 2.0 over WS, SDK event streaming |
+| H | TUI client — .NET 10 Terminal.Gui v2, chat, slash commands, auto-reconnect |
 
-Parent spec: `docs/specs/workflow-harness.md`
+Milestone specs and handoffs archived in `.agents/docs/`.
 
 ### Key Moments
 
