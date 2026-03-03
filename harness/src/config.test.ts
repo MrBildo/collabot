@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { ConfigSchema, resolveModelId } from './config.js';
 
 const validSlack = {
-  debounceMs: 2000,
-  reactions: { received: 'eyes', working: 'hammer', success: 'white_check_mark', failure: 'x' },
+  bots: {
+    hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
+  },
 };
 
 function validConfig(overrides: Record<string, unknown> = {}) {
@@ -59,12 +60,11 @@ test('explicit routing section still parses', () => {
   assert.strictEqual(result.data.routing.rules.length, 1);
 });
 
-test('slack reactions parse correctly', () => {
+test('slack section parses with bots', () => {
   const raw = validConfig();
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
-  assert.strictEqual(result.data.slack?.debounceMs, 2000);
+  assert.ok(result.data.slack?.bots['hazel']);
 });
 
 test('config without slack section is valid with defaults', () => {
@@ -88,13 +88,64 @@ test('config with pool.maxConcurrent: 3 parses correctly', () => {
   assert.strictEqual(result.data.pool.maxConcurrent, 3);
 });
 
-test('slack section with defaults fills in reaction names', () => {
+test('slack section with empty object gets default bots', () => {
   const raw = validConfig({ slack: {} });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.slack?.reactions.received, 'eyes');
-  assert.strictEqual(result.data.slack?.reactions.working, 'hammer');
-  assert.strictEqual(result.data.slack?.debounceMs, 2000);
+  assert.deepStrictEqual(result.data.slack!.bots, {});
+});
+
+// ============================================================
+// Slack multi-bot config tests
+// ============================================================
+
+test('slack bots config parses per-bot entries (credentials only)', () => {
+  const raw = validConfig({
+    slack: {
+      bots: {
+        hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
+        greg: { botTokenEnv: 'GREG_BOT_TOKEN', appTokenEnv: 'GREG_APP_TOKEN' },
+      },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(Object.keys(result.data.slack!.bots).length, 2);
+  assert.strictEqual(result.data.slack!.bots['hazel']!.botTokenEnv, 'HAZEL_BOT_TOKEN');
+  assert.strictEqual(result.data.slack!.bots['greg']!.botTokenEnv, 'GREG_BOT_TOKEN');
+});
+
+test('slack bots default to empty record when not provided', () => {
+  const raw = validConfig({ slack: {} });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.deepStrictEqual(result.data.slack!.bots, {});
+});
+
+test('slack bot config missing botTokenEnv fails', () => {
+  const raw = validConfig({
+    slack: {
+      bots: {
+        bad: { appTokenEnv: 'APP_TOKEN' },
+      },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+});
+
+test('slack taskRotationIntervalHours defaults to 24', () => {
+  const raw = validConfig({ slack: {} });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.slack!.taskRotationIntervalHours, 24);
+});
+
+test('slack taskRotationIntervalHours accepts custom value', () => {
+  const raw = validConfig({ slack: { taskRotationIntervalHours: 12 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.slack!.taskRotationIntervalHours, 12);
 });
 
 // ============================================================
@@ -254,4 +305,63 @@ test('ws port must be a positive integer', () => {
   assert.ok(!result.success);
   const paths = result.error.issues.map((i) => i.path.join('.'));
   assert.ok(paths.some((p) => p.includes('port')));
+});
+
+// ============================================================
+// [bots.*] config tests (D11)
+// ============================================================
+
+test('bots section parses with defaultProject and defaultRole', () => {
+  const raw = validConfig({
+    bots: {
+      hazel: { defaultProject: 'slack-room', defaultRole: 'researcher' },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, 'slack-room');
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, 'researcher');
+});
+
+test('bots section is optional', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots, undefined);
+});
+
+test('bots entry with no fields uses defaults', () => {
+  const raw = validConfig({
+    bots: { hazel: {} },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, undefined);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, undefined);
+});
+
+test('bots entry with only defaultProject is valid', () => {
+  const raw = validConfig({
+    bots: { hazel: { defaultProject: 'slack-room' } },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, 'slack-room');
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, undefined);
+});
+
+test('slack config without role field is valid (credentials only)', () => {
+  const raw = validConfig({
+    slack: {
+      bots: {
+        hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
+      },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  const botConfig = result.data.slack!.bots['hazel'];
+  assert.strictEqual(botConfig.botTokenEnv, 'HAZEL_BOT_TOKEN');
+  // role field should NOT exist on the type
+  assert.strictEqual('role' in botConfig, false);
 });

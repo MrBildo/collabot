@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
 import { loadConfig, resolveModelId } from './config.js';
 import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
-import { loadProjects } from './project.js';
+import { loadProjects, ensureVirtualProject, getProjectTasksDir } from './project.js';
+import { loadBots } from './bots.js';
 import { AgentPool } from './pool.js';
 import { draftAgent, handleTask } from './core.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
@@ -11,10 +12,15 @@ import { CommunicationRegistry } from './registry.js';
 import { CliAdapter } from './adapters/cli.js';
 import { WsAdapter } from './adapters/ws.js';
 import { SlackAdapter } from './adapters/slack.js';
+import { BotMessageQueue } from './bot-queue.js';
+import { BotSessionManager } from './bot-session.js';
+import { CronScheduler } from './cron.js';
+import { placeBots } from './bot-placement.js';
+import { createTask, getOpenTasks, closeTask } from './task.js';
 import { registerWsMethods } from './ws-methods.js';
 import { loadActiveDraft } from './draft.js';
-import { getInstancePath, getPackagePath } from './paths.js';
-import type { InboundHandler } from './comms.js';
+import { getInstancePath, getInstanceRoot, getPackagePath } from './paths.js';
+import type { InboundHandler, VirtualProjectMeta } from './comms.js';
 import type { DraftAgentFn } from './mcp.js';
 
 // Read version from package.json (adjacent to src/ in the package)
@@ -84,7 +90,7 @@ const roleCount = roles.size;
 const roleNames = [...roles.keys()].join(', ');
 
 // Load projects (fail fast on schema errors)
-let projects;
+let projects: ReturnType<typeof loadProjects>;
 try {
   projects = loadProjects(PROJECTS_DIR, roles);
 } catch (err) {
@@ -93,6 +99,21 @@ try {
   logger.error({ msg }, 'project load failed');
   process.exit(1);
 }
+
+// Load bots (optional — empty is fine)
+const botsDir = getInstancePath('bots');
+let bots;
+try {
+  bots = loadBots(botsDir);
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.log('\n  Collabot — bots load failed\n');
+  logger.error({ msg }, 'bots load failed');
+  process.exit(1);
+}
+
+const botCount = bots.size;
+const botNames = [...bots.keys()].join(', ');
 
 const projectCount = projects.size;
 const projectNames = [...projects.values()].map((p) => p.name).join(', ');
@@ -129,12 +150,61 @@ const mcpServers = {
   }),
 };
 
-// Detect interface mode
-const { SLACK_BOT_TOKEN, SLACK_APP_TOKEN } = process.env;
-const slackEnabled = !!(SLACK_BOT_TOKEN && SLACK_APP_TOKEN);
+// ── 4. Ensure lobby virtual project ──────────────────────────────
+
+let lobbyEnsured = false;
+if (botCount > 0) {
+  try {
+    const allRoleNames = [...roles.keys()];
+    const lobby = ensureVirtualProject(PROJECTS_DIR, 'lobby', 'Default virtual project for bot sessions', allRoleNames, getInstanceRoot());
+    projects.set('lobby', lobby);
+    lobbyEnsured = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ msg }, 'failed to ensure lobby virtual project');
+  }
+}
+
+// ── 5. Construct + register Slack (not started) ─────────────────
+
+// Detect interface modes
+const slackBotCount = config.slack ? Object.keys(config.slack.bots).length : 0;
+const slackEnabled = slackBotCount > 0;
 const wsEnabled = !!config.ws;
 
-// Conditional WS registration
+const botQueue = new BotMessageQueue();
+
+let slackAdapter: SlackAdapter | undefined;
+if (slackEnabled && config.slack) {
+  // Validate credentials only — role/project assignment is via [bots.*] and placeBots()
+  const validBots: Record<string, { botTokenEnv: string; appTokenEnv: string }> = {};
+  for (const [botName, botConfig] of Object.entries(config.slack.bots)) {
+    if (!bots.has(botName)) {
+      logger.warn({ botName }, 'Slack config references unknown bot — skipping');
+      continue;
+    }
+    const token = process.env[botConfig.botTokenEnv];
+    const appToken = process.env[botConfig.appTokenEnv];
+    if (!token || !appToken) {
+      logger.warn({ botName, botTokenEnv: botConfig.botTokenEnv, appTokenEnv: botConfig.appTokenEnv },
+        'Slack bot env vars not set — skipping');
+      continue;
+    }
+    validBots[botName] = botConfig;
+  }
+
+  if (Object.keys(validBots).length > 0) {
+    slackAdapter = new SlackAdapter(
+      { ...config.slack, bots: validBots },
+      bots,
+      botQueue,
+    );
+    registry.register(slackAdapter);
+  }
+}
+
+// ── 6. Construct + register WS ──────────────────────────────────
+
 if (wsEnabled) {
   const ws = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
   registerWsMethods({ wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers });
@@ -144,29 +214,154 @@ if (wsEnabled) {
   registry.register(ws);
 }
 
-// Conditional Slack registration
-if (slackEnabled) {
-  registry.register(new SlackAdapter(SLACK_BOT_TOKEN!, SLACK_APP_TOKEN!, config));
-}
+// ── 7. Provider interrogation ───────────────────────────────────
 
-// Register inbound handler on all providers
-const inboundHandler: InboundHandler = async (msg) => {
-  const result = await handleTask(msg, registry, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
-  return {
-    status: result.status === 'completed' ? 'completed' as const : result.status === 'aborted' ? 'aborted' as const : 'crashed' as const,
-    summary: result.structuredResult?.summary ?? result.result?.slice(0, 200),
-  };
-};
+const virtualProjectMeta = new Map<string, VirtualProjectMeta>();
+
 for (const provider of registry.providers()) {
-  provider.onInbound(inboundHandler);
+  if (typeof provider.getVirtualProjects === 'function') {
+    const requests = provider.getVirtualProjects();
+    for (const req of requests) {
+      try {
+        const roleNames = req.roles.length > 0 ? req.roles : [...roles.keys()];
+        const vp = ensureVirtualProject(PROJECTS_DIR, req.name, req.description, roleNames, getInstanceRoot());
+        projects.set(req.name.toLowerCase(), vp);
+
+        // Store meta (disallowedTools, skills) — runtime only, not persisted
+        const meta: VirtualProjectMeta = {};
+        if (req.disallowedTools) meta.disallowedTools = req.disallowedTools;
+        if (req.skills) meta.skills = req.skills;
+        if (Object.keys(meta).length > 0) {
+          virtualProjectMeta.set(req.name.toLowerCase(), meta);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ provider: provider.name, project: req.name, msg }, 'failed to ensure virtual project from provider');
+      }
+    }
+  }
 }
 
-// Startup banner — printed before any pino output
+// ── 8. Bot placement ────────────────────────────────────────────
+
+const botPlacements = placeBots(config, bots, roles, projects, virtualProjectMeta);
+
+// ── 9. Create botSessionManager ─────────────────────────────────
+
+const botSessionManager = new BotSessionManager(config, roles, bots, pool);
+
+// ── 10. Ensure tasks + wire queue handler (placement-aware) ─────
+
+// Ensure an open task exists for each virtual project that has bots placed in it
+function ensureProjectTask(projectName: string): { slug: string; taskDir: string } | undefined {
+  if (!projects.has(projectName.toLowerCase())) return undefined;
+
+  const tasksDir = getProjectTasksDir(PROJECTS_DIR, projectName);
+  try {
+    const open = getOpenTasks(tasksDir);
+    if (open.length > 0) {
+      return open[0];
+    }
+    const today = new Date().toISOString().split('T')[0];
+    return createTask(tasksDir, {
+      name: `session-${today}`,
+      project: projectName,
+      description: `Bot session task for ${today}`,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ projectName, msg }, 'failed to ensure project task');
+    return undefined;
+  }
+}
+
+// Collect unique virtual projects with bots and ensure initial tasks
+const virtualProjectsWithBots = new Set<string>();
+for (const placement of botPlacements.values()) {
+  const proj = projects.get(placement.project.toLowerCase());
+  if (proj?.virtual) {
+    virtualProjectsWithBots.add(placement.project.toLowerCase());
+  }
+}
+
+// Pre-ensure tasks for session recovery
+const projectTasks = new Map<string, { slug: string; taskDir: string }>();
+for (const projectName of virtualProjectsWithBots) {
+  const task = ensureProjectTask(projectName);
+  if (task) projectTasks.set(projectName, task);
+}
+
+// Wire bot queue handler → bot session manager (placement-aware)
+botQueue.setHandler(async (msg) => {
+  const placement = botPlacements.get(msg.botName);
+  if (!placement) {
+    logger.warn({ botName: msg.botName }, 'No placement for bot — dropping message');
+    return;
+  }
+
+  const projectName = placement.project.toLowerCase();
+
+  // Ensure task exists for this project (may have been rotated)
+  let task = projectTasks.get(projectName);
+  if (!task) {
+    task = ensureProjectTask(projectName);
+    if (!task) {
+      logger.warn({ botName: msg.botName, project: projectName }, 'No task available — dropping message');
+      return;
+    }
+    projectTasks.set(projectName, task);
+  }
+
+  // Determine CWD from project paths
+  const proj = projects.get(projectName);
+  const cwd = proj?.paths[0] ?? getInstanceRoot();
+
+  // Build response sink that posts via the correct Slack bot
+  const channel = msg.metadata['channel'] as string;
+  const responseSink = async (text: string) => {
+    if (slackAdapter) {
+      const instance = slackAdapter.getInstance(msg.botName);
+      if (instance) {
+        try {
+          await instance.app.client.chat.postMessage({ channel, text });
+        } catch (err) {
+          logger.error({ err, botName: msg.botName }, 'failed to post bot response');
+        }
+      }
+    }
+  };
+
+  try {
+    await botSessionManager.handleBotMessage({
+      botName: msg.botName,
+      roleName: placement.roleName,
+      message: msg.content,
+      project: placement.project,
+      taskSlug: task.slug,
+      taskDir: task.taskDir,
+      cwd,
+      responseSink,
+      disallowedTools: placement.disallowedTools,
+      projectSkills: placement.skills,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err, botName: msg.botName }, 'bot session handler error');
+    await responseSink(`Something went wrong: ${errMsg.slice(0, 200)}`);
+  }
+});
+
+// ── 11. Banner ──────────────────────────────────────────────────
+
 const interfaceList = [
-  slackEnabled ? 'Slack' : null,
+  slackEnabled ? `Slack (${slackBotCount} bot${slackBotCount !== 1 ? 's' : ''})` : null,
   'CLI',
   wsEnabled ? `WS (${config.ws!.host}:${config.ws!.port})` : null,
 ].filter(Boolean).join(', ');
+
+const placementList = [...botPlacements.values()]
+  .map(p => `${p.botName}@${p.project}(${p.roleName})`)
+  .join(', ');
 
 // ANSI 24-bit color helpers
 const cyan = (s: string) => `\x1b[38;2;0;180;255m${s}\x1b[0m`;
@@ -185,13 +380,19 @@ console.log([
   '',
   `  v${version} | Node ${process.version} | ${process.platform} | log=${logTier}`,
   `  config: OK | model: ${defaultModel} | aliases: ${aliasCount}`,
-  `  projects: ${projectCount} (${projectNames || 'none'})`,
+  `  projects: ${projectCount + virtualProjectMeta.size} (${[...projects.values()].map(p => p.name).join(', ') || 'none'})`,
   `  roles: ${roleCount} (${roleNames})`,
+  `  bots: ${botCount} (${botNames || 'none'})`,
+  ...(placementList ? [`  placements: ${placementList}`] : []),
   `  pool: maxConcurrent=${config.pool.maxConcurrent || 'unlimited'}`,
   `  mcp: streamTimeout=${config.mcp.streamTimeout}ms`,
   `  interfaces: ${interfaceList}`,
   '',
 ].join('\n'));
+
+// ── 12. Load persisted bot sessions ─────────────────────────────
+
+botSessionManager.loadSessions(PROJECTS_DIR, projects);
 
 // Recover active draft session (if harness was restarted mid-draft)
 const recoveredDraft = loadActiveDraft(projects, PROJECTS_DIR, pool, roles);
@@ -206,16 +407,22 @@ if (recoveredDraft) {
 logger.info({ version }, 'collabot started');
 logger.info({ defaultModel, aliasCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
-logger.info({ projectCount, projectNames }, 'projects loaded');
+logger.info({ botCount, botNames }, 'bots loaded');
+logger.info({ projectCount: projects.size, projectNames: [...projects.values()].map(p => p.name).join(', ') }, 'projects loaded');
+if (lobbyEnsured) logger.info('lobby virtual project ensured');
+if (virtualProjectMeta.size > 0) logger.info({ count: virtualProjectMeta.size, projects: [...virtualProjectMeta.keys()] }, 'provider virtual projects ensured');
+if (botPlacements.size > 0) logger.info({ placements: placementList }, 'bot placements computed');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
 
-// Start all providers (best-effort — failures logged, provider stays not-ready)
+// ── 13. Start all providers ─────────────────────────────────────
+
 await registry.startAll();
 
 if (slackEnabled) {
-  logger.info('Slack interface enabled');
+  const startedBots = slackAdapter?.getBotNames() ?? [];
+  logger.info({ bots: startedBots }, `Slack interface enabled (${startedBots.length} bot${startedBots.length !== 1 ? 's' : ''})`);
 } else {
-  logger.info('Slack tokens not found — Slack adapter disabled, CLI available');
+  logger.info('No Slack bots configured — Slack adapter disabled');
 }
 
 if (wsEnabled) {
@@ -227,7 +434,74 @@ if (wsEnabled) {
   logger.info('WS config not found — WS adapter disabled');
 }
 
-// Heartbeat — debug log every 60s, gated on verbose tier
+// ── 14. Set bot presence based on placement ─────────────────────
+
+if (slackAdapter) {
+  for (const [botName, placement] of botPlacements) {
+    const presence = placement.project.toLowerCase() === 'slack-room' ? 'auto' : 'away';
+    await slackAdapter.setPresence(botName, presence);
+  }
+}
+
+// ── 15. Start cron (multi-project rotation) ─────────────────────
+
+const cronScheduler = new CronScheduler();
+
+if (botCount > 0 && virtualProjectsWithBots.size > 0) {
+  const rotationIntervalMs = (config.slack?.taskRotationIntervalHours ?? 24) * 60 * 60 * 1000;
+
+  cronScheduler.register({
+    name: 'task-rotation',
+    intervalMs: rotationIntervalMs,
+    handler: async () => {
+      for (const projectName of virtualProjectsWithBots) {
+        if (!projects.has(projectName)) continue;
+
+        const tasksDir = getProjectTasksDir(PROJECTS_DIR, projectName);
+        try {
+          const open = getOpenTasks(tasksDir);
+          for (const task of open) {
+            closeTask(tasksDir, task.slug);
+            logger.info({ project: projectName, slug: task.slug }, 'task rotation: closed task');
+          }
+
+          const today = new Date().toISOString().split('T')[0];
+          const newTask = createTask(tasksDir, {
+            name: `session-${today}`,
+            project: projectName,
+            description: `Bot session task for ${today}`,
+          });
+          projectTasks.set(projectName, newTask);
+          logger.info({ project: projectName, slug: newTask.slug }, 'task rotation: created new task');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error({ project: projectName, msg }, 'task rotation error');
+        }
+      }
+    },
+  });
+}
+
+if (cronScheduler.list().length > 0) {
+  cronScheduler.startAll();
+  logger.info({ jobs: cronScheduler.list() }, 'cron scheduler started');
+}
+
+// ── 16. Register inbound handler ────────────────────────────────
+
+const inboundHandler: InboundHandler = async (msg) => {
+  const result = await handleTask(msg, registry, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
+  return {
+    status: result.status === 'completed' ? 'completed' as const : result.status === 'aborted' ? 'aborted' as const : 'crashed' as const,
+    summary: result.structuredResult?.summary ?? result.result?.slice(0, 200),
+  };
+};
+for (const provider of registry.providers()) {
+  provider.onInbound(inboundHandler);
+}
+
+// ── Heartbeat + Shutdown ────────────────────────────────────────
+
 let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
 if (logTier === 'verbose') {
   heartbeatInterval = setInterval(() => {
@@ -237,6 +511,7 @@ if (logTier === 'verbose') {
 
 async function shutdown(): Promise<void> {
   logger.info('shutting down');
+  cronScheduler.stopAll();
   if (heartbeatInterval !== undefined) {
     clearInterval(heartbeatInterval);
   }

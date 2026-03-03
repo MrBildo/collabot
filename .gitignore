@@ -3,8 +3,10 @@
 !.claude/skills/
 **/.claude/settings.local.json
 
-# Project manifests (local only)
+# Instance content (local only)
 .projects/
+bots/
+roles/
 
 # Agent workspace (local only)
 .agents/
@@ -16,6 +18,9 @@ harness/dist/
 # .NET
 harness/tui/bin/
 harness/tui/obj/
+
+# Instance config (use config.defaults.toml as template)
+config.toml
 
 # Environment
 harness/.env

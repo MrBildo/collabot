@@ -86,6 +86,11 @@ export interface CommunicationProvider {
 
   /** Register the harness handler for inbound messages. Called once at startup. */
   onInbound(handler: InboundHandler): void;
+
+  // ── Provider Interrogation ──
+
+  /** Return virtual projects this provider needs. Called during startup before start(). */
+  getVirtualProjects?(): VirtualProjectRequest[];
 }
 
 /** Send a message to a provider, respecting its acceptedTypes filter. */
@@ -95,6 +100,26 @@ export function filteredSend(provider: CommunicationProvider, msg: ChannelMessag
   }
   return provider.send(msg);
 }
+
+// ── Virtual Project Types ────────────────────────────────────
+
+export type VirtualProjectSkill = {
+  name: string;
+  content: string;
+};
+
+export type VirtualProjectRequest = {
+  name: string;
+  description: string;
+  roles: string[];              // empty = all loaded roles
+  disallowedTools?: string[];
+  skills?: VirtualProjectSkill[];
+};
+
+export type VirtualProjectMeta = {
+  disallowedTools?: string[];
+  skills?: VirtualProjectSkill[];
+};
 
 // NOTE: Channel and Participant types are intentionally deferred.
 // They will be defined when bot-to-bot communication (chatrooms, knowledge sharing) is built.

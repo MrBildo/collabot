@@ -1,18 +1,38 @@
 import { App, LogLevel } from '@slack/bolt';
-import type { CommunicationProvider, ChannelMessage, PluginManifest, InboundHandler, InboundMessage } from '../comms.js';
-import type { Config } from '../config.js';
+import type { CommunicationProvider, ChannelMessage, PluginManifest, InboundHandler, VirtualProjectRequest } from '../comms.js';
+import type { BotMessageQueue } from '../bot-queue.js';
+import type { BotDefinition } from '../types.js';
 import { logger } from '../logger.js';
-import { Debouncer } from '../debounce.js';
 
-/**
- * Encodes Slack channel + timestamp into a single channelId string.
- * The CommunicationProvider interface uses a single channelId, but Slack needs both.
- */
+// ── Slack Etiquette Skill ────────────────────────────────────
+
+export const SLACK_ETIQUETTE = `You are responding in Slack. Follow these conventions:
+
+**Formatting:** Use Slack mrkdwn, not standard markdown.
+- Bold: *bold* (single asterisks, not double)
+- Italic: _italic_ (underscores)
+- Strikethrough: ~strikethrough~
+- Code: \`inline code\` and \`\`\`code blocks\`\`\`
+- Lists: use simple dashes or numbers, no nested indentation
+- Links: <url|display text>
+- No headings (# syntax doesn't render in Slack)
+
+**Tone:** Be conversational and concise. You're a teammate in a chat, not writing documentation. Keep responses short — prefer a few sentences over paragraphs. Use line breaks between distinct thoughts.
+
+**Tool awareness:** You have restricted tool access in this context. You cannot edit files, run shell commands, or write code directly. Focus on conversation, analysis, research, and guidance. If asked to do something requiring restricted tools, explain what you'd do and suggest the user dispatch a coding agent for the work.
+
+**Behavior:** Respond naturally to greetings, questions, and casual conversation. You don't need to frame everything as a task. Be helpful, direct, and personable.`;
+
+// ── Slack Virtual Project ────────────────────────────────────
+
+const SLACK_ROOM_DISALLOWED_TOOLS = ['Bash', 'Edit', 'Write', 'NotebookEdit'];
+
+// ── Channel encoding ────────────────────────────────────────────
+
 export function encodeSlackChannelId(channel: string, timestamp: string): string {
   return `${channel}:${timestamp}`;
 }
 
-/** Decodes a composite channelId back to channel + timestamp. */
 export function decodeSlackChannelId(channelId: string): { channel: string; timestamp: string } {
   const idx = channelId.indexOf(':');
   if (idx === -1) {
@@ -21,15 +41,27 @@ export function decodeSlackChannelId(channelId: string): { channel: string; time
   return { channel: channelId.slice(0, idx), timestamp: channelId.slice(idx + 1) };
 }
 
-async function safeReaction(action: () => Promise<unknown>): Promise<void> {
-  try {
-    await action();
-  } catch (_err: unknown) {
-    // Reactions fail silently (already added/removed, or missing scope)
-  }
-}
+// ── Types ────────────────────────────────────────────────────────
 
-/** Minimal set: lifecycle events + results + warnings/errors + questions. No verbose SDK stream events. */
+export type SlackBotConfig = {
+  botTokenEnv: string;
+  appTokenEnv: string;
+};
+
+export type SlackConfig = {
+  defaultRole?: string;
+  taskRotationIntervalHours: number;
+  bots: Record<string, SlackBotConfig>;
+};
+
+type SlackBotInstance = {
+  botName: string;
+  app: App;
+};
+
+// ── SlackAdapter ─────────────────────────────────────────────────
+
+/** Minimal set: lifecycle events + results + warnings/errors + questions. */
 const MINIMAL_TYPES: ReadonlySet<ChannelMessage['type']> = new Set([
   'lifecycle', 'question', 'result', 'warning', 'error',
 ]);
@@ -39,169 +71,198 @@ export class SlackAdapter implements CommunicationProvider {
   readonly manifest: PluginManifest = {
     id: 'collabot.communication.slack',
     name: 'Slack Adapter',
-    version: '1.0.0',
-    description: 'Slack integration via Bolt SDK Socket Mode.',
+    version: '2.0.0',
+    description: 'Multi-bot Slack integration via Bolt SDK Socket Mode.',
     providerType: 'communication',
   };
   readonly acceptedTypes = MINIMAL_TYPES;
 
-  private app: App | null = null;
+  private instances = new Map<string, SlackBotInstance>();
   private handler: InboundHandler | undefined;
+  private started = false;
 
   constructor(
-    private token: string,
-    private appToken: string,
-    private config: Config,
+    private slackConfig: SlackConfig,
+    private bots: Map<string, BotDefinition>,
+    private botQueue: BotMessageQueue,
   ) {}
 
   async start(): Promise<void> {
-    const app = new App({
-      token: this.token,
-      appToken: this.appToken,
-      socketMode: true,
-      logLevel: LogLevel.ERROR,
-    });
+    for (const [botName, botConfig] of Object.entries(this.slackConfig.bots)) {
+      const token = process.env[botConfig.botTokenEnv];
+      const appToken = process.env[botConfig.appTokenEnv];
 
-    const debounceMs = this.config.slack?.debounceMs ?? 2000;
-    const debouncer = new Debouncer<string>(debounceMs);
-    let agentBusy = false;
-
-    app.message(async ({ message, client }) => {
-      if ('subtype' in message && message.subtype !== undefined) return;
-
-      const text = 'text' in message ? (message.text ?? '') : '';
-      const user = 'user' in message ? message.user : undefined;
-      const messageTs = message.ts;
-      const channel = message.channel;
-      const threadRootTs = ('thread_ts' in message && message.thread_ts) ? message.thread_ts : messageTs;
-      const threadKey = ('thread_ts' in message && message.thread_ts) ? message.thread_ts : channel;
-
-      logger.info({ user, channel, text }, 'inbound message');
-
-      const isFirst = !debouncer.has(threadKey);
-
-      debouncer.debounce(
-        threadKey,
-        text,
-        (items, metadata) => {
-          const combined = items.join('\n');
-          const firstTs = metadata?.['firstMessageTs'] as string;
-          const threadRoot = metadata?.['threadRootTs'] as string;
-          const msgChannel = metadata?.['channel'] as string;
-          const channelId = encodeSlackChannelId(msgChannel, threadRoot);
-
-          if (agentBusy) {
-            client.chat.postMessage({
-              channel: msgChannel,
-              text: `I'm currently working on another task. I'll get to yours when I'm done.`,
-              thread_ts: firstTs,
-              username: 'KK Agent',
-            }).catch((err: unknown) => {
-              logger.error({ err }, 'failed to post busy message');
-            });
-            return;
-          }
-
-          agentBusy = true;
-
-          const inbound: InboundMessage = {
-            id: firstTs,
-            content: combined,
-            threadId: threadRoot,
-            source: 'slack',
-            metadata: { channelId, channel: msgChannel, firstMessageTs: firstTs, user },
-          };
-
-          if (this.handler) {
-            this.handler(inbound)
-              .catch((err: unknown) => {
-                logger.error({ err }, 'Slack inbound handler error');
-              })
-              .finally(() => {
-                agentBusy = false;
-              });
-          } else {
-            agentBusy = false;
-          }
-        },
-        { firstMessageTs: messageTs, threadRootTs, channel },
-      );
-
-      if (isFirst) {
-        this.setStatus(encodeSlackChannelId(channel, messageTs), 'received')
-          .catch(() => { /* non-fatal */ });
+      if (!token || !appToken) {
+        logger.warn({ botName, botTokenEnv: botConfig.botTokenEnv, appTokenEnv: botConfig.appTokenEnv },
+          'Slack bot skipped — missing env vars');
+        continue;
       }
-    });
 
-    app.error(async (error) => {
-      logger.error({ err: error }, 'Slack app error');
-    });
+      if (!this.bots.has(botName)) {
+        logger.warn({ botName }, 'Slack bot skipped — no bot definition found');
+        continue;
+      }
 
-    await app.start();
-    this.app = app;
+      const app = new App({
+        token,
+        appToken,
+        socketMode: true,
+        logLevel: LogLevel.ERROR,
+      });
+
+      // DM + @mention handler
+      app.message(async ({ message }) => {
+        if ('subtype' in message && message.subtype !== undefined) return;
+
+        const text = 'text' in message ? (message.text ?? '') : '';
+        if (!text.trim()) return;
+
+        const user = 'user' in message ? message.user : undefined;
+        const channel = message.channel;
+        const messageTs = message.ts;
+
+        logger.info({ botName, user, channel, text: text.slice(0, 200) }, 'slack bot inbound message');
+
+        this.botQueue.enqueue({
+          botName,
+          content: text,
+          metadata: { channel, messageTs, user, source: 'slack' },
+        });
+      });
+
+      app.event('app_mention', async ({ event }) => {
+        const text = event.text ?? '';
+        if (!text.trim()) return;
+
+        const user = event.user;
+        const channel = event.channel;
+        const messageTs = event.ts;
+
+        logger.info({ botName, user, channel, text: text.slice(0, 200) }, 'slack bot @mention');
+
+        this.botQueue.enqueue({
+          botName,
+          content: text,
+          metadata: { channel, messageTs, user, source: 'slack' },
+        });
+      });
+
+      app.error(async (error) => {
+        logger.error({ err: error, botName }, 'Slack bot app error');
+      });
+
+      try {
+        await app.start();
+        this.instances.set(botName, { botName, app });
+        logger.info({ botName }, 'Slack bot started');
+      } catch (err) {
+        logger.error({ err, botName }, 'Failed to start Slack bot');
+      }
+    }
+
+    this.started = this.instances.size > 0;
   }
 
   async stop(): Promise<void> {
-    if (this.app) {
-      await this.app.stop();
-      this.app = null;
+    for (const [botName, instance] of this.instances) {
+      try {
+        await instance.app.stop();
+        logger.info({ botName }, 'Slack bot stopped');
+      } catch (err) {
+        logger.error({ err, botName }, 'Failed to stop Slack bot');
+      }
     }
+    this.instances.clear();
+    this.started = false;
   }
 
   isReady(): boolean {
-    return this.app !== null;
+    return this.started;
   }
 
   onInbound(handler: InboundHandler): void {
     this.handler = handler;
   }
 
+  /**
+   * Send a message to Slack. Routes to the correct bot's client via metadata.botName.
+   * Messages without a botName target are sent via the first available bot.
+   */
   async send(msg: ChannelMessage): Promise<void> {
-    if (!this.app) return;
+    const botName = msg.metadata?.['botName'] as string | undefined;
+
+    let instance: SlackBotInstance | undefined;
+    if (botName) {
+      instance = this.instances.get(botName);
+    }
+    if (!instance) {
+      // Fallback: use first available bot
+      instance = this.instances.values().next().value;
+    }
+    if (!instance) return;
 
     const { channel } = decodeSlackChannelId(msg.channelId);
-    const threadTs = msg.channelId.includes(':')
-      ? decodeSlackChannelId(msg.channelId).timestamp
-      : undefined;
 
     try {
-      await this.app.client.chat.postMessage({
+      await instance.app.client.chat.postMessage({
         channel,
         text: msg.content,
-        thread_ts: threadTs,
-        username: msg.from,
       });
     } catch (err) {
-      logger.error({ err, channelId: msg.channelId }, 'SlackAdapter: failed to send message');
+      logger.error({ err, channelId: msg.channelId, botName: instance.botName }, 'SlackAdapter: failed to send message');
     }
   }
 
-  async setStatus(channelId: string, status: 'received' | 'working' | 'completed' | 'failed'): Promise<void> {
-    if (!this.app) return;
+  async setStatus(_channelId: string, _status: 'received' | 'working' | 'completed' | 'failed'): Promise<void> {
+    // No-op — bots handle acknowledgment conversationally, not via mechanical reactions
+  }
 
-    const { channel, timestamp } = decodeSlackChannelId(channelId);
-    if (!timestamp) return;
+  /** Get the config for a specific bot (used by integration wiring). */
+  getBotConfig(botName: string): SlackBotConfig | undefined {
+    return this.slackConfig.bots[botName];
+  }
 
-    const reactions = this.config.slack?.reactions;
-    if (!reactions) return;
+  /** Get a running bot instance (for direct client access). */
+  getInstance(botName: string): SlackBotInstance | undefined {
+    return this.instances.get(botName);
+  }
 
-    const client = this.app.client;
-    switch (status) {
-      case 'received':
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.received }));
-        break;
-      case 'working':
-        await safeReaction(() => client.reactions.remove({ channel, timestamp, name: reactions.received }));
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.working }));
-        break;
-      case 'completed':
-        await safeReaction(() => client.reactions.remove({ channel, timestamp, name: reactions.working }));
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.success }));
-        break;
-      case 'failed':
-        await safeReaction(() => client.reactions.remove({ channel, timestamp, name: reactions.working }));
-        await safeReaction(() => client.reactions.add({ channel, timestamp, name: reactions.failure }));
-        break;
+  /** Get all running bot names. */
+  getBotNames(): string[] {
+    return [...this.instances.keys()];
+  }
+
+  // ── Provider Interrogation ──────────────────────────────────
+
+  /** Return the slack-room virtual project with tool restrictions and slack-etiquette skill. */
+  getVirtualProjects(): VirtualProjectRequest[] {
+    return [{
+      name: 'slack-room',
+      description: 'Slack communication surface for bot conversations',
+      roles: [],  // empty = all loaded roles
+      disallowedTools: SLACK_ROOM_DISALLOWED_TOOLS,
+      skills: [{
+        name: 'slack-etiquette',
+        content: SLACK_ETIQUETTE,
+      }],
+    }];
+  }
+
+  // ── Presence Management ─────────────────────────────────────
+
+  /** Set Slack presence for a bot. Requires the bot's Slack app to be started. */
+  async setPresence(botName: string, presence: 'auto' | 'away'): Promise<void> {
+    const instance = this.instances.get(botName);
+    if (!instance) {
+      logger.debug({ botName, presence }, 'setPresence: bot not started, skipping');
+      return;
+    }
+
+    try {
+      await instance.app.client.users.setPresence({ presence });
+      logger.debug({ botName, presence }, 'Slack presence set');
+    } catch (err) {
+      logger.warn({ err, botName, presence }, 'Failed to set Slack presence');
     }
   }
 }

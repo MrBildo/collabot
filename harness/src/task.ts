@@ -216,6 +216,33 @@ export function closeTask(tasksDir: string, slug: string): void {
 }
 
 /**
+ * Get all open tasks in a tasks directory.
+ */
+export function getOpenTasks(tasksDir: string): Array<{ slug: string; taskDir: string }> {
+  if (!fs.existsSync(tasksDir)) return [];
+
+  const entries = fs.readdirSync(tasksDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory());
+
+  const results: Array<{ slug: string; taskDir: string }> = [];
+
+  for (const entry of entries) {
+    const manifestPath = path.join(tasksDir, entry.name, 'task.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as TaskManifest;
+      if (manifest.status === 'open') {
+        results.push({ slug: manifest.slug, taskDir: path.join(tasksDir, entry.name) });
+      }
+    } catch {
+      // Skip corrupt manifests
+    }
+  }
+
+  return results;
+}
+
+/**
  * Returns the next journal filename for a role within a task directory.
  * First dispatch: {role}.md. Subsequent: {role}-2.md, {role}-3.md, etc.
  */

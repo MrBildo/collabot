@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadProjects, createProject, projectHasPaths } from './project.js';
+import { loadProjects, createProject, projectHasPaths, isVirtualProject, ensureVirtualProject } from './project.js';
 import type { RoleDefinition } from './types.js';
 
 let tmpDir: string;
@@ -117,4 +117,51 @@ test('reload picks up YAML changes', () => {
   // Reload
   const reloaded = loadProjects(tmpDir, roles);
   assert.deepStrictEqual(reloaded.get('evolving')!.paths, ['/some/repo']);
+});
+
+// --- Virtual Projects ---
+
+test('projectHasPaths handles virtual field gracefully', () => {
+  assert.strictEqual(projectHasPaths({ name: 'A', description: 'A', paths: [], roles: ['x'], virtual: true }), false);
+  assert.strictEqual(projectHasPaths({ name: 'A', description: 'A', paths: ['/root'], roles: ['x'], virtual: true }), true);
+});
+
+test('isVirtualProject returns true for virtual, false for regular', () => {
+  assert.strictEqual(isVirtualProject({ name: 'A', description: 'A', paths: [], roles: ['x'], virtual: true }), true);
+  assert.strictEqual(isVirtualProject({ name: 'A', description: 'A', paths: [], roles: ['x'], virtual: false }), false);
+  assert.strictEqual(isVirtualProject({ name: 'A', description: 'A', paths: [], roles: ['x'] }), false);
+});
+
+test('ensureVirtualProject creates virtual project on first call', () => {
+  const project = ensureVirtualProject(tmpDir, 'lobby', 'Default virtual project', ['ts-dev'], '/instance/root');
+
+  assert.strictEqual(project.name, 'lobby');
+  assert.strictEqual(project.virtual, true);
+  assert.deepStrictEqual(project.paths, ['/instance/root']);
+  assert.deepStrictEqual(project.roles, ['ts-dev']);
+
+  // Verify file was written
+  const yamlPath = path.join(tmpDir, 'lobby', 'project.yaml');
+  assert.ok(fs.existsSync(yamlPath));
+});
+
+test('ensureVirtualProject returns existing on second call', () => {
+  const first = ensureVirtualProject(tmpDir, 'lobby', 'First description', ['ts-dev'], '/root');
+  const second = ensureVirtualProject(tmpDir, 'lobby', 'Second description', ['api-dev'], '/root');
+
+  // Should return the first one (already exists), not recreate
+  assert.strictEqual(second.name, first.name);
+  assert.strictEqual(second.description, first.description);
+});
+
+test('loadProjects loads virtual project with virtual=true', () => {
+  const roles = makeRoles('ts-dev');
+  ensureVirtualProject(tmpDir, 'lobby', 'Default lobby', ['ts-dev'], '/instance/root');
+
+  const projects = loadProjects(tmpDir, roles);
+  assert.strictEqual(projects.size, 1);
+
+  const lobby = projects.get('lobby')!;
+  assert.strictEqual(lobby.virtual, true);
+  assert.strictEqual(lobby.name, 'lobby');
 });
