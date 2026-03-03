@@ -214,15 +214,11 @@ if (wsEnabled) {
 // Conditional Slack registration (multi-bot)
 let slackAdapter: SlackAdapter | undefined;
 if (slackEnabled && config.slack) {
-  // Validate each bot config before creating adapter
-  const validBots: Record<string, { botTokenEnv: string; appTokenEnv: string; role: string }> = {};
+  // Validate each bot config before creating adapter (credentials only — role is in [bots.*])
+  const validBots: Record<string, { botTokenEnv: string; appTokenEnv: string }> = {};
   for (const [botName, botConfig] of Object.entries(config.slack.bots)) {
     if (!bots.has(botName)) {
       logger.warn({ botName }, 'Slack config references unknown bot — skipping');
-      continue;
-    }
-    if (!roles.has(botConfig.role)) {
-      logger.warn({ botName, role: botConfig.role }, 'Slack config references unknown role — skipping');
       continue;
     }
     const token = process.env[botConfig.botTokenEnv];
@@ -252,9 +248,9 @@ botQueue.setHandler(async (msg) => {
     return;
   }
 
-  // Determine role from slack config or default
-  const slackBotConfig = config.slack?.bots[msg.botName];
-  const roleName = slackBotConfig?.role ?? config.slack?.defaultRole ?? config.routing.default;
+  // Determine role from [bots.*] config or fallback chain
+  const botCfg = config.bots?.[msg.botName];
+  const roleName = botCfg?.defaultRole ?? config.slack?.defaultRole ?? config.routing.default;
 
   // Determine CWD (lobby virtual project uses instance root)
   const lobby = projects.get('lobby');

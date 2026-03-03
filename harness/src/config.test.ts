@@ -4,7 +4,7 @@ import { ConfigSchema, resolveModelId } from './config.js';
 
 const validSlack = {
   bots: {
-    hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
+    hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
   },
 };
 
@@ -99,20 +99,20 @@ test('slack section with empty object gets default bots', () => {
 // Slack multi-bot config tests
 // ============================================================
 
-test('slack bots config parses per-bot entries', () => {
+test('slack bots config parses per-bot entries (credentials only)', () => {
   const raw = validConfig({
     slack: {
       bots: {
-        hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
-        greg: { botTokenEnv: 'GREG_BOT_TOKEN', appTokenEnv: 'GREG_APP_TOKEN', role: 'dotnet-dev' },
+        hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
+        greg: { botTokenEnv: 'GREG_BOT_TOKEN', appTokenEnv: 'GREG_APP_TOKEN' },
       },
     },
   });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
   assert.strictEqual(Object.keys(result.data.slack!.bots).length, 2);
-  assert.strictEqual(result.data.slack!.bots['hazel']!.role, 'ts-dev');
-  assert.strictEqual(result.data.slack!.bots['greg']!.role, 'dotnet-dev');
+  assert.strictEqual(result.data.slack!.bots['hazel']!.botTokenEnv, 'HAZEL_BOT_TOKEN');
+  assert.strictEqual(result.data.slack!.bots['greg']!.botTokenEnv, 'GREG_BOT_TOKEN');
 });
 
 test('slack bots default to empty record when not provided', () => {
@@ -126,7 +126,7 @@ test('slack bot config missing botTokenEnv fails', () => {
   const raw = validConfig({
     slack: {
       bots: {
-        bad: { appTokenEnv: 'APP_TOKEN', role: 'ts-dev' },
+        bad: { appTokenEnv: 'APP_TOKEN' },
       },
     },
   });
@@ -305,4 +305,63 @@ test('ws port must be a positive integer', () => {
   assert.ok(!result.success);
   const paths = result.error.issues.map((i) => i.path.join('.'));
   assert.ok(paths.some((p) => p.includes('port')));
+});
+
+// ============================================================
+// [bots.*] config tests (D11)
+// ============================================================
+
+test('bots section parses with defaultProject and defaultRole', () => {
+  const raw = validConfig({
+    bots: {
+      hazel: { defaultProject: 'slack-room', defaultRole: 'researcher' },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, 'slack-room');
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, 'researcher');
+});
+
+test('bots section is optional', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots, undefined);
+});
+
+test('bots entry with no fields uses defaults', () => {
+  const raw = validConfig({
+    bots: { hazel: {} },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, undefined);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, undefined);
+});
+
+test('bots entry with only defaultProject is valid', () => {
+  const raw = validConfig({
+    bots: { hazel: { defaultProject: 'slack-room' } },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, 'slack-room');
+  assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, undefined);
+});
+
+test('slack config without role field is valid (credentials only)', () => {
+  const raw = validConfig({
+    slack: {
+      bots: {
+        hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
+      },
+    },
+  });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  const botConfig = result.data.slack!.bots['hazel'];
+  assert.strictEqual(botConfig.botTokenEnv, 'HAZEL_BOT_TOKEN');
+  // role field should NOT exist on the type
+  assert.strictEqual('role' in botConfig, false);
 });

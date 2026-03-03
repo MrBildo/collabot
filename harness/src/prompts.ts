@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { getInstancePath } from './paths.js';
+import type { VirtualProjectSkill } from './comms.js';
 
 let _systemPrompt: string | undefined;
 let _toolDocs: string | undefined;
@@ -40,13 +41,19 @@ export function assemblePrompt(rolePrompt: string, permissions?: string[]): stri
 }
 
 /**
- * Assemble the full prompt for a bot session: system prompt + role prompt + optional tool docs + soul prompt.
+ * Assemble the full prompt for a bot session: system prompt + role prompt + optional tool docs + project skills + soul prompt.
+ * Skills are injected between role prompt and soul prompt.
  * The soul prompt defines the bot's personality and is appended last (highest context priority).
  */
-export function assembleBotPrompt(soulPrompt: string, rolePrompt: string, permissions?: string[]): string {
+export function assembleBotPrompt(soulPrompt: string, rolePrompt: string, permissions?: string[], projectSkills?: VirtualProjectSkill[]): string {
   const parts = [loadSystemPrompt(), rolePrompt];
   if (permissions?.includes('agent-draft')) {
     parts.push(loadToolDocs());
+  }
+  if (projectSkills && projectSkills.length > 0) {
+    for (const skill of projectSkills) {
+      parts.push(`## Skill: ${skill.name}\n\n${skill.content}`);
+    }
   }
   parts.push('\n## Bot Identity\n\n' + soulPrompt);
   return parts.join('\n\n');

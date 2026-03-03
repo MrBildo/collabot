@@ -20,6 +20,7 @@ import type {
   LoopDetectionThresholds,
   EventType,
 } from './types.js';
+import type { VirtualProjectSkill } from './comms.js';
 
 // ── BotSession type ────────────────────────────────────────────
 
@@ -63,8 +64,10 @@ export class BotSessionManager {
     taskDir: string;
     cwd: string;
     responseSink: (text: string) => Promise<void>;
+    disallowedTools?: string[];
+    projectSkills?: VirtualProjectSkill[];
   }): Promise<void> {
-    const { botName, roleName, message, project, taskSlug, taskDir, cwd, responseSink } = opts;
+    const { botName, roleName, message, project, taskSlug, taskDir, cwd, responseSink, disallowedTools, projectSkills } = opts;
 
     const bot = this.bots.get(botName);
     if (!bot) {
@@ -89,7 +92,7 @@ export class BotSessionManager {
     const resolvedModel = resolveModelId(role.modelHint, this.config);
 
     // Build prompt
-    const systemPromptText = assembleBotPrompt(bot.soulPrompt, role.prompt, role.permissions);
+    const systemPromptText = assembleBotPrompt(bot.soulPrompt, role.prompt, role.permissions, projectSkills);
 
     // Build session options for SDK
     const sessionOpts: Record<string, unknown> = isFirstTurn
@@ -176,6 +179,7 @@ export class BotSessionManager {
           abortController: controller,
           pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE_PATH,
           env: buildChildEnv(this.config.mcp.streamTimeout),
+          ...(disallowedTools && disallowedTools.length > 0 ? { disallowedTools } : {}),
           ...sessionOpts,
           stderr: (data: string) => {
             const line = data.trim();

@@ -2,8 +2,9 @@ import { z } from 'zod';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 // Re-export communication layer types for convenience
-export type { InboundMessage, ChannelMessage, CommunicationProvider } from './comms.js';
+export type { InboundMessage, ChannelMessage, CommunicationProvider, VirtualProjectRequest, VirtualProjectSkill, VirtualProjectMeta } from './comms.js';
 export type { Project } from './project.js';
+export type { BotPlacement } from './bot-placement.js';
 
 export type BotDefinition = {
   id: string;           // ULID (26 chars)

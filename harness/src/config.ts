@@ -30,13 +30,16 @@ export const ConfigSchema = z.object({
     default: z.string(),
     rules: z.array(RoutingRuleSchema).default([]),
   }).optional().default({ default: 'product-analyst', rules: [] }),
+  bots: z.record(z.string(), z.object({
+    defaultProject: z.string().min(1).optional(),
+    defaultRole: z.string().min(1).optional(),
+  })).optional(),
   slack: z.object({
     defaultRole: z.string().optional(),
     taskRotationIntervalHours: z.number().positive().default(24),
     bots: z.record(z.string(), z.object({
       botTokenEnv: z.string().min(1),
       appTokenEnv: z.string().min(1),
-      role: z.string().min(1),
     })).default({}),
   }).optional(),
   pool: z.object({

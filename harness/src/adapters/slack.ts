@@ -1,8 +1,31 @@
 import { App, LogLevel } from '@slack/bolt';
-import type { CommunicationProvider, ChannelMessage, PluginManifest, InboundHandler } from '../comms.js';
+import type { CommunicationProvider, ChannelMessage, PluginManifest, InboundHandler, VirtualProjectRequest } from '../comms.js';
 import type { BotMessageQueue } from '../bot-queue.js';
 import type { BotDefinition } from '../types.js';
 import { logger } from '../logger.js';
+
+// ── Slack Etiquette Skill ────────────────────────────────────
+
+export const SLACK_ETIQUETTE = `You are responding in Slack. Follow these conventions:
+
+**Formatting:** Use Slack mrkdwn, not standard markdown.
+- Bold: *bold* (single asterisks, not double)
+- Italic: _italic_ (underscores)
+- Strikethrough: ~strikethrough~
+- Code: \`inline code\` and \`\`\`code blocks\`\`\`
+- Lists: use simple dashes or numbers, no nested indentation
+- Links: <url|display text>
+- No headings (# syntax doesn't render in Slack)
+
+**Tone:** Be conversational and concise. You're a teammate in a chat, not writing documentation. Keep responses short — prefer a few sentences over paragraphs. Use line breaks between distinct thoughts.
+
+**Tool awareness:** You have restricted tool access in this context. You cannot edit files, run shell commands, or write code directly. Focus on conversation, analysis, research, and guidance. If asked to do something requiring restricted tools, explain what you'd do and suggest the user dispatch a coding agent for the work.
+
+**Behavior:** Respond naturally to greetings, questions, and casual conversation. You don't need to frame everything as a task. Be helpful, direct, and personable.`;
+
+// ── Slack Virtual Project ────────────────────────────────────
+
+const SLACK_ROOM_DISALLOWED_TOOLS = ['Bash', 'Edit', 'Write', 'NotebookEdit'];
 
 // ── Channel encoding ────────────────────────────────────────────
 
@@ -23,7 +46,6 @@ export function decodeSlackChannelId(channelId: string): { channel: string; time
 export type SlackBotConfig = {
   botTokenEnv: string;
   appTokenEnv: string;
-  role: string;
 };
 
 export type SlackConfig = {
@@ -35,7 +57,6 @@ export type SlackConfig = {
 type SlackBotInstance = {
   botName: string;
   app: App;
-  role: string;
 };
 
 // ── SlackAdapter ─────────────────────────────────────────────────
@@ -132,8 +153,8 @@ export class SlackAdapter implements CommunicationProvider {
 
       try {
         await app.start();
-        this.instances.set(botName, { botName, app, role: botConfig.role });
-        logger.info({ botName, role: botConfig.role }, 'Slack bot started');
+        this.instances.set(botName, { botName, app });
+        logger.info({ botName }, 'Slack bot started');
       } catch (err) {
         logger.error({ err, botName }, 'Failed to start Slack bot');
       }
@@ -209,5 +230,39 @@ export class SlackAdapter implements CommunicationProvider {
   /** Get all running bot names. */
   getBotNames(): string[] {
     return [...this.instances.keys()];
+  }
+
+  // ── Provider Interrogation ──────────────────────────────────
+
+  /** Return the slack-room virtual project with tool restrictions and slack-etiquette skill. */
+  getVirtualProjects(): VirtualProjectRequest[] {
+    return [{
+      name: 'slack-room',
+      description: 'Slack communication surface for bot conversations',
+      roles: [],  // empty = all loaded roles
+      disallowedTools: SLACK_ROOM_DISALLOWED_TOOLS,
+      skills: [{
+        name: 'slack-etiquette',
+        content: SLACK_ETIQUETTE,
+      }],
+    }];
+  }
+
+  // ── Presence Management ─────────────────────────────────────
+
+  /** Set Slack presence for a bot. Requires the bot's Slack app to be started. */
+  async setPresence(botName: string, presence: 'auto' | 'away'): Promise<void> {
+    const instance = this.instances.get(botName);
+    if (!instance) {
+      logger.debug({ botName, presence }, 'setPresence: bot not started, skipping');
+      return;
+    }
+
+    try {
+      await instance.app.client.users.setPresence({ presence });
+      logger.debug({ botName, presence }, 'Slack presence set');
+    } catch (err) {
+      logger.warn({ err, botName, presence }, 'Failed to set Slack presence');
+    }
   }
 }

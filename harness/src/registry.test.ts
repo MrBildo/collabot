@@ -6,6 +6,7 @@ import type {
   ChannelMessage,
   PluginManifest,
   InboundHandler,
+  VirtualProjectRequest,
 } from './comms.js';
 
 // ── Test helpers ────────────────────────────────────────────────
@@ -285,5 +286,49 @@ describe('broadcastStatus', () => {
 
     assert.strictEqual(ready.calls.filter((c) => c.method === 'setStatus').length, 1);
     assert.strictEqual(notReady.calls.filter((c) => c.method === 'setStatus').length, 0);
+  });
+});
+
+describe('provider interrogation (D13)', () => {
+  test('getVirtualProjects is optional — providers without it are skipped', () => {
+    const provider = makeMockProvider('cli');
+    registry.register(provider);
+
+    // Simulate interrogation loop
+    const requests: VirtualProjectRequest[] = [];
+    for (const p of registry.providers()) {
+      if ('getVirtualProjects' in p && typeof p.getVirtualProjects === 'function') {
+        requests.push(...p.getVirtualProjects());
+      }
+    }
+
+    assert.strictEqual(requests.length, 0);
+  });
+
+  test('getVirtualProjects collects requests from providers that implement it', () => {
+    const cli = makeMockProvider('cli');
+    const slack = makeMockProvider('slack');
+    // Add getVirtualProjects to slack mock
+    (slack as any).getVirtualProjects = (): VirtualProjectRequest[] => [{
+      name: 'slack-room',
+      description: 'Slack surface',
+      roles: [],
+      disallowedTools: ['Bash'],
+      skills: [{ name: 'slack-etiquette', content: 'Be nice.' }],
+    }];
+    registry.register(cli);
+    registry.register(slack);
+
+    const requests: VirtualProjectRequest[] = [];
+    for (const p of registry.providers()) {
+      if ('getVirtualProjects' in p && typeof p.getVirtualProjects === 'function') {
+        requests.push(...(p as any).getVirtualProjects());
+      }
+    }
+
+    assert.strictEqual(requests.length, 1);
+    assert.strictEqual(requests[0].name, 'slack-room');
+    assert.deepStrictEqual(requests[0].disallowedTools, ['Bash']);
+    assert.strictEqual(requests[0].skills![0].name, 'slack-etiquette');
   });
 });

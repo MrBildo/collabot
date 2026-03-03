@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeSlackChannelId, decodeSlackChannelId, SlackAdapter } from './slack.js';
+import { encodeSlackChannelId, decodeSlackChannelId, SlackAdapter, SLACK_ETIQUETTE } from './slack.js';
 import type { SlackConfig } from './slack.js';
 import { BotMessageQueue } from '../bot-queue.js';
 import type { BotDefinition } from '../types.js';
@@ -30,7 +30,7 @@ function makeSlackConfig(overrides?: Partial<SlackConfig>): SlackConfig {
   return {
     taskRotationIntervalHours: 24,
     bots: {
-      hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
+      hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
     },
     ...overrides,
   };
@@ -67,7 +67,7 @@ test('SlackAdapter getBotConfig returns config for known bot', () => {
   const adapter = new SlackAdapter(makeSlackConfig(), makeBots('hazel'), new BotMessageQueue());
   const config = adapter.getBotConfig('hazel');
   assert.ok(config);
-  assert.strictEqual(config!.role, 'ts-dev');
+  assert.strictEqual(config!.botTokenEnv, 'HAZEL_BOT_TOKEN');
 });
 
 test('SlackAdapter getBotConfig returns undefined for unknown bot', () => {
@@ -122,14 +122,60 @@ test('SlackAdapter onInbound stores handler', () => {
 test('SlackAdapter supports multiple bots in config', () => {
   const config = makeSlackConfig({
     bots: {
-      hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN', role: 'ts-dev' },
-      greg: { botTokenEnv: 'GREG_BOT_TOKEN', appTokenEnv: 'GREG_APP_TOKEN', role: 'dotnet-dev' },
+      hazel: { botTokenEnv: 'HAZEL_BOT_TOKEN', appTokenEnv: 'HAZEL_APP_TOKEN' },
+      greg: { botTokenEnv: 'GREG_BOT_TOKEN', appTokenEnv: 'GREG_APP_TOKEN' },
     },
   });
   const adapter = new SlackAdapter(config, makeBots('hazel', 'greg'), new BotMessageQueue());
 
   assert.ok(adapter.getBotConfig('hazel'));
   assert.ok(adapter.getBotConfig('greg'));
-  assert.strictEqual(adapter.getBotConfig('hazel')!.role, 'ts-dev');
-  assert.strictEqual(adapter.getBotConfig('greg')!.role, 'dotnet-dev');
+  assert.strictEqual(adapter.getBotConfig('hazel')!.botTokenEnv, 'HAZEL_BOT_TOKEN');
+  assert.strictEqual(adapter.getBotConfig('greg')!.botTokenEnv, 'GREG_BOT_TOKEN');
+});
+
+// --- getVirtualProjects (D12, D13) ---
+
+test('SlackAdapter.getVirtualProjects returns slack-room', () => {
+  const adapter = new SlackAdapter(makeSlackConfig(), makeBots('hazel'), new BotMessageQueue());
+  const vps = adapter.getVirtualProjects();
+  assert.strictEqual(vps.length, 1);
+  assert.strictEqual(vps[0].name, 'slack-room');
+  assert.strictEqual(vps[0].description.length > 0, true);
+  assert.deepStrictEqual(vps[0].roles, []);
+});
+
+test('SlackAdapter.getVirtualProjects includes disallowedTools (D14)', () => {
+  const adapter = new SlackAdapter(makeSlackConfig(), makeBots('hazel'), new BotMessageQueue());
+  const vps = adapter.getVirtualProjects();
+  const tools = vps[0].disallowedTools!;
+  assert.ok(tools.includes('Bash'));
+  assert.ok(tools.includes('Edit'));
+  assert.ok(tools.includes('Write'));
+  assert.ok(tools.includes('NotebookEdit'));
+});
+
+test('SlackAdapter.getVirtualProjects includes slack-etiquette skill (D17)', () => {
+  const adapter = new SlackAdapter(makeSlackConfig(), makeBots('hazel'), new BotMessageQueue());
+  const vps = adapter.getVirtualProjects();
+  const skills = vps[0].skills!;
+  assert.strictEqual(skills.length, 1);
+  assert.strictEqual(skills[0].name, 'slack-etiquette');
+  assert.strictEqual(skills[0].content, SLACK_ETIQUETTE);
+});
+
+// --- setPresence (D15) ---
+
+test('SlackAdapter.setPresence does not throw for non-started bot', async () => {
+  const adapter = new SlackAdapter(makeSlackConfig(), makeBots('hazel'), new BotMessageQueue());
+  // Should not throw — bot not started, silently skips
+  await adapter.setPresence('hazel', 'auto');
+  await adapter.setPresence('unknown', 'away');
+});
+
+// --- SLACK_ETIQUETTE constant ---
+
+test('SLACK_ETIQUETTE mentions mrkdwn formatting', () => {
+  assert.ok(SLACK_ETIQUETTE.includes('mrkdwn'));
+  assert.ok(SLACK_ETIQUETTE.includes('conversational'));
 });
