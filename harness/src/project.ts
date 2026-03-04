@@ -135,7 +135,7 @@ export function ensureVirtualProject(
 
 /**
  * Scaffold a new project manifest on disk and return the Project.
- * Creates `.projects/<name>/project.yaml` with `paths: []`.
+ * Creates `.projects/<name>/project.toml` with `paths: []`.
  */
 export function createProject(
   projectsDir: string,

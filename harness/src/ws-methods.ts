@@ -307,6 +307,17 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException('task is required', -32602);
     }
 
+    // Check placement status — guards against race with Slack queue
+    if (deps.placementStore) {
+      const placement = deps.placementStore.get(botName);
+      if (placement && (placement.status === 'busy' || placement.status === 'drafted')) {
+        throw new JSONRPCErrorException(
+          `Bot "${botName}" is ${placement.status}${placement.draftedBy ? ` by ${placement.draftedBy}` : ''}. Use undraft first.`,
+          WS_ERROR_BOT_BUSY,
+        );
+      }
+    }
+
     // Check bot already has active session
     const existingSession = deps.botSessionManager.getSession(botName);
     if (existingSession && existingSession.status === 'active') {
@@ -334,30 +345,12 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException(`Task "${taskSlugParam}" not found`, WS_ERROR_TASK_NOT_FOUND);
     }
 
-    // The session will be created on first message via handleBotMessage.
-    // We create it eagerly here so the TUI knows the draft is active.
+    // Mark bot as drafted synchronously — closes race window with Slack queue
+    deps.placementStore?.setDrafted(botName, 'ws');
+
+    // Session is created lazily on first submit_prompt (avoids empty-message SDK error).
+    // get_draft_status returns active: false until the first message arrives.
     const channelId = `draft-${Date.now()}`;
-    const cwd = project.paths[0] ?? taskDir;
-
-    // Send a synthetic first message that triggers session creation
-    // Actually — just return the session info. The TUI sends submit_prompt next.
-    // We need to pre-create the session so get_draft_status works.
-    deps.botSessionManager.handleBotMessage({
-      botName,
-      roleName,
-      message: '', // empty message triggers session creation but no SDK call... actually that won't work.
-      project: project.name,
-      taskSlug,
-      taskDir,
-      cwd,
-      channelId,
-      responseSink: async () => {},
-      registry: deps.registry,
-    }).catch(() => {
-      // Session creation via empty message may fail — that's ok, the real message comes via submit_prompt
-    });
-
-    // Return immediately — the session will be ready by the time submit_prompt arrives
     return { botName, sessionId: channelId, taskSlug, project: project.name };
   });
 
@@ -376,6 +369,10 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     }
 
     const summary = deps.botSessionManager.closeSession(botName);
+
+    // Reset placement status so bot is available again
+    deps.placementStore?.setAvailable(botName);
+
     return {
       botName: summary.botName,
       sessionId: summary.sessionId,

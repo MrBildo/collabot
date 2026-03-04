@@ -122,7 +122,7 @@ export async function handleTask(
 
   // Guard: project must have paths configured for dispatch
   if (!projectHasPaths(project)) {
-    throw new Error(`Project has no paths configured. Edit .projects/${project.name.toLowerCase()}/project.yaml to add repo paths.`);
+    throw new Error(`Project has no paths configured. Edit .projects/${project.name.toLowerCase()}/project.toml to add repo paths.`);
   }
 
   const tasksDir = getProjectTasksDir(projectsDir, project.name);
