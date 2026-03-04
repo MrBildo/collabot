@@ -1,31 +1,99 @@
+# ──────────────────────────────────────────────────────────────
 # Collabot — default configuration
+# ──────────────────────────────────────────────────────────────
 # Copied to ~/.collabot/config.toml on `collabot init`.
-# Package fallback for fields missing from user config.
+# This file is the package fallback — fields missing from the
+# instance config.toml are filled in from here.
+#
+# Secrets (API keys, tokens, paths) belong in .env, not here.
+# ──────────────────────────────────────────────────────────────
+
+# ── Models ────────────────────────────────────────────────────
+# default: the model used when no role model-hint matches an alias.
+# aliases: map friendly names used in role frontmatter to concrete model IDs.
 
 [models]
 default = "claude-sonnet-4-6"
 
 [models.aliases]
-opus-latest = "claude-opus-4-6"
+opus-latest   = "claude-opus-4-6"
 sonnet-latest = "claude-sonnet-4-6"
-haiku-latest = "claude-haiku-4-5-20251001"
+haiku-latest  = "claude-haiku-4-5-20251001"
+
+# ── Agent Defaults ────────────────────────────────────────────
+# stallTimeoutSeconds: kill the agent if no SDK event arrives within this window.
 
 [defaults]
-stallTimeoutSeconds = 300
+stallTimeoutSeconds = 300       # 5 minutes
+
+# maxTurns: hard limit on SDK tool-use rounds per dispatch.
+# maxBudgetUsd: cost cap per dispatch (Anthropic API billing).
 
 [agent]
-maxTurns = 50
+maxTurns    = 50
 maxBudgetUsd = 1.00
 
+# ── Logging ───────────────────────────────────────────────────
+# level: minimal (errors only) | debug (default, structured logs) | verbose (+ heartbeat)
+
 [logging]
-level = "debug"     # minimal | debug | verbose
+level = "debug"
+
+# ── Routing ───────────────────────────────────────────────────
+# default: role assigned when no routing rule matches.
+# rules: pattern-based role routing (evaluated in order, first match wins).
+
+[routing]
+default = "researcher"
+
+# Example routing rule:
+# [[routing.rules]]
+# pattern = "*.test.*"
+# role    = "qa-dev"
+
+# ── Bot Configuration ────────────────────────────────────────
+# Per-bot settings. The key is the bot name (must match a file in bots/).
+# defaultProject: where the bot starts (default: lobby).
+# defaultRole: which role the bot uses (default: routing.default).
+#
+# Example:
+# [bots.hazel]
+# defaultProject = "lobby"
+# defaultRole    = "researcher"
+
+# ── Agent Pool ────────────────────────────────────────────────
+# maxConcurrent: limit on simultaneously running agents. 0 = unlimited.
 
 [pool]
-maxConcurrent = 0   # 0 = unlimited
+maxConcurrent = 0
+
+# ── MCP ───────────────────────────────────────────────────────
+# streamTimeout: max time (ms) to wait for SDK subprocess stream close.
+# Increase if agents run very long tool calls.
 
 [mcp]
-streamTimeout = 600000
+streamTimeout = 600000          # 10 minutes
+
+# ── WebSocket Adapter ─────────────────────────────────────────
+# Enables the JSON-RPC 2.0 WebSocket interface for TUI and external clients.
+# Remove this section to disable the WS adapter entirely.
 
 [ws]
 port = 9800
 host = "127.0.0.1"
+
+# ── Slack Adapter ─────────────────────────────────────────────
+# Enable by adding bot credentials. Each bot needs a Slack App with
+# Socket Mode enabled. Token env var names point to .env entries.
+#
+# defaultRole: fallback role for Slack-connected bots.
+# taskRotationIntervalHours: how often to rotate session tasks.
+#
+# Example:
+# [slack]
+# defaultRole = "researcher"
+# taskRotationIntervalHours = 24
+#
+# [slack.bots.hazel]
+# botTokenEnv = "HAZEL_BOT_TOKEN"
+# appTokenEnv = "HAZEL_APP_TOKEN"

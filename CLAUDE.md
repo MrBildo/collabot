@@ -23,13 +23,13 @@ The harness runs with or without any specific interface. Source is in `./harness
 
 ## Projects
 
-Projects are registered in `.projects/<name>/project.yaml`. Each manifest declares:
+Projects are registered in `.projects/<name>/project.toml`. Each manifest declares:
 - `name` — display name
 - `description` — what the project is
 - `paths[]` — relative paths to project repositories (can be empty for scaffolded projects)
 - `roles[]` — which roles can work on this project
 
-Projects are loaded at startup and validated against loaded roles. Projects with empty `paths` can be loaded but not dispatched to — the harness will error with a clear message directing the user to edit the YAML. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
+Projects are loaded at startup and validated against loaded roles. Projects with empty `paths` can be loaded but not dispatched to — the harness will error with a clear message directing the user to edit the manifest. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
 
 Projects can be scaffolded from the TUI (`/project init <name>`) or via the `create_project` WS method, and reloaded from disk without restart (`/project reload` or `reload_projects`).
 
@@ -194,11 +194,11 @@ See `.claude/skills/` for full skill definitions.
 - **Context reconstruction over session resume.** Worker bots load task context + bot memory + role, not resume sessions.
 - **Every data point is training data.** Event logs, task manifests, decision records — capture aggressively, curate later.
 - **Tools over tokens.** Deterministic operations should be scripts/tools, not agent reasoning.
-- **Project isolation via MCP.** Agents only see their own project's data through MCP tools (`list_projects`, `list_tasks`, `get_task_context` are all scoped to parent project). Dispatch (`draft_agent`) is also parent-project-only.
+- **Project isolation via MCP.** Agents only see their own project's data through MCP tools (`list_projects`, `list_tasks`, `get_task_context` are all scoped to parent project). Cross-project dispatch is available via the `project` parameter on `draft_agent`.
 
-### Future Direction: Bot Abstraction
+### Bot Abstraction — Implemented
 
-Above roles sits the **bot** — a persistent identity with personality, motivations, experience, and memories. The hierarchy: **Bot** (WHO/WHY) → **Role** (WHAT) → **Skills** (HOW). A bot gets drafted for a task, assigned a role, loaded with skills, and returns to the pool richer for the experience. Not in scope yet — captured here for architectural awareness.
+The bot layer is implemented. **Bot** (WHO/WHY) → **Role** (WHAT) → **Skills** (HOW). Bots are persistent identities defined in `bots/` with soul prompts. `BotSessionManager` is the unified session system — all interactive work (TUI drafts, Slack DMs) routes through it. `BotPlacementStore` tracks runtime state (available/busy/drafted) with operator overrides for mobility. Context reconstruction prepends task history on first turn. `parentDispatchId` threads through MCP servers for event nesting in sub-agent dispatches.
 
 ## Communication Model
 

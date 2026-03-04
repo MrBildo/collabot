@@ -1,6 +1,6 @@
 # Agent Orchestration Architecture
 
-> Living document. Last updated 2026-03-03.
+> Living document. Last updated 2026-03-04.
 
 ## Overview
 
@@ -33,11 +33,10 @@ The harness (`harness/src/`) is the orchestration engine:
 |--------|---------|
 | `index.ts` | Main entry — startup sequence, adapter wiring, inbound handler |
 | `core.ts` | `handleTask()`, `draftAgent()` — adapter-agnostic dispatch |
-| `draft.ts` | Draft session module — SDK dispatch with event capture |
 | `dispatch.ts` | Autonomous dispatch — long-running agents with full lifecycle |
-| `bot-session.ts` | `BotSessionManager` — multi-session, resume-per-message |
+| `bot-session.ts` | `BotSessionManager` — unified session system (resume-per-message, event capture, pool registration) |
 | `bot-queue.ts` | `BotMessageQueue` — per-bot FIFO with busy isolation |
-| `bot-placement.ts` | `placeBots()` — config → project + role + meta resolution |
+| `bot-placement.ts` | `placeBots()` + `BotPlacementStore` — config → project + role + runtime state |
 | `bots.ts` | Bot definition schema + loader |
 | `comms.ts` | `CommunicationProvider` interface, `VirtualProjectRequest`, `filteredSend()` |
 | `registry.ts` | `CommunicationRegistry` — register, broadcast, lifecycle |
@@ -78,9 +77,9 @@ The entity hierarchy: **Bot** (WHO) → **Role** (WHAT) → **Skills** (HOW).
 
 Two dispatch paths:
 
-**Bot sessions** (`BotSessionManager`) — For adapter-initiated conversations. Resume-per-message: each inbound message resumes the bot's SDK session with full conversation history. Sessions persist to disk. `BotMessageQueue` provides per-bot FIFO with busy isolation.
+**Bot sessions** (`BotSessionManager`) — The unified session system for all interactive work. Resume-per-message: each inbound message resumes the bot's SDK session with full conversation history. Sessions persist to disk, register in the agent pool, broadcast via registry (TUI/WS) or responseSink (Slack), and support context reconstruction from prior dispatches. `BotPlacementStore` tracks runtime state (available/busy/drafted) with operator overrides for bot mobility. `BotMessageQueue` provides per-bot FIFO with busy isolation.
 
-**Draft/autonomous dispatch** (`draftAgent()` / `dispatch()`) — For programmatic dispatch via MCP tools or CLI. PM bots can dispatch sub-agents, await results, and synthesize. Supports parallel dispatch with git worktree isolation.
+**Autonomous dispatch** (`draftAgent()` / `dispatch()`) — For programmatic dispatch via MCP tools or CLI. PM bots can dispatch sub-agents (including cross-project via the `project` parameter), await results, and synthesize. `parentDispatchId` threads through MCP servers for event nesting. Supports parallel dispatch with git worktree isolation.
 
 Both paths capture events through `DispatchStoreProvider`.
 
@@ -98,7 +97,7 @@ Storage: `task.json` (lean index) + `dispatches/{dispatchId}.json` (envelope + e
 
 **Tasks** are the unit of persistence, scoped to projects. Lifecycle: `open` → `closed`. A task spans multiple dispatches, roles, and bots. Created via CLI, WebSocket, or MCP tools.
 
-**Projects** are logical products that may span multiple repos. Registered in `.projects/<name>/project.yaml` (instance-local). Virtual projects can be injected by adapters at startup (e.g., Slack creates a `slack-room` project for conversational interactions).
+**Projects** are logical products that may span multiple repos. Registered in `.projects/<name>/project.toml` (instance-local). Virtual projects can be injected by adapters at startup (e.g., Slack creates a `slack-room` project for conversational interactions).
 
 ## MCP Tool Surface
 
