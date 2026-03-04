@@ -6,11 +6,12 @@ import path from 'node:path';
 import { JSONRPCErrorException } from 'json-rpc-2.0';
 import { AgentPool } from './pool.js';
 import { registerWsMethods, type WsMethodDeps } from './ws-methods.js';
+import { BotSessionManager } from './bot-session.js';
 import { CommunicationRegistry } from './registry.js';
 import type { WsAdapter } from './adapters/ws.js';
 import type { InboundMessage } from './comms.js';
 import type { Config } from './config.js';
-import type { RoleDefinition, Project } from './types.js';
+import type { RoleDefinition, BotDefinition, Project } from './types.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,22 @@ type MockDeps = {
   getHandleTaskState: () => { called: boolean; lastMessage: InboundMessage | undefined };
 };
 
+function makeConfig(): Config {
+  return {
+    models: { default: 'claude-sonnet-4-6', aliases: { 'sonnet-latest': 'claude-sonnet-4-6' } },
+    defaults: { stallTimeoutSeconds: 300 },
+    agent: { maxTurns: 50, maxBudgetUsd: 1.00 },
+    logging: { level: 'debug' as const },
+    routing: { default: 'api-dev', rules: [] },
+    pool: { maxConcurrent: 0 },
+    mcp: { streamTimeout: 600000 },
+  } as Config;
+}
+
+function makeBots(): Map<string, BotDefinition> {
+  return new Map();
+}
+
 function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, RoleDefinition> }): MockDeps {
   const pool = new AgentPool();
   const methods = new Map<string, (params: unknown) => unknown>();
@@ -65,6 +82,9 @@ function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, Ro
   let lastMessage: InboundMessage | undefined;
 
   const registry = new CommunicationRegistry();
+  const roles = overrides?.roles ?? new Map([['api-dev', makeRole()]]);
+  const config = makeConfig();
+  const botSessionManager = new BotSessionManager(config, roles, makeBots(), pool);
 
   const deps: WsMethodDeps = {
     wsAdapter: mockWsAdapter,
@@ -74,11 +94,12 @@ function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, Ro
       lastMessage = msg;
       return { status: 'completed' };
     },
-    roles: overrides?.roles ?? new Map([['api-dev', makeRole()]]),
-    config: {} as Config,
+    roles,
+    config,
     pool,
     projects: makeProjects(),
     projectsDir,
+    botSessionManager,
   };
 
   registerWsMethods(deps);

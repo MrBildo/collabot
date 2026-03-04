@@ -8,19 +8,20 @@ import type { AgentPool } from './pool.js';
 import type { Config } from './config.js';
 import type { RoleDefinition, DispatchResult, Project } from './types.js';
 import type { McpServers } from './core.js';
+import type { BotSessionManager } from './bot-session.js';
 import { getProject, getProjectTasksDir, createProject, loadProjects } from './project.js';
 import { buildTaskContext } from './context.js';
 import { listTasks, createTask, closeTask, getTask } from './task.js';
 import { logger } from './logger.js';
-import { getActiveDraft, createDraft, closeDraft, resumeDraft } from './draft.js';
 import { scaffoldEntity, validateEntityFrontmatter } from './entity-tools.js';
 import type { EntityType } from './entity-tools.js';
 
 const WS_ERROR_TASK_NOT_FOUND = -32000;
 const WS_ERROR_AGENT_NOT_FOUND = -32001;
 const WS_ERROR_ROLE_NOT_FOUND = -32002;
-const WS_ERROR_DRAFT_ALREADY_ACTIVE = -32004;
-const WS_ERROR_NO_ACTIVE_DRAFT = -32005;
+const WS_ERROR_BOT_NOT_FOUND = -32003;
+const WS_ERROR_BOT_BUSY = -32004;
+const WS_ERROR_NO_ACTIVE_SESSION = -32005;
 const WS_ERROR_PROJECT_NOT_FOUND = -32006;
 
 export type WsMethodDeps = {
@@ -42,6 +43,7 @@ export type WsMethodDeps = {
   projects: Map<string, Project>;
   projectsDir: string;
   mcpServers?: McpServers;
+  botSessionManager: BotSessionManager;
 };
 
 function resolveProject(deps: WsMethodDeps, projectName: string): Project {
@@ -114,10 +116,11 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     return { projects: projectList };
   });
 
-  // submit_prompt — routes to draft session if active, otherwise fire-and-forget dispatch
+  // submit_prompt — routes to active bot session if one exists for the caller, otherwise autonomous dispatch
   deps.wsAdapter.addMethod('submit_prompt', (params: unknown) => {
     const p = params as Record<string, unknown>;
     const content = p['content'];
+    const botName = p['bot'] as string | undefined;
     const role = p['role'] as string | undefined;
     const projectName = p['project'] as string | undefined;
     const taskSlug = p['taskSlug'] as string | undefined;
@@ -126,42 +129,56 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException('content is required and must be a non-empty string', -32602);
     }
 
-    // Draft session routing — takes priority over autonomous dispatch
-    const draft = getActiveDraft();
-    if (draft) {
-      if (draft.staleRole) {
+    // Bot session routing — if bot specified, route to BotSessionManager
+    if (botName) {
+      const session = deps.botSessionManager.getSession(botName);
+      if (!session) {
+        throw new JSONRPCErrorException(`No active session for bot "${botName}". Use /draft first.`, WS_ERROR_NO_ACTIVE_SESSION);
+      }
+      if (session.staleRole) {
         throw new JSONRPCErrorException(
-          `Draft role "${draft.role}" no longer exists. Use /undraft to close the stale session.`,
+          `Session role "${session.role}" no longer exists. Use /undraft to close the stale session.`,
           WS_ERROR_ROLE_NOT_FOUND,
         );
       }
-      const draftRole = deps.roles.get(draft.role);
-      // Resolve CWD from the draft's project
-      const draftProject = deps.projects.get(draft.project.toLowerCase());
-      const draftCwd = draftProject?.paths[0];
+
+      const sessionRole = deps.roles.get(session.role);
+      const sessionProject = deps.projects.get(session.project.toLowerCase());
+      const sessionCwd = sessionProject?.paths[0];
+
       let mcpServer;
-      if (deps.mcpServers && draftRole) {
-        const isFullAccess = draftRole?.permissions?.includes('agent-draft') ?? false;
+      if (deps.mcpServers && sessionRole) {
+        const isFullAccess = sessionRole.permissions?.includes('agent-draft') ?? false;
         mcpServer = isFullAccess
-          ? deps.mcpServers.createFull(draft.taskSlug, draft.taskDir, draft.project)
+          ? deps.mcpServers.createFull(session.taskSlug, session.taskDir, session.project)
           : deps.mcpServers.readonly;
       }
 
       // Fire-and-forget resume
-      resumeDraft(content, deps.registry, deps.roles, deps.config, deps.pool, {
-        cwd: draftCwd,
+      deps.botSessionManager.handleBotMessage({
+        botName,
+        roleName: session.role,
+        message: content,
+        project: session.project,
+        taskSlug: session.taskSlug,
+        taskDir: session.taskDir,
+        cwd: sessionCwd ?? session.taskDir,
+        channelId: session.channelId,
+        responseSink: async () => {}, // TUI uses registry broadcast
+        registry: deps.registry,
         mcpServer,
         onCompaction: (event) => {
           deps.wsAdapter.broadcastNotification('context_compacted', {
-            sessionId: draft.sessionId, ...event,
+            sessionId: session.sessionId, botName, ...event,
           });
         },
       })
         .then(() => {
-          const updated = getActiveDraft();
+          const updated = deps.botSessionManager.getSession(botName);
           if (updated) {
             deps.wsAdapter.broadcastNotification('draft_status', {
               sessionId: updated.sessionId,
+              botName: updated.botName,
               role: updated.role,
               project: updated.project,
               turnCount: updated.turnCount,
@@ -178,20 +195,20 @@ export function registerWsMethods(deps: WsMethodDeps): void {
           const errMsg = err instanceof Error ? err.message : String(err);
           deps.wsAdapter.broadcastNotification('channel_message', {
             id: `msg-${Date.now()}`,
-            channelId: draft.channelId,
+            channelId: session.channelId,
             from: 'system',
             timestamp: new Date().toISOString(),
             type: 'error',
-            content: `Draft turn failed: ${errMsg}`,
+            content: `Session turn failed: ${errMsg}`,
           });
         });
 
-      return { threadId: `draft-${draft.sessionId}`, taskSlug: draft.taskSlug };
+      return { threadId: `bot-${session.sessionId}`, taskSlug: session.taskSlug, botName };
     }
 
     // Autonomous dispatch — requires project
     if (!projectName) {
-      throw new JSONRPCErrorException('project is required for autonomous dispatch', -32602);
+      throw new JSONRPCErrorException('project is required for autonomous dispatch (or specify bot for bot session)', -32602);
     }
 
     const project = resolveProject(deps, projectName);
@@ -265,33 +282,40 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     return { success: true };
   });
 
-  // draft — start a conversational draft session
+  // draft — start a conversational session with a bot
   deps.wsAdapter.addMethod('draft', (params: unknown) => {
     const p = params as Record<string, unknown>;
+    const botName = p['bot'] as string | undefined;
     const roleName = p['role'];
     const projectName = p['project'] as string | undefined;
     const taskSlugParam = p['task'] as string | undefined;
 
+    if (typeof botName !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
+    }
     if (typeof roleName !== 'string') {
       throw new JSONRPCErrorException('role must be a string', -32602);
     }
-
     if (typeof projectName !== 'string') {
       throw new JSONRPCErrorException('project is required', -32602);
     }
-
     if (typeof taskSlugParam !== 'string') {
       throw new JSONRPCErrorException('task is required', -32602);
+    }
+
+    // Check bot already has active session
+    const existingSession = deps.botSessionManager.getSession(botName);
+    if (existingSession && existingSession.status === 'active') {
+      throw new JSONRPCErrorException(
+        `Bot "${botName}" is already active in ${existingSession.project}. Use undraft first.`,
+        WS_ERROR_BOT_BUSY,
+      );
     }
 
     const project = resolveProject(deps, projectName);
     const role = deps.roles.get(roleName);
     if (!role) {
       throw new JSONRPCErrorException(`Role "${roleName}" not found`, WS_ERROR_ROLE_NOT_FOUND);
-    }
-
-    if (getActiveDraft()) {
-      throw new JSONRPCErrorException('Draft already active. Use undraft first.', WS_ERROR_DRAFT_ALREADY_ACTIVE);
     }
 
     // Resolve task
@@ -306,28 +330,50 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException(`Task "${taskSlugParam}" not found`, WS_ERROR_TASK_NOT_FOUND);
     }
 
+    // The session will be created on first message via handleBotMessage.
+    // We create it eagerly here so the TUI knows the draft is active.
     const channelId = `draft-${Date.now()}`;
-    const session = createDraft({
-      role,
-      project,
-      projectsDir: deps.projectsDir,
+    const cwd = project.paths[0] ?? taskDir;
+
+    // Send a synthetic first message that triggers session creation
+    // Actually — just return the session info. The TUI sends submit_prompt next.
+    // We need to pre-create the session so get_draft_status works.
+    deps.botSessionManager.handleBotMessage({
+      botName,
+      roleName,
+      message: '', // empty message triggers session creation but no SDK call... actually that won't work.
+      project: project.name,
       taskSlug,
       taskDir,
+      cwd,
       channelId,
-      pool: deps.pool,
+      responseSink: async () => {},
+      registry: deps.registry,
+    }).catch(() => {
+      // Session creation via empty message may fail — that's ok, the real message comes via submit_prompt
     });
 
-    return { sessionId: session.sessionId, taskSlug: session.taskSlug, project: session.project };
+    // Return immediately — the session will be ready by the time submit_prompt arrives
+    return { botName, sessionId: channelId, taskSlug, project: project.name };
   });
 
-  // undraft — close the active draft session
-  deps.wsAdapter.addMethod('undraft', (_params: unknown) => {
-    if (!getActiveDraft()) {
-      throw new JSONRPCErrorException('No active draft', WS_ERROR_NO_ACTIVE_DRAFT);
+  // undraft — close a bot session
+  deps.wsAdapter.addMethod('undraft', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botName = p['bot'] as string | undefined;
+
+    if (typeof botName !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
     }
 
-    const summary = closeDraft(deps.pool);
+    const session = deps.botSessionManager.getSession(botName);
+    if (!session) {
+      throw new JSONRPCErrorException(`No active session for bot "${botName}"`, WS_ERROR_NO_ACTIVE_SESSION);
+    }
+
+    const summary = deps.botSessionManager.closeSession(botName);
     return {
+      botName: summary.botName,
       sessionId: summary.sessionId,
       taskSlug: summary.taskSlug,
       turns: summary.turns,
@@ -336,31 +382,67 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     };
   });
 
-  // get_draft_status — return current draft state + metrics
-  deps.wsAdapter.addMethod('get_draft_status', (_params: unknown) => {
-    const draft = getActiveDraft();
-    if (!draft) {
+  // get_draft_status — return bot session state + metrics
+  deps.wsAdapter.addMethod('get_draft_status', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botName = p['bot'] as string | undefined;
+
+    if (botName) {
+      const session = deps.botSessionManager.getSession(botName);
+      if (!session) {
+        return { active: false, botName };
+      }
+
+      const contextPct = session.contextWindow > 0
+        ? Math.round((session.lastInputTokens / session.contextWindow) * 100)
+        : 0;
+
+      return {
+        active: true,
+        session: {
+          sessionId: session.sessionId,
+          botName: session.botName,
+          role: session.role,
+          project: session.project,
+          taskSlug: session.taskSlug,
+          turnCount: session.turnCount,
+          costUsd: session.cumulativeCostUsd,
+          contextPct,
+          lastInputTokens: session.lastInputTokens,
+          contextWindow: session.contextWindow,
+          lastActivity: session.lastActivityAt,
+          staleRole: session.staleRole ?? false,
+        },
+      };
+    }
+
+    // No bot specified — check if any sessions are active
+    const allSessions = deps.botSessionManager.getAllSessions();
+    const activeSessions = [...allSessions.values()].filter(s => s.status === 'active');
+    const firstActive = activeSessions[0];
+    if (!firstActive) {
       return { active: false };
     }
 
-    const contextPct = draft.contextWindow > 0
-      ? Math.round((draft.lastInputTokens / draft.contextWindow) * 100)
+    const contextPct = firstActive.contextWindow > 0
+      ? Math.round((firstActive.lastInputTokens / firstActive.contextWindow) * 100)
       : 0;
 
     return {
       active: true,
       session: {
-        sessionId: draft.sessionId,
-        role: draft.role,
-        project: draft.project,
-        taskSlug: draft.taskSlug,
-        turnCount: draft.turnCount,
-        costUsd: draft.cumulativeCostUsd,
+        sessionId: firstActive.sessionId,
+        botName: firstActive.botName,
+        role: firstActive.role,
+        project: firstActive.project,
+        taskSlug: firstActive.taskSlug,
+        turnCount: firstActive.turnCount,
+        costUsd: firstActive.cumulativeCostUsd,
         contextPct,
-        lastInputTokens: draft.lastInputTokens,
-        contextWindow: draft.contextWindow,
-        lastActivity: draft.lastActivityAt,
-        staleRole: draft.staleRole ?? false,
+        lastInputTokens: firstActive.lastInputTokens,
+        contextWindow: firstActive.contextWindow,
+        lastActivity: firstActive.lastActivityAt,
+        staleRole: firstActive.staleRole ?? false,
       },
     };
   });

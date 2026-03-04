@@ -18,7 +18,6 @@ import { CronScheduler } from './cron.js';
 import { placeBots } from './bot-placement.js';
 import { createTask, getOpenTasks, closeTask } from './task.js';
 import { registerWsMethods } from './ws-methods.js';
-import { loadActiveDraft } from './draft.js';
 import { getInstancePath, getInstanceRoot, getPackagePath } from './paths.js';
 import type { InboundHandler, VirtualProjectMeta } from './comms.js';
 import type { DraftAgentFn } from './mcp.js';
@@ -165,7 +164,9 @@ if (botCount > 0) {
   }
 }
 
-// ── 5. Construct + register Slack (not started) ─────────────────
+// ── 5. Create botSessionManager (before adapters need it) ────────
+
+const botSessionManager = new BotSessionManager(config, roles, bots, pool);
 
 // Detect interface modes
 const slackBotCount = config.slack ? Object.keys(config.slack.bots).length : 0;
@@ -207,7 +208,7 @@ if (slackEnabled && config.slack) {
 
 if (wsEnabled) {
   const ws = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
-  registerWsMethods({ wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers });
+  registerWsMethods({ wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers, botSessionManager });
   pool.setOnChange((agents) => {
     ws.broadcastNotification('pool_status', { agents });
   });
@@ -246,11 +247,7 @@ for (const provider of registry.providers()) {
 
 const botPlacements = placeBots(config, bots, roles, projects, virtualProjectMeta);
 
-// ── 9. Create botSessionManager ─────────────────────────────────
-
-const botSessionManager = new BotSessionManager(config, roles, bots, pool);
-
-// ── 10. Ensure tasks + wire queue handler (placement-aware) ─────
+// ── 9. Ensure tasks + wire queue handler (placement-aware) ──────
 
 // Ensure an open task exists for each virtual project that has bots placed in it
 function ensureProjectTask(projectName: string): { slug: string; taskDir: string } | undefined {
@@ -393,16 +390,6 @@ console.log([
 // ── 12. Load persisted bot sessions ─────────────────────────────
 
 botSessionManager.loadSessions(PROJECTS_DIR, projects);
-
-// Recover active draft session (if harness was restarted mid-draft)
-const recoveredDraft = loadActiveDraft(projects, PROJECTS_DIR, pool, roles);
-if (recoveredDraft) {
-  if (recoveredDraft.staleRole) {
-    console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns) — WARNING: role no longer exists\n`);
-  } else {
-    console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
-  }
-}
 
 logger.info({ version }, 'collabot started');
 logger.info({ defaultModel, aliasCount }, 'config loaded');

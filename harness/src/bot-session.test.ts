@@ -86,6 +86,7 @@ test('BotSessionManager.loadSessions recovers from disk', () => {
   const session: BotSession = {
     botName: 'hazel',
     sessionId: '11111111-1111-1111-1111-111111111111',
+    agentId: 'bot-hazel-1709280000000',
     dispatchId: '01JNQR000000000000000TEST',
     project: 'lobby',
     taskSlug: 'session-2026-03-01',
@@ -125,6 +126,7 @@ test('BotSessionManager.loadSessions skips bots not in loaded bots map', () => {
   const session: BotSession = {
     botName: 'deleted-bot',
     sessionId: '22222222-2222-2222-2222-222222222222',
+    agentId: 'bot-deleted-bot-1709280000000',
     dispatchId: '01JNQR000000000000000DEL0',
     project: 'lobby',
     taskSlug: 'session-test',
@@ -258,6 +260,7 @@ test('BotSessionManager manages multiple bot sessions independently', () => {
   const mkSession = (botName: string, td: string): BotSession => ({
     botName,
     sessionId: `${botName}-uuid`,
+    agentId: `bot-${botName}-1709280000000`,
     dispatchId: `01JNQR0000${botName.toUpperCase().padEnd(14, '0')}`,
     project: 'lobby',
     taskSlug: `session-${botName}`,
@@ -292,4 +295,217 @@ test('BotSessionManager manages multiple bot sessions independently', () => {
   assert.ok(hazel);
   assert.ok(greg);
   assert.notStrictEqual(hazel!.sessionId, greg!.sessionId);
+});
+
+// --- getAllSessions ---
+
+test('BotSessionManager.getAllSessions returns all loaded sessions', () => {
+  const taskDir1 = path.join(tmpDir, 'lobby', 'tasks', 'session-a');
+  fs.mkdirSync(taskDir1, { recursive: true });
+
+  const session: BotSession = {
+    botName: 'hazel',
+    sessionId: 'hazel-uuid',
+    agentId: 'bot-hazel-1709280000000',
+    dispatchId: '01JNQR000000000000000ALL0',
+    project: 'lobby',
+    taskSlug: 'session-a',
+    taskDir: taskDir1,
+    role: 'ts-dev',
+    channelId: 'bot-hazel-1234567890',
+    startedAt: '2026-03-01T10:00:00Z',
+    lastActivityAt: '2026-03-01T10:05:00Z',
+    turnCount: 1,
+    status: 'active',
+    sessionInitialized: true,
+    cumulativeCostUsd: 0,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+  };
+
+  fs.writeFileSync(path.join(taskDir1, 'bot-session-hazel.json'), JSON.stringify(session));
+
+  const manager = new BotSessionManager(makeConfig() as any, makeRoles('ts-dev'), makeBots('hazel'), new AgentPool());
+  manager.loadSessions(tmpDir, new Map([['lobby', { name: 'lobby' }]]));
+
+  const all = manager.getAllSessions();
+  assert.strictEqual(all.size, 1);
+  assert.ok(all.has('hazel'));
+});
+
+// --- closeSession ---
+
+test('BotSessionManager.closeSession throws for unknown bot', () => {
+  const manager = new BotSessionManager(makeConfig() as any, makeRoles('ts-dev'), makeBots('hazel'), new AgentPool());
+
+  assert.throws(
+    () => manager.closeSession('nonexistent'),
+    /No active session for bot "nonexistent"/,
+  );
+});
+
+test('BotSessionManager.closeSession removes session and returns summary', () => {
+  const taskDir = path.join(tmpDir, 'lobby', 'tasks', 'session-close-test');
+  fs.mkdirSync(taskDir, { recursive: true });
+
+  const pool = new AgentPool();
+  const agentId = 'bot-hazel-1709280099999';
+
+  // Pre-register in pool
+  pool.register({ id: agentId, role: 'ts-dev', taskSlug: 'session-close-test', startedAt: new Date(), controller: new AbortController() });
+
+  const session: BotSession = {
+    botName: 'hazel',
+    sessionId: 'close-test-uuid',
+    agentId,
+    dispatchId: '01JNQR00000000000000CLOSE',
+    project: 'lobby',
+    taskSlug: 'session-close-test',
+    taskDir,
+    role: 'ts-dev',
+    channelId: 'bot-hazel-close',
+    startedAt: '2026-03-01T10:00:00Z',
+    lastActivityAt: '2026-03-01T10:05:00Z',
+    turnCount: 5,
+    status: 'active',
+    sessionInitialized: true,
+    cumulativeCostUsd: 0.10,
+    lastInputTokens: 1000,
+    lastOutputTokens: 500,
+    contextWindow: 200000,
+    maxOutputTokens: 16384,
+  };
+
+  fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
+
+  const manager = new BotSessionManager(makeConfig() as any, makeRoles('ts-dev'), makeBots('hazel'), pool);
+  manager.loadSessions(tmpDir, new Map([['lobby', { name: 'lobby' }]]));
+
+  assert.ok(manager.getSession('hazel'));
+
+  const summary = manager.closeSession('hazel');
+  assert.strictEqual(summary.botName, 'hazel');
+  assert.strictEqual(summary.turns, 5);
+  assert.strictEqual(summary.costUsd, 0.10);
+  assert.ok(summary.durationMs >= 0);
+
+  // Session should be removed
+  assert.strictEqual(manager.getSession('hazel'), null);
+});
+
+// --- loadSessions: stale role detection ---
+
+test('BotSessionManager.loadSessions marks sessions with missing roles as stale', () => {
+  const taskDir = path.join(tmpDir, 'lobby', 'tasks', 'session-stale');
+  fs.mkdirSync(taskDir, { recursive: true });
+
+  const session: BotSession = {
+    botName: 'hazel',
+    sessionId: 'stale-test-uuid',
+    agentId: 'bot-hazel-stale',
+    dispatchId: '01JNQR0000000000000STALE0',
+    project: 'lobby',
+    taskSlug: 'session-stale',
+    taskDir,
+    role: 'deleted-role',
+    channelId: 'bot-hazel-stale',
+    startedAt: '2026-03-01T10:00:00Z',
+    lastActivityAt: '2026-03-01T10:05:00Z',
+    turnCount: 1,
+    status: 'active',
+    sessionInitialized: true,
+    cumulativeCostUsd: 0,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+  };
+
+  fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
+
+  // Only 'ts-dev' role loaded, session references 'deleted-role'
+  const manager = new BotSessionManager(makeConfig() as any, makeRoles('ts-dev'), makeBots('hazel'), new AgentPool());
+  manager.loadSessions(tmpDir, new Map([['lobby', { name: 'lobby' }]]));
+
+  const recovered = manager.getSession('hazel');
+  assert.ok(recovered);
+  assert.strictEqual(recovered!.staleRole, true);
+});
+
+// --- loadSessions: closed sessions skipped ---
+
+test('BotSessionManager.loadSessions skips closed sessions', () => {
+  const taskDir = path.join(tmpDir, 'lobby', 'tasks', 'session-closed');
+  fs.mkdirSync(taskDir, { recursive: true });
+
+  const session: BotSession = {
+    botName: 'hazel',
+    sessionId: 'closed-test-uuid',
+    agentId: 'bot-hazel-closed',
+    dispatchId: '01JNQR000000000000CLOSED0',
+    project: 'lobby',
+    taskSlug: 'session-closed',
+    taskDir,
+    role: 'ts-dev',
+    channelId: 'bot-hazel-closed',
+    startedAt: '2026-03-01T10:00:00Z',
+    lastActivityAt: '2026-03-01T10:05:00Z',
+    turnCount: 1,
+    status: 'closed',
+    sessionInitialized: true,
+    cumulativeCostUsd: 0,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+  };
+
+  fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
+
+  const manager = new BotSessionManager(makeConfig() as any, makeRoles('ts-dev'), makeBots('hazel'), new AgentPool());
+  manager.loadSessions(tmpDir, new Map([['lobby', { name: 'lobby' }]]));
+
+  assert.strictEqual(manager.getSession('hazel'), null);
+});
+
+// --- loadSessions: pool registration ---
+
+test('BotSessionManager.loadSessions re-registers sessions in pool', () => {
+  const taskDir = path.join(tmpDir, 'lobby', 'tasks', 'session-pool');
+  fs.mkdirSync(taskDir, { recursive: true });
+
+  const session: BotSession = {
+    botName: 'hazel',
+    sessionId: 'pool-test-uuid',
+    agentId: 'bot-hazel-pool-test',
+    dispatchId: '01JNQR0000000000000POOL00',
+    project: 'lobby',
+    taskSlug: 'session-pool',
+    taskDir,
+    role: 'ts-dev',
+    channelId: 'bot-hazel-pool',
+    startedAt: '2026-03-01T10:00:00Z',
+    lastActivityAt: '2026-03-01T10:05:00Z',
+    turnCount: 1,
+    status: 'active',
+    sessionInitialized: true,
+    cumulativeCostUsd: 0,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+  };
+
+  fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
+
+  const pool = new AgentPool();
+  const manager = new BotSessionManager(makeConfig() as any, makeRoles('ts-dev'), makeBots('hazel'), pool);
+  manager.loadSessions(tmpDir, new Map([['lobby', { name: 'lobby' }]]));
+
+  // Agent should be registered in pool
+  assert.strictEqual(pool.size, 1);
+  const agents = pool.list();
+  assert.strictEqual(agents[0]!.role, 'ts-dev');
 });
