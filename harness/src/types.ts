@@ -145,6 +145,7 @@ export type EventType =
   | 'session:compaction'
   | 'session:rate_limit'
   | 'session:status'
+  | 'session:context_reconstructed'
   // Harness interventions
   | 'harness:loop_warning'
   | 'harness:loop_kill'

@@ -98,7 +98,7 @@ export function makeChannelMessage(
  */
 export type McpServers = {
   /** Factory — creates a task-scoped full server so child agents inherit the parent task. */
-  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => McpSdkServerConfigWithInstance;
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => McpSdkServerConfigWithInstance;
   readonly: McpSdkServerConfigWithInstance;
 };
 

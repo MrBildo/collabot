@@ -154,7 +154,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       if (deps.mcpServers && sessionRole) {
         const isFullAccess = sessionRole.permissions?.includes('agent-draft') ?? false;
         mcpServer = isFullAccess
-          ? deps.mcpServers.createFull(session.taskSlug, session.taskDir, session.project)
+          ? deps.mcpServers.createFull(session.taskSlug, session.taskDir, session.project, session.dispatchId)
           : deps.mcpServers.readonly;
       }
 

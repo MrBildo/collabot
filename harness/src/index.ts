@@ -139,10 +139,10 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
   });
 };
 const mcpServers = {
-  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => createHarnessServer({
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
     tracker, draftFn,
-    parentTaskSlug, parentTaskDir, parentProject,
+    parentTaskSlug, parentTaskDir, parentProject, parentDispatchId,
   }),
   readonly: createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'readonly',

@@ -8,6 +8,7 @@ import { logger } from './logger.js';
 import { buildChildEnv, extractUsageMetrics } from './dispatch.js';
 import { extractToolTarget } from './util.js';
 import { getDispatchStore, makeCapturedEvent } from './dispatch-store.js';
+import { buildTaskContext } from './context.js';
 import { detectErrorLoop, detectNonRetryable } from './monitor.js';
 import { resolveModelId, type Config } from './config.js';
 import { assembleBotPrompt } from './prompts.js';
@@ -184,6 +185,23 @@ export class BotSessionManager {
       }, stallTimeoutMs);
     }
 
+    // Context reconstruction — on first turn, prepend task history if prior dispatches exist
+    let effectiveMessage = message;
+    if (isFirstTurn) {
+      try {
+        const taskManifestPath = path.join(taskDir, 'task.json');
+        if (fs.existsSync(taskManifestPath)) {
+          const taskContext = buildTaskContext(taskDir);
+          if (taskContext.includes('### Previous Work')) {
+            effectiveMessage = `${taskContext}\n\n---\n\n${message}`;
+            emitEvent('session:context_reconstructed', { priorDispatches: true });
+          }
+        }
+      } catch {
+        // Non-fatal — proceed without context
+      }
+    }
+
     logger.info({
       botName,
       sessionId: session.sessionId,
@@ -196,7 +214,7 @@ export class BotSessionManager {
       resetStallTimer();
 
       for await (const msg of query({
-        prompt: message,
+        prompt: effectiveMessage,
         options: {
           cwd: absoluteCwd,
           systemPrompt: {

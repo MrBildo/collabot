@@ -212,8 +212,9 @@ function buildLifecycleTools(options: HarnessServerOptions) {
       role: z.string(),
       prompt: z.string(),
       taskSlug: z.string().optional(),
+      project: z.string().optional().describe('Target project (cross-project dispatch). Defaults to parent project.'),
     },
-      async ({ role, prompt, taskSlug }) => {
+      async ({ role, prompt, taskSlug, project: targetProject }) => {
         // Validate role exists
         const roleDefn = roles.get(role);
         if (!roleDefn) {
@@ -224,8 +225,8 @@ function buildLifecycleTools(options: HarnessServerOptions) {
           };
         }
 
-        // Inherit project from parent
-        const resolvedProject = options.parentProject;
+        // Resolve project — explicit target or inherit from parent
+        const resolvedProject = targetProject ?? options.parentProject;
         if (!resolvedProject) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No parent project context — cannot draft agent' }) }],
@@ -251,16 +252,31 @@ function buildLifecycleTools(options: HarnessServerOptions) {
 
         const agentId = `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-        // Inherit parent task context
-        const resolvedSlug = taskSlug ?? options.parentTaskSlug ?? `mcp-task-${Date.now()}`;
-        let taskDir: string | undefined = options.parentTaskDir;
+        // For cross-project dispatch, use target project's task dir
+        const isCrossProject = targetProject && targetProject.toLowerCase() !== (options.parentProject ?? '').toLowerCase();
+        let resolvedSlug = taskSlug ?? options.parentTaskSlug ?? `mcp-task-${Date.now()}`;
+        let taskDir: string | undefined = isCrossProject ? undefined : options.parentTaskDir;
 
-        // If explicit slug was passed, try to resolve its task dir
+        // Resolve task dir from the target project
+        const tasksDir = getProjectTasksDir(projectsDir, proj.name);
         if (taskSlug) {
-          const tasksDir = getProjectTasksDir(projectsDir, proj.name);
           const candidate = path.join(tasksDir, taskSlug);
           if (fs.existsSync(path.join(candidate, 'task.json'))) {
             taskDir = candidate;
+          }
+        } else if (isCrossProject) {
+          // Cross-project with no explicit task — create one in the target project
+          try {
+            const { createTask } = await import('./task.js');
+            const newTask = createTask(tasksDir, {
+              name: `cross-dispatch-${Date.now()}`,
+              project: proj.name,
+              description: `Cross-project dispatch from ${options.parentProject}`,
+            });
+            resolvedSlug = newTask.slug;
+            taskDir = newTask.taskDir;
+          } catch (err) {
+            logger.warn({ err, project: proj.name }, 'failed to create cross-project task');
           }
         }
 
@@ -284,7 +300,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
         });
 
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ agentId, role, taskSlug: resolvedSlug }) }],
+          content: [{ type: 'text' as const, text: JSON.stringify({ agentId, role, taskSlug: resolvedSlug, project: proj.name }) }],
         };
       },
     ),
