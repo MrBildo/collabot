@@ -15,7 +15,7 @@ import { SlackAdapter } from './adapters/slack.js';
 import { BotMessageQueue } from './bot-queue.js';
 import { BotSessionManager } from './bot-session.js';
 import { CronScheduler } from './cron.js';
-import { placeBots } from './bot-placement.js';
+import { placeBots, BotPlacementStore } from './bot-placement.js';
 import { createTask, getOpenTasks, closeTask } from './task.js';
 import { registerWsMethods } from './ws-methods.js';
 import { getInstancePath, getInstanceRoot, getPackagePath } from './paths.js';
@@ -206,9 +206,11 @@ if (slackEnabled && config.slack) {
 
 // ── 6. Construct + register WS ──────────────────────────────────
 
+let wsDeps: Parameters<typeof registerWsMethods>[0] | undefined;
 if (wsEnabled) {
   const ws = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
-  registerWsMethods({ wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers, botSessionManager });
+  wsDeps = { wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers, botSessionManager };
+  registerWsMethods(wsDeps);
   pool.setOnChange((agents) => {
     ws.broadcastNotification('pool_status', { agents });
   });
@@ -245,7 +247,14 @@ for (const provider of registry.providers()) {
 
 // ── 8. Bot placement ────────────────────────────────────────────
 
-const botPlacements = placeBots(config, bots, roles, projects, virtualProjectMeta);
+const placementStore = new BotPlacementStore(placeBots(config, bots, roles, projects, virtualProjectMeta));
+
+// Late-bind placement store and bots to WS deps.
+// Handlers close over the deps object reference, so setting properties here is visible at call time.
+if (wsDeps) {
+  wsDeps.placementStore = placementStore;
+  wsDeps.bots = bots;
+}
 
 // ── 9. Ensure tasks + wire queue handler (placement-aware) ──────
 
@@ -274,7 +283,7 @@ function ensureProjectTask(projectName: string): { slug: string; taskDir: string
 
 // Collect unique virtual projects with bots and ensure initial tasks
 const virtualProjectsWithBots = new Set<string>();
-for (const placement of botPlacements.values()) {
+for (const placement of placementStore.getAll().values()) {
   const proj = projects.get(placement.project.toLowerCase());
   if (proj?.virtual) {
     virtualProjectsWithBots.add(placement.project.toLowerCase());
@@ -290,7 +299,7 @@ for (const projectName of virtualProjectsWithBots) {
 
 // Wire bot queue handler → bot session manager (placement-aware)
 botQueue.setHandler(async (msg) => {
-  const placement = botPlacements.get(msg.botName);
+  const placement = placementStore.get(msg.botName);
   if (!placement) {
     logger.warn({ botName: msg.botName }, 'No placement for bot — dropping message');
     return;
@@ -356,7 +365,7 @@ const interfaceList = [
   wsEnabled ? `WS (${config.ws!.host}:${config.ws!.port})` : null,
 ].filter(Boolean).join(', ');
 
-const placementList = [...botPlacements.values()]
+const placementList = [...placementStore.getAll().values()]
   .map(p => `${p.botName}@${p.project}(${p.roleName})`)
   .join(', ');
 
@@ -398,7 +407,7 @@ logger.info({ botCount, botNames }, 'bots loaded');
 logger.info({ projectCount: projects.size, projectNames: [...projects.values()].map(p => p.name).join(', ') }, 'projects loaded');
 if (lobbyEnsured) logger.info('lobby virtual project ensured');
 if (virtualProjectMeta.size > 0) logger.info({ count: virtualProjectMeta.size, projects: [...virtualProjectMeta.keys()] }, 'provider virtual projects ensured');
-if (botPlacements.size > 0) logger.info({ placements: placementList }, 'bot placements computed');
+if (placementStore.getAll().size > 0) logger.info({ placements: placementList }, 'bot placements computed');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
 
 // ── 13. Start all providers ─────────────────────────────────────
@@ -424,7 +433,7 @@ if (wsEnabled) {
 // ── 14. Set bot presence based on placement ─────────────────────
 
 if (slackAdapter) {
-  for (const [botName, placement] of botPlacements) {
+  for (const [botName, placement] of placementStore.getAll()) {
     const presence = placement.project.toLowerCase() === 'slack-room' ? 'auto' : 'away';
     await slackAdapter.setPresence(botName, presence);
   }

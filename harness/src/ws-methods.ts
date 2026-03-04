@@ -9,6 +9,8 @@ import type { Config } from './config.js';
 import type { RoleDefinition, DispatchResult, Project } from './types.js';
 import type { McpServers } from './core.js';
 import type { BotSessionManager } from './bot-session.js';
+import type { BotPlacementStore } from './bot-placement.js';
+import type { BotDefinition } from './types.js';
 import { getProject, getProjectTasksDir, createProject, loadProjects } from './project.js';
 import { buildTaskContext } from './context.js';
 import { listTasks, createTask, closeTask, getTask } from './task.js';
@@ -44,6 +46,8 @@ export type WsMethodDeps = {
   projectsDir: string;
   mcpServers?: McpServers;
   botSessionManager: BotSessionManager;
+  placementStore?: BotPlacementStore;
+  bots?: Map<string, BotDefinition>;
 };
 
 function resolveProject(deps: WsMethodDeps, projectName: string): Project {
@@ -554,5 +558,102 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     const result = validateEntityFrontmatter(content, type as EntityType);
     return result;
+  });
+
+  // ── Bot Management Methods ────────────────────────────────────
+
+  // list_bots — return all bots with placement + session info
+  deps.wsAdapter.addMethod('list_bots', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const projectFilter = p['project'] as string | undefined;
+
+    if (!deps.placementStore || !deps.bots) {
+      return { bots: [] };
+    }
+
+    const allPlacements = deps.placementStore.getAll();
+    const botList = [...allPlacements.values()]
+      .filter(pl => !projectFilter || pl.project.toLowerCase() === projectFilter.toLowerCase())
+      .map(pl => {
+        const bot = deps.bots!.get(pl.botName);
+        const session = deps.botSessionManager.getSession(pl.botName);
+        return {
+          name: pl.botName,
+          displayName: bot?.displayName ?? pl.botName,
+          project: pl.project,
+          role: pl.roleName,
+          status: pl.status,
+          draftedBy: pl.draftedBy,
+          sessionTurns: session?.turnCount,
+          lastActivity: session?.lastActivityAt,
+        };
+      });
+
+    return { bots: botList };
+  });
+
+  // get_bot_status — return detailed status for a single bot
+  deps.wsAdapter.addMethod('get_bot_status', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botName = p['bot'] as string | undefined;
+
+    if (typeof botName !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
+    }
+
+    if (!deps.placementStore || !deps.bots) {
+      throw new JSONRPCErrorException(`Bot "${botName}" not found`, WS_ERROR_BOT_NOT_FOUND);
+    }
+
+    const placement = deps.placementStore.get(botName);
+    if (!placement) {
+      throw new JSONRPCErrorException(`Bot "${botName}" not found`, WS_ERROR_BOT_NOT_FOUND);
+    }
+
+    const bot = deps.bots.get(botName);
+    const session = deps.botSessionManager.getSession(botName);
+
+    return {
+      name: placement.botName,
+      displayName: bot?.displayName ?? placement.botName,
+      project: placement.project,
+      role: placement.roleName,
+      status: placement.status,
+      draftedBy: placement.draftedBy,
+      sessionTurns: session?.turnCount,
+      costUsd: session?.cumulativeCostUsd,
+      lastActivity: session?.lastActivityAt,
+    };
+  });
+
+  // move_bot — relocate a bot to a different project (operator override)
+  deps.wsAdapter.addMethod('move_bot', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botName = p['bot'] as string | undefined;
+    const targetProject = p['project'] as string | undefined;
+
+    if (typeof botName !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
+    }
+    if (typeof targetProject !== 'string') {
+      throw new JSONRPCErrorException('project is required', -32602);
+    }
+
+    if (!deps.placementStore) {
+      throw new JSONRPCErrorException('Placement store not available', -32603);
+    }
+
+    // Validate target project exists
+    if (!deps.projects.has(targetProject.toLowerCase())) {
+      throw new JSONRPCErrorException(`Project "${targetProject}" not found`, WS_ERROR_PROJECT_NOT_FOUND);
+    }
+
+    try {
+      const previousProject = deps.placementStore.moveBot(botName, targetProject);
+      return { success: true, previousProject };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new JSONRPCErrorException(msg, WS_ERROR_BOT_NOT_FOUND);
+    }
   });
 }

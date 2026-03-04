@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { placeBots } from './bot-placement.js';
+import { placeBots, BotPlacementStore } from './bot-placement.js';
 import type { Config } from './config.js';
 import type { BotDefinition, RoleDefinition } from './types.js';
 import type { VirtualProjectMeta } from './comms.js';
@@ -273,4 +273,112 @@ test('placeBots places multiple bots independently', () => {
   assert.strictEqual(placements.get('hazel')!.roleName, 'researcher');
   assert.strictEqual(placements.get('greg')!.project, 'lobby');
   assert.strictEqual(placements.get('greg')!.roleName, 'ts-dev');
+});
+
+// ── Initial status ────────────────────────────────────────────
+
+test('placeBots sets status to available on all placements', () => {
+  const config = makeConfig({
+    bots: { hazel: { defaultProject: 'lobby' } },
+  });
+  const placements = placeBots(
+    config,
+    makeBots('hazel'),
+    makeRoles('ts-dev'),
+    makeProjects('lobby'),
+    new Map(),
+  );
+
+  assert.strictEqual(placements.get('hazel')!.status, 'available');
+});
+
+// ── BotPlacementStore ─────────────────────────────────────────
+
+function makeStore() {
+  const config = makeConfig({
+    bots: {
+      hazel: { defaultProject: 'slack-room', defaultRole: 'researcher' },
+      greg: { defaultProject: 'lobby', defaultRole: 'ts-dev' },
+    },
+  });
+  const initial = placeBots(
+    config,
+    makeBots('hazel', 'greg'),
+    makeRoles('ts-dev', 'researcher'),
+    makeProjects('lobby', 'slack-room'),
+    new Map(),
+  );
+  return new BotPlacementStore(initial);
+}
+
+test('BotPlacementStore.get returns placement for known bot', () => {
+  const store = makeStore();
+  const p = store.get('hazel');
+  assert.ok(p);
+  assert.strictEqual(p.project, 'slack-room');
+  assert.strictEqual(p.status, 'available');
+});
+
+test('BotPlacementStore.get returns undefined for unknown bot', () => {
+  const store = makeStore();
+  assert.strictEqual(store.get('unknown'), undefined);
+});
+
+test('BotPlacementStore.getAll returns copy of all placements', () => {
+  const store = makeStore();
+  const all = store.getAll();
+  assert.strictEqual(all.size, 2);
+  // Modifying returned map does not affect store
+  all.delete('hazel');
+  assert.ok(store.get('hazel'));
+});
+
+test('BotPlacementStore.moveBot changes project', () => {
+  const store = makeStore();
+  const prev = store.moveBot('hazel', 'lobby');
+  assert.strictEqual(prev, 'slack-room');
+  assert.strictEqual(store.get('hazel')!.project, 'lobby');
+});
+
+test('BotPlacementStore.moveBot to lobby sets status available', () => {
+  const store = makeStore();
+  store.setDrafted('hazel', 'ws');
+  assert.strictEqual(store.get('hazel')!.status, 'drafted');
+
+  store.moveBot('hazel', 'lobby');
+  assert.strictEqual(store.get('hazel')!.status, 'available');
+  assert.strictEqual(store.get('hazel')!.draftedBy, undefined);
+});
+
+test('BotPlacementStore.moveBot throws for unknown bot', () => {
+  const store = makeStore();
+  assert.throws(() => store.moveBot('unknown', 'lobby'), /not found/);
+});
+
+test('BotPlacementStore.moveBot accepts optional roleName', () => {
+  const store = makeStore();
+  store.moveBot('hazel', 'research-lab', { roleName: 'ts-dev' });
+  assert.strictEqual(store.get('hazel')!.roleName, 'ts-dev');
+  assert.strictEqual(store.get('hazel')!.project, 'research-lab');
+});
+
+test('BotPlacementStore.setDrafted transitions to drafted status', () => {
+  const store = makeStore();
+  store.setDrafted('hazel', 'ws');
+  assert.strictEqual(store.get('hazel')!.status, 'drafted');
+  assert.strictEqual(store.get('hazel')!.draftedBy, 'ws');
+});
+
+test('BotPlacementStore.setBusy transitions to busy status', () => {
+  const store = makeStore();
+  store.setBusy('hazel');
+  assert.strictEqual(store.get('hazel')!.status, 'busy');
+});
+
+test('BotPlacementStore.setAvailable transitions to available status', () => {
+  const store = makeStore();
+  store.setDrafted('hazel', 'ws');
+  store.setAvailable('hazel');
+  assert.strictEqual(store.get('hazel')!.status, 'available');
+  assert.strictEqual(store.get('hazel')!.draftedBy, undefined);
 });
