@@ -6,6 +6,8 @@ export type { InboundMessage, ChannelMessage, CommunicationProvider, VirtualProj
 export type { Project } from './project.js';
 export type { BotPlacement } from './bot-placement.js';
 
+export type BotStatus = 'available' | 'busy' | 'drafted';
+
 export type BotDefinition = {
   id: string;           // ULID (26 chars)
   name: string;         // EntityNameSchema

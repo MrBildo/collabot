@@ -32,11 +32,18 @@ export type BotSession = {
   taskSlug: string;
   taskDir: string;
   role: string;
+  channelId: string;      // channel for registry broadcast
   startedAt: string;
   lastActivityAt: string;
   turnCount: number;
+  status: 'active' | 'closed';
   sessionInitialized: boolean;
   cumulativeCostUsd: number;
+  lastInputTokens: number;
+  lastOutputTokens: number;
+  contextWindow: number;
+  maxOutputTokens: number;
+  staleRole?: boolean;    // true if recovered session references a role that no longer exists
 };
 
 // ── BotSessionManager ──────────────────────────────────────────
@@ -63,11 +70,13 @@ export class BotSessionManager {
     taskSlug: string;
     taskDir: string;
     cwd: string;
+    channelId?: string;
     responseSink: (text: string) => Promise<void>;
     disallowedTools?: string[];
     projectSkills?: VirtualProjectSkill[];
   }): Promise<void> {
     const { botName, roleName, message, project, taskSlug, taskDir, cwd, responseSink, disallowedTools, projectSkills } = opts;
+    const channelId = opts.channelId ?? `bot-${botName}-${Date.now()}`;
 
     const bot = this.bots.get(botName);
     if (!bot) {
@@ -82,7 +91,7 @@ export class BotSessionManager {
     // Get or create session
     let session = this.sessions.get(botName);
     if (!session || session.taskSlug !== taskSlug) {
-      session = this.createSession(botName, roleName, project, taskSlug, taskDir);
+      session = this.createSession(botName, roleName, project, taskSlug, taskDir, channelId);
     }
 
     const isFirstTurn = !session.sessionInitialized;
@@ -306,9 +315,16 @@ export class BotSessionManager {
         session.turnCount++;
         session.lastActivityAt = new Date().toISOString();
         session.cumulativeCostUsd += resultMsg.total_cost_usd ?? 0;
-        this.persistSession(session);
 
         const usage = extractUsageMetrics(resultMsg);
+        if (usage) {
+          session.lastInputTokens = usage.inputTokens;
+          session.lastOutputTokens = usage.outputTokens;
+          session.contextWindow = usage.contextWindow;
+          session.maxOutputTokens = usage.maxOutputTokens;
+        }
+        this.persistSession(session);
+
         try {
           dispatchStore.updateDispatch(taskDir, dispatchId, {
             cost: session.cumulativeCostUsd,
@@ -331,6 +347,13 @@ export class BotSessionManager {
           session.turnCount++;
           session.lastActivityAt = new Date().toISOString();
           session.cumulativeCostUsd += resultMsg.total_cost_usd ?? 0;
+          const usage = extractUsageMetrics(resultMsg);
+          if (usage) {
+            session.lastInputTokens = usage.inputTokens;
+            session.lastOutputTokens = usage.outputTokens;
+            session.contextWindow = usage.contextWindow;
+            session.maxOutputTokens = usage.maxOutputTokens;
+          }
           this.persistSession(session);
         }
         return;
@@ -399,6 +422,7 @@ export class BotSessionManager {
     project: string,
     taskSlug: string,
     taskDir: string,
+    channelId: string,
   ): BotSession {
     const now = new Date().toISOString();
     const session: BotSession = {
@@ -409,11 +433,17 @@ export class BotSessionManager {
       taskSlug,
       taskDir,
       role: roleName,
+      channelId,
       startedAt: now,
       lastActivityAt: now,
       turnCount: 0,
+      status: 'active',
       sessionInitialized: false,
       cumulativeCostUsd: 0,
+      lastInputTokens: 0,
+      lastOutputTokens: 0,
+      contextWindow: 0,
+      maxOutputTokens: 0,
     };
 
     this.sessions.set(botName, session);

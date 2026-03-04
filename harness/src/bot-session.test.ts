@@ -91,11 +91,17 @@ test('BotSessionManager.loadSessions recovers from disk', () => {
     taskSlug: 'session-2026-03-01',
     taskDir,
     role: 'ts-dev',
+    channelId: 'bot-hazel-1234567890',
     startedAt: '2026-03-01T10:00:00Z',
     lastActivityAt: '2026-03-01T10:05:00Z',
     turnCount: 3,
+    status: 'active',
     sessionInitialized: true,
     cumulativeCostUsd: 0.05,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
@@ -124,11 +130,17 @@ test('BotSessionManager.loadSessions skips bots not in loaded bots map', () => {
     taskSlug: 'session-test',
     taskDir,
     role: 'ts-dev',
+    channelId: 'bot-deleted-1234567890',
     startedAt: '2026-03-01T10:00:00Z',
     lastActivityAt: '2026-03-01T10:05:00Z',
     turnCount: 1,
+    status: 'active',
     sessionInitialized: true,
     cumulativeCostUsd: 0,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-deleted-bot.json'), JSON.stringify(session));
@@ -251,11 +263,17 @@ test('BotSessionManager manages multiple bot sessions independently', () => {
     taskSlug: `session-${botName}`,
     taskDir: td,
     role: 'ts-dev',
+    channelId: `bot-${botName}-1234567890`,
     startedAt: '2026-03-01T10:00:00Z',
     lastActivityAt: '2026-03-01T10:05:00Z',
     turnCount: 1,
+    status: 'active',
     sessionInitialized: true,
     cumulativeCostUsd: 0,
+    lastInputTokens: 0,
+    lastOutputTokens: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
   });
 
   fs.writeFileSync(path.join(taskDir1, 'bot-session-hazel.json'), JSON.stringify(mkSession('hazel', taskDir1)));
