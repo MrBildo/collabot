@@ -56,16 +56,15 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-export function resolveModelId(modelHint: string, config: Config): string {
-  return config.models.aliases[modelHint] ?? config.models.default;
-}
-
 /**
- * Resolve the default model ID. If `models.default` is an alias name,
- * resolve it through the aliases map first.
+ * Resolve a model hint (from role frontmatter) to a concrete model ID.
+ * Checks aliases first, then falls back to the default model.
+ * The default itself may be an alias name, so it's resolved through aliases too.
  */
-export function resolveDefaultModelId(config: Config): string {
-  return config.models.aliases[config.models.default] ?? config.models.default;
+export function resolveModelId(modelHint: string, config: Config): string {
+  return config.models.aliases[modelHint]
+    ?? config.models.aliases[config.models.default]
+    ?? config.models.default;
 }
 
 let _config: Config | undefined;

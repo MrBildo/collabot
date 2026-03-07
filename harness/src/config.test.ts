@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConfigSchema, resolveModelId, resolveDefaultModelId } from './config.js';
+import { ConfigSchema, resolveModelId } from './config.js';
 
 const validSlack = {
   bots: {
@@ -364,28 +364,15 @@ test('bots entry with only defaultProject is valid', () => {
   assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, undefined);
 });
 
-// ============================================================
-// resolveDefaultModelId tests
-// ============================================================
-
-test('resolveDefaultModelId resolves alias name as default', () => {
+test('resolveModelId resolves default through aliases when default is alias name', () => {
   const config = ConfigSchema.parse(validConfig({
     models: {
       default: 'sonnet-latest',
       aliases: { 'sonnet-latest': 'claude-sonnet-4-6' },
     },
   }));
-  assert.strictEqual(resolveDefaultModelId(config), 'claude-sonnet-4-6');
-});
-
-test('resolveDefaultModelId passes through raw model ID', () => {
-  const config = ConfigSchema.parse(validConfig({
-    models: {
-      default: 'claude-sonnet-4-6',
-      aliases: { 'sonnet-latest': 'claude-sonnet-4-6' },
-    },
-  }));
-  assert.strictEqual(resolveDefaultModelId(config), 'claude-sonnet-4-6');
+  // Unknown hint should fall back to default, which is an alias — should resolve to concrete ID
+  assert.strictEqual(resolveModelId('unknown-hint', config), 'claude-sonnet-4-6');
 });
 
 test('slack config without role field is valid (credentials only)', () => {

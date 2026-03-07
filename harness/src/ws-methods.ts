@@ -58,7 +58,19 @@ function resolveProject(deps: WsMethodDeps, projectName: string): Project {
   }
 }
 
+type PendingDraft = {
+  botName: string;
+  roleName: string;
+  project: string;
+  taskSlug: string;
+  taskDir: string;
+  channelId: string;
+};
+
 export function registerWsMethods(deps: WsMethodDeps): void {
+
+  // Pending drafts — stores context from `draft` until first `submit_prompt` creates the session
+  const pendingDrafts = new Map<string, PendingDraft>();
 
   // list_projects — return all loaded projects
   deps.wsAdapter.addMethod('list_projects', (_params: unknown) => {
@@ -135,9 +147,56 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     // Bot session routing — if bot specified, route to BotSessionManager
     if (botName) {
-      const session = deps.botSessionManager.getSession(botName);
+      let session = deps.botSessionManager.getSession(botName);
+
+      // Lazy session creation — draft stores context, first submit_prompt creates the session
       if (!session) {
-        throw new JSONRPCErrorException(`No active session for bot "${botName}". Use /draft first.`, WS_ERROR_NO_ACTIVE_SESSION);
+        const draft = pendingDrafts.get(botName);
+        if (!draft) {
+          throw new JSONRPCErrorException(`No active session for bot "${botName}". Use /draft first.`, WS_ERROR_NO_ACTIVE_SESSION);
+        }
+        pendingDrafts.delete(botName);
+
+        const draftProject = deps.projects.get(draft.project.toLowerCase());
+        const draftCwd = draftProject?.paths[0] ?? draft.taskDir;
+
+        // Route the first message through handleBotMessage — it creates the session
+        deps.botSessionManager.handleBotMessage({
+          botName: draft.botName,
+          roleName: draft.roleName,
+          message: content,
+          project: draft.project,
+          taskSlug: draft.taskSlug,
+          taskDir: draft.taskDir,
+          cwd: draftCwd,
+          channelId: draft.channelId,
+          responseSink: async () => {},
+          registry: deps.registry,
+        })
+          .then(() => {
+            const updated = deps.botSessionManager.getSession(botName);
+            if (updated) {
+              deps.wsAdapter.broadcastNotification('draft_status', {
+                sessionId: updated.sessionId,
+                botName: updated.botName,
+                role: updated.role,
+                project: updated.project,
+                turnCount: updated.turnCount,
+                costUsd: updated.cumulativeCostUsd,
+                contextPct: updated.contextWindow > 0
+                  ? Math.round((updated.lastInputTokens / updated.contextWindow) * 100) : 0,
+                lastInputTokens: updated.lastInputTokens,
+                lastOutputTokens: updated.lastOutputTokens,
+                lastActivity: updated.lastActivityAt,
+              });
+            }
+          })
+          .catch((err: unknown) => {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logger.error({ err: errMsg, botName }, 'lazy session creation failed');
+          });
+
+        return { status: 'submitted', botName, firstMessage: true };
       }
       if (session.staleRole) {
         throw new JSONRPCErrorException(
@@ -348,9 +407,18 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     // Mark bot as drafted synchronously — closes race window with Slack queue
     deps.placementStore?.setDrafted(botName, 'ws');
 
-    // Session is created lazily on first submit_prompt (avoids empty-message SDK error).
-    // get_draft_status returns active: false until the first message arrives.
+    // Store draft context — session is created lazily on first submit_prompt
+    // (avoids empty-message SDK error). get_draft_status returns active: false until first message.
     const channelId = `draft-${Date.now()}`;
+    pendingDrafts.set(botName, {
+      botName,
+      roleName: roleName,
+      project: project.name,
+      taskSlug,
+      taskDir,
+      channelId,
+    });
+
     return { botName, sessionId: channelId, taskSlug, project: project.name };
   });
 
@@ -361,6 +429,14 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     if (typeof botName !== 'string') {
       throw new JSONRPCErrorException('bot is required', -32602);
+    }
+
+    // Handle pending draft (drafted but no message sent yet)
+    const pending = pendingDrafts.get(botName);
+    if (pending) {
+      pendingDrafts.delete(botName);
+      deps.placementStore?.setAvailable(botName);
+      return { botName, sessionId: pending.channelId, taskSlug: pending.taskSlug, turns: 0, cost: 0, durationMs: 0 };
     }
 
     const session = deps.botSessionManager.getSession(botName);
