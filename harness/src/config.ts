@@ -20,9 +20,9 @@ export const ConfigSchema = z.object({
     stallTimeoutSeconds: z.number().positive().default(300),
   }).default({ stallTimeoutSeconds: 300 }),
   agent: z.object({
-    maxTurns: z.number().int().positive().default(50),
-    maxBudgetUsd: z.number().positive().default(1.00),
-  }).default({ maxTurns: 50, maxBudgetUsd: 1.00 }),
+    maxTurns: z.number().int().nonnegative().default(0),
+    maxBudgetUsd: z.number().nonnegative().default(0),
+  }).default({ maxTurns: 0, maxBudgetUsd: 0 }),
   logging: z.object({
     level: LogLevelSchema,
   }).default({ level: 'debug' }),
@@ -60,6 +60,14 @@ export function resolveModelId(modelHint: string, config: Config): string {
   return config.models.aliases[modelHint] ?? config.models.default;
 }
 
+/**
+ * Resolve the default model ID. If `models.default` is an alias name,
+ * resolve it through the aliases map first.
+ */
+export function resolveDefaultModelId(config: Config): string {
+  return config.models.aliases[config.models.default] ?? config.models.default;
+}
+
 let _config: Config | undefined;
 
 /**
@@ -92,7 +100,7 @@ function deepMerge(
 export function loadConfig(): Config {
   // Load package defaults (fallback for missing user fields)
   let defaults: Record<string, unknown> = {};
-  const defaultsPath = getPackagePath('config.defaults.toml');
+  const defaultsPath = getPackagePath('templates', 'config.defaults.toml');
   if (existsSync(defaultsPath)) {
     try {
       defaults = parseToml(readFileSync(defaultsPath, 'utf8')) as Record<string, unknown>;
@@ -101,15 +109,17 @@ export function loadConfig(): Config {
     }
   }
 
-  // Load user config
+  // Load user config (optional — package defaults are sufficient)
+  let userConfig: Record<string, unknown> = {};
   const configPath = getInstancePath('config.toml');
-  let userConfig: Record<string, unknown>;
-  try {
-    const content = readFileSync(configPath, 'utf8');
-    userConfig = parseToml(content) as Record<string, unknown>;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to read config.toml: ${msg}`);
+  if (existsSync(configPath)) {
+    try {
+      const content = readFileSync(configPath, 'utf8');
+      userConfig = parseToml(content) as Record<string, unknown>;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to read config.toml: ${msg}`);
+    }
   }
 
   // Merge: defaults <- user overrides

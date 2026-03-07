@@ -9,11 +9,11 @@
 # ──────────────────────────────────────────────────────────────
 
 # ── Models ────────────────────────────────────────────────────
-# default: the model used when no role model-hint matches an alias.
+# default: model alias used when no role model-hint matches.
 # aliases: map friendly names used in role frontmatter to concrete model IDs.
 
 [models]
-default = "claude-sonnet-4-6"
+default = "sonnet-latest"
 
 [models.aliases]
 opus-latest   = "claude-opus-4-6"
@@ -26,12 +26,12 @@ haiku-latest  = "claude-haiku-4-5-20251001"
 [defaults]
 stallTimeoutSeconds = 300       # 5 minutes
 
-# maxTurns: hard limit on SDK tool-use rounds per dispatch.
-# maxBudgetUsd: cost cap per dispatch (Anthropic API billing).
+# maxTurns: hard limit on SDK tool-use rounds per dispatch. 0 = unlimited.
+# maxBudgetUsd: cost cap per dispatch (Anthropic API billing). 0 = unlimited.
 
 [agent]
-maxTurns    = 50
-maxBudgetUsd = 1.00
+maxTurns    = 0
+maxBudgetUsd = 0
 
 # ── Logging ───────────────────────────────────────────────────
 # level: minimal (errors only) | debug (default, structured logs) | verbose (+ heartbeat)
@@ -44,7 +44,7 @@ level = "debug"
 # rules: pattern-based role routing (evaluated in order, first match wins).
 
 [routing]
-default = "researcher"
+default = "assistant"
 
 # Example routing rule:
 # [[routing.rules]]
@@ -57,7 +57,7 @@ default = "researcher"
 # defaultRole: which role the bot uses (default: routing.default).
 #
 # Example:
-# [bots.hazel]
+# [bots.greg]
 # defaultProject = "lobby"
 # defaultRole    = "researcher"
 
@@ -66,13 +66,6 @@ default = "researcher"
 
 [pool]
 maxConcurrent = 0
-
-# ── MCP ───────────────────────────────────────────────────────
-# streamTimeout: max time (ms) to wait for SDK subprocess stream close.
-# Increase if agents run very long tool calls.
-
-[mcp]
-streamTimeout = 600000          # 10 minutes
 
 # ── WebSocket Adapter ─────────────────────────────────────────
 # Enables the JSON-RPC 2.0 WebSocket interface for TUI and external clients.
@@ -94,6 +87,6 @@ host = "127.0.0.1"
 # defaultRole = "researcher"
 # taskRotationIntervalHours = 24
 #
-# [slack.bots.hazel]
-# botTokenEnv = "HAZEL_BOT_TOKEN"
-# appTokenEnv = "HAZEL_APP_TOKEN"
+# [slack.bots.greg]
+# botTokenEnv = "GREG_BOT_TOKEN"
+# appTokenEnv = "GREG_APP_TOKEN"

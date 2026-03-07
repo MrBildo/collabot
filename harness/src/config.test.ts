@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConfigSchema, resolveModelId } from './config.js';
+import { ConfigSchema, resolveModelId, resolveDefaultModelId } from './config.js';
 
 const validSlack = {
   bots: {
@@ -200,8 +200,8 @@ test('agent section defaults applied when omitted', () => {
   const raw = validConfig();
   const result = ConfigSchema.safeParse(raw);
   assert.ok(result.success);
-  assert.strictEqual(result.data.agent.maxTurns, 50);
-  assert.strictEqual(result.data.agent.maxBudgetUsd, 1.00);
+  assert.strictEqual(result.data.agent.maxTurns, 0);
+  assert.strictEqual(result.data.agent.maxBudgetUsd, 0);
 });
 
 test('agent section with custom values parses correctly', () => {
@@ -212,8 +212,22 @@ test('agent section with custom values parses correctly', () => {
   assert.strictEqual(result.data.agent.maxBudgetUsd, 5.00);
 });
 
-test('agent.maxTurns must be positive', () => {
-  const raw = validConfig({ agent: { maxTurns: 0, maxBudgetUsd: 1.00 } });
+test('agent.maxTurns of 0 is valid (unlimited)', () => {
+  const raw = validConfig({ agent: { maxTurns: 0, maxBudgetUsd: 0 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.agent.maxTurns, 0);
+  assert.strictEqual(result.data.agent.maxBudgetUsd, 0);
+});
+
+test('agent.maxTurns rejects negative values', () => {
+  const raw = validConfig({ agent: { maxTurns: -1, maxBudgetUsd: 0 } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+});
+
+test('agent.maxBudgetUsd rejects negative values', () => {
+  const raw = validConfig({ agent: { maxTurns: 0, maxBudgetUsd: -1 } });
   const result = ConfigSchema.safeParse(raw);
   assert.ok(!result.success);
 });
@@ -348,6 +362,30 @@ test('bots entry with only defaultProject is valid', () => {
   assert.ok(result.success);
   assert.strictEqual(result.data.bots?.['hazel']?.defaultProject, 'slack-room');
   assert.strictEqual(result.data.bots?.['hazel']?.defaultRole, undefined);
+});
+
+// ============================================================
+// resolveDefaultModelId tests
+// ============================================================
+
+test('resolveDefaultModelId resolves alias name as default', () => {
+  const config = ConfigSchema.parse(validConfig({
+    models: {
+      default: 'sonnet-latest',
+      aliases: { 'sonnet-latest': 'claude-sonnet-4-6' },
+    },
+  }));
+  assert.strictEqual(resolveDefaultModelId(config), 'claude-sonnet-4-6');
+});
+
+test('resolveDefaultModelId passes through raw model ID', () => {
+  const config = ConfigSchema.parse(validConfig({
+    models: {
+      default: 'claude-sonnet-4-6',
+      aliases: { 'sonnet-latest': 'claude-sonnet-4-6' },
+    },
+  }));
+  assert.strictEqual(resolveDefaultModelId(config), 'claude-sonnet-4-6');
 });
 
 test('slack config without role field is valid (credentials only)', () => {

@@ -7,6 +7,8 @@
 .projects/
 bots/
 roles/
+!harness/templates/bots/
+!harness/templates/roles/
 
 # Agent workspace (local only)
 .agents/

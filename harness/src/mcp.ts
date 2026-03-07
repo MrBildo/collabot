@@ -89,7 +89,7 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
   const { pool, projects, projectsDir, roles } = options;
 
   const readonlyTools = [
-    tool('list_agents', 'List currently active agents in the pool', {},
+    tool('list_agents', 'List currently active agents in the pool. Returns an array of agent objects with id, role, taskSlug, and startedAt fields. Use this to check what agents are running before drafting new ones.', {},
       async () => {
         const agents = pool.list().map((a) => ({
           id: a.id,
@@ -103,7 +103,7 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('list_tasks', 'List tasks for the current project', {},
+    tool('list_tasks', 'List tasks for the current project. Returns task manifests (slug, name, status, created timestamp) scoped to your parent project. Tasks track dispatches, events, and structured results.', {},
       async () => {
         const resolvedName = options.parentProject;
         if (!resolvedName) {
@@ -127,7 +127,7 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('get_task_context', 'Get reconstructed context for a task (history of prior dispatches)', {
+    tool('get_task_context', 'Get reconstructed context for a task. Returns a structured narrative of prior dispatches including roles, prompts, results, and events — useful for understanding what has already been done before continuing work on a task.', {
       taskSlug: z.string(),
     },
       async ({ taskSlug }) => {
@@ -161,7 +161,7 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
       },
     ),
 
-    tool('list_projects', 'Get info about the current project', {},
+    tool('list_projects', 'Get info about the current project. Returns the project name, description, repository paths, and available roles. Scoped to your parent project context.', {},
       async () => {
         const resolvedName = options.parentProject;
         if (!resolvedName) {
@@ -208,7 +208,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
   }
 
   return [
-    tool('draft_agent', 'Dispatch a new agent asynchronously. Returns an agent ID immediately — use await_agent to wait for results.', {
+    tool('draft_agent', 'Dispatch a new agent asynchronously. Returns an agentId immediately (non-blocking). The agent runs in the background — use await_agent with the returned agentId to block until it completes and get its result. Supports cross-project dispatch via the optional project parameter.', {
       role: z.string(),
       prompt: z.string(),
       taskSlug: z.string().optional(),
@@ -305,7 +305,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
       },
     ),
 
-    tool('await_agent', 'Block until a previously drafted agent completes and return its result.', {
+    tool('await_agent', 'Block until a previously drafted agent completes and return its structured result. Returns status (success/failed/aborted), result summary, cost, and duration. The agentId comes from a prior draft_agent call.', {
       agentId: z.string(),
     },
       async ({ agentId }) => {
@@ -339,7 +339,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
       },
     ),
 
-    tool('kill_agent', 'Abort a running agent.', {
+    tool('kill_agent', 'Abort a running agent immediately. Removes it from the pool and tracker. Use this to cancel agents that are stuck, taking too long, or no longer needed.', {
       agentId: z.string(),
     },
       async ({ agentId }) => {

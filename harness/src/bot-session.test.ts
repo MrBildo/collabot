@@ -196,12 +196,12 @@ test('assembleBotPrompt includes soul prompt section', () => {
   }
 });
 
-test('assembleBotPrompt includes tool docs for agent-draft permission', () => {
+test('assembleBotPrompt with agent-draft permission produces same prompt (tool docs removed)', () => {
   try {
     const withDraft = assembleBotPrompt('Soul.', 'Role.', ['agent-draft']);
     const withoutDraft = assembleBotPrompt('Soul.', 'Role.', []);
-    // With agent-draft should be longer (includes tool docs)
-    assert.ok(withDraft.length > withoutDraft.length);
+    // Tool docs no longer injected — permissions don't change prompt length
+    assert.strictEqual(withDraft.length, withoutDraft.length);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('Instance root not found') || msg.includes('ENOENT')) {
