@@ -18,18 +18,18 @@ npm install -g collabot
 
 ```
 collabot init          # scaffold ~/.collabot/
-collabot setup         # configure API key, roles, and bots
+collabot setup         # configure roles, bots, and integrations
 collabot start         # start the harness
 ```
 
-`collabot init` creates an instance directory at `~/.collabot/` with default configuration, prompt templates, and empty directories for roles, bots, and projects. `collabot setup` walks you through API key configuration, role/bot selection, and optional Slack integration. Edit `~/.collabot/config.toml` to fine-tune model aliases, agent defaults, and adapter settings.
+`collabot init` creates an instance directory at `~/.collabot/` with default configuration, prompt templates, and empty directories for roles, bots, and projects. `collabot setup` verifies your Claude Code CLI installation, then walks you through role/bot selection and optional Slack integration. Edit `~/.collabot/config.toml` to fine-tune model aliases, agent defaults, and adapter settings.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `collabot init` | Scaffold a new instance at `~/.collabot/` |
-| `collabot setup` | Interactive wizard — API key, roles, bots, Slack |
+| `collabot setup` | Interactive wizard — CLI check, roles, bots, Slack |
 | `collabot start` | Start the harness |
 | `collabot dispatch` | One-shot CLI dispatch |
 | `collabot --version` | Print version |
@@ -52,12 +52,12 @@ Override the instance location with the `COLLABOT_HOME` environment variable:
 COLLABOT_HOME=/path/to/instance collabot start
 ```
 
-Secrets (API keys, bot tokens) go in `~/.collabot/.env`.
+Secrets (Slack bot tokens, system paths) go in `~/.collabot/.env`. Authentication is managed by the Claude Code CLI, not by Collabot directly.
 
 ## Requirements
 
 - Node.js >= 22
-- An AI provider API key configured
+- [Claude Code CLI](https://code.claude.com) installed and authenticated (`npm install -g @anthropic-ai/claude-code`, then run `claude` to log in)
 
 ## Links
 

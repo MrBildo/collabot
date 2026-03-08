@@ -11,6 +11,8 @@ import { extractToolTarget } from "./util.js";
 import { detectErrorLoop, detectNonRetryable } from "./monitor.js";
 import { getDispatchStore, makeCapturedEvent } from "./dispatch-store.js";
 
+const AUTH_FAILURE_MSG = 'Authentication failed — Claude Code CLI is not logged in. Run `claude` in a terminal to authenticate. See https://code.claude.com/docs/en/authentication';
+
 // JSON Schema for structured agent output — mirrors AgentResultSchema
 const AGENT_RESULT_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -220,12 +222,44 @@ export async function dispatch(
     })) {
       resetStallTimer();
 
-      if (msg.type === "system" && msg.subtype === "init") {
+      if (msg.type === 'auth_status' && msg.error) {
+        logger.error({ error: msg.error, output: msg.output }, 'authentication failed during dispatch');
+        emitEvent('harness:error', { message: `auth_status error: ${msg.error}` });
+        emitEvent('session:complete', { status: 'crashed', error: 'authentication_failed' });
+        if (taskDir) {
+          try {
+            dispatchStore.updateDispatch(taskDir, dispatchId, {
+              status: 'crashed',
+              completedAt: new Date().toISOString(),
+            });
+          } catch { /* non-fatal */ }
+        }
+        controller.abort();
+        return { status: 'crashed', error: AUTH_FAILURE_MSG, duration_ms: Date.now() - startTime, model: resolvedModel };
+      } else if (msg.type === "system" && msg.subtype === "init") {
         sessionId = msg.session_id;
         model = msg.model;
         logger.info({ sessionId, model }, "agent session started");
         emitEvent('session:init', { sessionId: msg.session_id, model: msg.model });
       } else if (msg.type === "assistant") {
+        // Check for API-level errors (auth, billing, rate limit, etc.)
+        if (msg.error) {
+          logger.error({ error: msg.error, sessionId }, 'assistant message error during dispatch');
+          emitEvent('harness:error', { message: `assistant error: ${msg.error}` });
+          if (msg.error === 'authentication_failed') {
+            emitEvent('session:complete', { status: 'crashed', error: 'authentication_failed' });
+            if (taskDir) {
+              try {
+                dispatchStore.updateDispatch(taskDir, dispatchId, {
+                  status: 'crashed',
+                  completedAt: new Date().toISOString(),
+                });
+              } catch { /* non-fatal */ }
+            }
+            controller.abort();
+            return { status: 'crashed', error: AUTH_FAILURE_MSG, duration_ms: Date.now() - startTime, model: resolvedModel };
+          }
+        }
         for (const block of msg.message.content) {
           // Emit text blocks as chat events
           if (block.type === "text" && typeof (block as Record<string, unknown>).text === "string") {
@@ -538,6 +572,23 @@ export async function dispatch(
       return { status: "aborted", cost: resultMsg?.total_cost_usd, duration_ms: Date.now() - startTime, model: resolvedModel, usage: resultMsg ? extractUsageMetrics(resultMsg) : undefined };
     }
     const message = err instanceof Error ? err.message : String(err);
+
+    // Detect auth-related errors in thrown exceptions
+    if (/auth|unauthorized|not.logged.in|login.*required/i.test(message)) {
+      logger.error({ err, message }, 'agent crashed: authentication failure');
+      emitEvent('harness:error', { message: AUTH_FAILURE_MSG });
+      emitEvent('session:complete', { status: 'crashed', error: 'authentication_failed' });
+      if (taskDir) {
+        try {
+          dispatchStore.updateDispatch(taskDir, dispatchId, {
+            status: 'crashed',
+            completedAt: new Date().toISOString(),
+          });
+        } catch { /* non-fatal */ }
+      }
+      return { status: 'crashed', error: AUTH_FAILURE_MSG, duration_ms: Date.now() - startTime, model: resolvedModel };
+    }
+
     logger.error({ err, message }, "agent crashed");
     emitEvent('harness:error', { message });
     emitEvent('session:complete', { status: 'crashed', error: message });

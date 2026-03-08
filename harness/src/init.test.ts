@@ -73,13 +73,14 @@ test('runInit creates expected files', () => {
   }
 });
 
-test('runInit .env contains ANTHROPIC_API_KEY', () => {
+test('runInit .env references Claude Code CLI for auth', () => {
   const targetDir = path.join(os.tmpdir(), `collabot-init-test-${Date.now()}`);
   try {
     runInitInDir(targetDir);
 
     const env = fs.readFileSync(path.join(targetDir, '.env'), 'utf8');
-    assert.ok(env.includes('ANTHROPIC_API_KEY'), '.env should have API key placeholder');
+    assert.ok(env.includes('claude'), '.env should reference Claude Code CLI');
+    assert.ok(!env.includes('ANTHROPIC_API_KEY'), '.env should not have API key placeholder');
   } finally {
     fs.rmSync(targetDir, { recursive: true, force: true });
   }

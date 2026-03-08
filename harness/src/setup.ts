@@ -114,6 +114,18 @@ export function patchEnvFile(envPath: string, key: string, value: string): void 
 
 // ── Platform checks ──────────────────────────────────────────
 
+/**
+ * Check if Claude Code CLI is installed. Returns version string if found, null otherwise.
+ */
+function checkClaudeCli(): string | null {
+  try {
+    const version = execSync('claude --version', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    return version || 'installed';
+  } catch {
+    return null;
+  }
+}
+
 function checkNode(): string | null {
   const [major] = process.versions.node.split('.').map(Number);
   if (major !== undefined && major < 22) {
@@ -184,22 +196,25 @@ export async function runSetup(): Promise<void> {
     p.log.step(`Instance found at ${target}`);
   }
 
-  // 2. API key
-  const apiKey = await p.text({
-    message: 'Anthropic API key (press Enter to skip)',
-    placeholder: 'sk-ant-...',
-  });
-
-  if (p.isCancel(apiKey)) {
-    p.cancel('Setup cancelled.');
-    process.exit(0);
-  }
-
-  if (apiKey && apiKey.trim()) {
-    patchEnvFile(path.join(target, '.env'), 'ANTHROPIC_API_KEY', apiKey.trim());
-    p.log.success('API key saved to .env');
+  // 2. Claude Code CLI check
+  const claudeInstalled = checkClaudeCli();
+  if (claudeInstalled) {
+    p.log.success(`Claude Code CLI found: ${claudeInstalled}`);
+    p.log.info(
+      'Collabot dispatches bots via the Claude Code CLI.\n' +
+      'Authentication is managed by the CLI — run `claude` to log in or check status.\n' +
+      'Supported methods: Claude Pro/Max/Teams/Enterprise, Console API key,\n' +
+      'Amazon Bedrock, Google Vertex AI, Microsoft Foundry.\n' +
+      'See https://code.claude.com/docs/en/authentication',
+    );
   } else {
-    p.log.info('Skipped — add ANTHROPIC_API_KEY to .env later.');
+    p.log.warn(
+      'Claude Code CLI not found.\n' +
+      'Collabot requires Claude Code CLI to dispatch bots.\n' +
+      'Install: npm install -g @anthropic-ai/claude-code\n' +
+      'Then run `claude` to authenticate.\n' +
+      'See https://code.claude.com/docs/en/authentication',
+    );
   }
 
   // 3. Platform checks
@@ -357,36 +372,5 @@ export async function runSetup(): Promise<void> {
     }
   }
 
-  // 7. Validate API key if provided
-  if (apiKey && apiKey.trim()) {
-    const s = p.spinner();
-    s.start('Validating API key...');
-    const valid = await validateApiKey(apiKey.trim());
-    if (valid) {
-      s.stop('API key is valid');
-    } else {
-      s.stop('API key validation failed — check the key and try again');
-    }
-  }
-
   p.outro('Setup complete! Run `collabot start` to boot the harness.');
-}
-
-/**
- * Quick validation of Anthropic API key via a minimal API call.
- */
-async function validateApiKey(key: string): Promise<boolean> {
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/models', {
-      method: 'GET',
-      headers: {
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
-    });
-    // 200 = valid key, 401 = invalid, anything else = network issue
-    return res.status === 200;
-  } catch {
-    return false;
-  }
 }
