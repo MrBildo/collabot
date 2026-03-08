@@ -45,7 +45,7 @@ Collabot is a **service installed on a machine**, not a library consumed by proj
 ```
 npm install -g collabot    # install the platform
 collabot init              # scaffold ~/.collabot/ with minimal config
-collabot setup             # configure API key, roles, and bots
+collabot setup             # configure roles, bots, and environment
 collabot start             # run the service
 ```
 

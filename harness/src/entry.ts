@@ -55,7 +55,7 @@ function printHelp(): void {
   Usage:
     collabot start                Start the harness
     collabot init                 Scaffold a new instance (~/.collabot/)
-    collabot setup                Interactive setup wizard (roles, bots, API key)
+    collabot setup                Interactive setup wizard (roles, bots, environment)
     collabot dispatch [options]   One-shot CLI dispatch
     collabot --version            Print version
 
