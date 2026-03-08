@@ -126,8 +126,8 @@ export function patchEnvFile(envPath: string, key: string, value: string): void 
 
 function checkNode(): string | null {
   const [major] = process.versions.node.split('.').map(Number);
-  if (major !== undefined && major < 18) {
-    return `Node.js ${process.versions.node} detected — Collabot requires Node.js 18+.`;
+  if (major !== undefined && major < 22) {
+    return `Node.js ${process.versions.node} detected — Collabot requires Node.js 22+.`;
   }
   return null;
 }
@@ -387,18 +387,12 @@ export async function runSetup(): Promise<void> {
  */
 async function validateApiKey(key: string): Promise<boolean> {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
+    const res = await fetch('https://api.anthropic.com/v1/models', {
+      method: 'GET',
       headers: {
         'x-api-key': key,
         'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'ping' }],
-      }),
     });
     // 200 = valid key, 401 = invalid, anything else = network issue
     return res.status === 200;

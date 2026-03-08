@@ -50,7 +50,7 @@ export function runInit(): void {
   console.log('  bots/              bot definitions (empty — use `collabot setup` to add)');
   console.log('  .projects/         project manifests and task data');
   console.log('\nNext steps:');
-  console.log('  1. Run `collabot setup` to configure roles, bots, and API key');
-  console.log('  2. Or edit .env and add roles/bots manually');
-  console.log('  3. Run `collabot start` to boot the harness');
+  console.log('  1. Run `collabot setup` to configure API key, roles, and bots');
+  console.log('  2. Then `collabot start` to boot the harness');
+  console.log('\n  Note: the harness requires at least one role to start.');
 }
