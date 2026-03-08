@@ -106,9 +106,12 @@ export class BotSessionManager {
       throw new Error(`Role "${roleName}" not found`);
     }
 
-    // Get or create session
+    // Get or create session — close old session on task change
     let session = this.sessions.get(botName);
     if (!session || session.taskSlug !== taskSlug) {
+      if (session) {
+        this.closeSession(botName);
+      }
       session = this.createSession(botName, roleName, project, taskSlug, taskDir, channelId);
     }
 
