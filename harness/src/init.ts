@@ -32,13 +32,13 @@ export function runInit(): void {
   // Output summary
   console.log(`\nCollabot instance created at ${target}\n`);
   console.log('  config.toml        operational settings (models, pool, adapters)');
-  console.log('  .env               secrets (API keys, tokens, system paths)');
+  console.log('  .env               secrets (Slack tokens, system paths)');
   console.log('  prompts/system.md  agent system prompt');
   console.log('  roles/             role definitions (empty — use `collabot setup` to add)');
   console.log('  bots/              bot definitions (empty — use `collabot setup` to add)');
   console.log('  .projects/         project manifests and task data');
   console.log('\nNext steps:');
-  console.log('  1. Run `collabot setup` to configure API key, roles, and bots');
+  console.log('  1. Run `collabot setup` to configure roles, bots, and environment');
   console.log('  2. Then `collabot start` to boot the harness');
   console.log('\n  Note: the harness requires at least one role to start.');
 }
