@@ -6,6 +6,8 @@ export type { InboundMessage, ChannelMessage, CommunicationProvider, VirtualProj
 export type { Project } from './project.js';
 export type { BotPlacement } from './bot-placement.js';
 
+export type BotStatus = 'available' | 'busy' | 'drafted';
+
 export type BotDefinition = {
   id: string;           // ULID (26 chars)
   name: string;         // EntityNameSchema
@@ -127,36 +129,6 @@ export type DispatchOptions = {
   loopDetectionThresholds?: LoopDetectionThresholds;
 };
 
-export type DraftSession = {
-  sessionId: string;
-  agentId: string;
-  role: string;
-  project: string;
-  taskSlug: string;
-  taskDir: string;
-  channelId: string;
-  startedAt: string;       // ISO
-  lastActivityAt: string;  // ISO
-  turnCount: number;
-  status: 'active' | 'closed';
-  sessionInitialized: boolean;  // true after first query() starts — SDK session files exist on disk
-  dispatchId?: string;           // ULID — v2 dispatch envelope ID (one per draft session, D11)
-  cumulativeCostUsd: number;
-  lastInputTokens: number;
-  lastOutputTokens: number;
-  contextWindow: number;
-  maxOutputTokens: number;
-  staleRole?: boolean;      // true if recovered draft references a role that no longer exists
-};
-
-export type DraftSummary = {
-  sessionId: string;
-  taskSlug: string;
-  turns: number;
-  costUsd: number;
-  durationMs: number;
-};
-
 // ── Event Capture ────────────────────────────────────────────
 
 export type EventCategory = 'agent' | 'session' | 'harness' | 'user' | 'system';
@@ -173,6 +145,7 @@ export type EventType =
   | 'session:compaction'
   | 'session:rate_limit'
   | 'session:status'
+  | 'session:context_reconstructed'
   // Harness interventions
   | 'harness:loop_warning'
   | 'harness:loop_kill'

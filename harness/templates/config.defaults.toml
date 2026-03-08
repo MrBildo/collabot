@@ -1,0 +1,92 @@
+# ──────────────────────────────────────────────────────────────
+# Collabot — default configuration
+# ──────────────────────────────────────────────────────────────
+# Copied to ~/.collabot/config.toml on `collabot init`.
+# This file is the package fallback — fields missing from the
+# instance config.toml are filled in from here.
+#
+# Secrets (API keys, tokens, paths) belong in .env, not here.
+# ──────────────────────────────────────────────────────────────
+
+# ── Models ────────────────────────────────────────────────────
+# default: model alias used when no role model-hint matches.
+# aliases: map friendly names used in role frontmatter to concrete model IDs.
+
+[models]
+default = "sonnet-latest"
+
+[models.aliases]
+opus-latest   = "claude-opus-4-6"
+sonnet-latest = "claude-sonnet-4-6"
+haiku-latest  = "claude-haiku-4-5-20251001"
+
+# ── Agent Defaults ────────────────────────────────────────────
+# stallTimeoutSeconds: kill the agent if no SDK event arrives within this window.
+
+[defaults]
+stallTimeoutSeconds = 300       # 5 minutes
+
+# maxTurns: hard limit on SDK tool-use rounds per dispatch. 0 = unlimited.
+# maxBudgetUsd: cost cap per dispatch (Anthropic API billing). 0 = unlimited.
+
+[agent]
+maxTurns    = 0
+maxBudgetUsd = 0
+
+# ── Logging ───────────────────────────────────────────────────
+# level: minimal (errors only) | debug (default, structured logs) | verbose (+ heartbeat)
+
+[logging]
+level = "debug"
+
+# ── Routing ───────────────────────────────────────────────────
+# default: role assigned when no routing rule matches.
+# rules: pattern-based role routing (evaluated in order, first match wins).
+
+[routing]
+default = "assistant"
+
+# Example routing rule:
+# [[routing.rules]]
+# pattern = "*.test.*"
+# role    = "qa-dev"
+
+# ── Bot Configuration ────────────────────────────────────────
+# Per-bot settings. The key is the bot name (must match a file in bots/).
+# defaultProject: where the bot starts (default: lobby).
+# defaultRole: which role the bot uses (default: routing.default).
+#
+# Example:
+# [bots.greg]
+# defaultProject = "lobby"
+# defaultRole    = "researcher"
+
+# ── Agent Pool ────────────────────────────────────────────────
+# maxConcurrent: limit on simultaneously running agents. 0 = unlimited.
+
+[pool]
+maxConcurrent = 0
+
+# ── WebSocket Adapter ─────────────────────────────────────────
+# Enables the JSON-RPC 2.0 WebSocket interface for TUI and external clients.
+# Remove this section to disable the WS adapter entirely.
+
+[ws]
+port = 9800
+host = "127.0.0.1"
+
+# ── Slack Adapter ─────────────────────────────────────────────
+# Enable by adding bot credentials. Each bot needs a Slack App with
+# Socket Mode enabled. Token env var names point to .env entries.
+#
+# defaultRole: fallback role for Slack-connected bots.
+# taskRotationIntervalHours: how often to rotate session tasks.
+#
+# Example:
+# [slack]
+# defaultRole = "researcher"
+# taskRotationIntervalHours = 24
+#
+# [slack.bots.greg]
+# botTokenEnv = "GREG_BOT_TOKEN"
+# appTokenEnv = "GREG_APP_TOKEN"

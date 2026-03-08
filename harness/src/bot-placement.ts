@@ -1,6 +1,6 @@
 import { logger } from './logger.js';
 import type { Config } from './config.js';
-import type { BotDefinition, RoleDefinition } from './types.js';
+import type { BotDefinition, RoleDefinition, BotStatus } from './types.js';
 import type { VirtualProjectSkill, VirtualProjectMeta } from './comms.js';
 import type { Project } from './project.js';
 
@@ -8,6 +8,8 @@ export type BotPlacement = {
   botName: string;
   project: string;
   roleName: string;
+  status: BotStatus;
+  draftedBy?: string;   // adapter name that owns the draft
   disallowedTools?: string[];
   skills?: VirtualProjectSkill[];
 };
@@ -60,6 +62,7 @@ export function placeBots(
       botName,
       project: projectName,
       roleName,
+      status: 'available',
       ...(meta?.disallowedTools ? { disallowedTools: meta.disallowedTools } : {}),
       ...(meta?.skills ? { skills: meta.skills } : {}),
     };
@@ -68,4 +71,77 @@ export function placeBots(
   }
 
   return placements;
+}
+
+// ── BotPlacementStore ─────────────────────────────────────────
+
+/**
+ * Mutable wrapper around bot placements. Keeps the pure `placeBots()` function
+ * for initial computation, adds runtime mutation (move, status changes).
+ */
+export class BotPlacementStore {
+  private placements: Map<string, BotPlacement>;
+
+  constructor(initial: Map<string, BotPlacement>) {
+    this.placements = new Map(initial);
+  }
+
+  get(botName: string): BotPlacement | undefined {
+    return this.placements.get(botName);
+  }
+
+  getAll(): Map<string, BotPlacement> {
+    return new Map(this.placements);
+  }
+
+  /**
+   * Move a bot to a new project. Operator override — works regardless of current status.
+   * Returns the previous project name.
+   */
+  moveBot(botName: string, targetProject: string, opts?: { roleName?: string }): string {
+    const placement = this.placements.get(botName);
+    if (!placement) {
+      throw new Error(`Bot "${botName}" not found in placements`);
+    }
+
+    const previousProject = placement.project;
+    placement.project = targetProject;
+    if (opts?.roleName) {
+      placement.roleName = opts.roleName;
+    }
+    // Moving to lobby makes the bot available
+    if (targetProject.toLowerCase() === 'lobby') {
+      placement.status = 'available';
+      placement.draftedBy = undefined;
+    }
+
+    logger.info({ botName, from: previousProject, to: targetProject }, 'bot moved');
+    return previousProject;
+  }
+
+  /** Mark a bot as drafted by an adapter */
+  setDrafted(botName: string, adapterName: string): void {
+    const placement = this.placements.get(botName);
+    if (placement) {
+      placement.status = 'drafted';
+      placement.draftedBy = adapterName;
+    }
+  }
+
+  /** Mark a bot as busy (e.g., processing a Slack message) */
+  setBusy(botName: string): void {
+    const placement = this.placements.get(botName);
+    if (placement) {
+      placement.status = 'busy';
+    }
+  }
+
+  /** Return a bot to available status */
+  setAvailable(botName: string): void {
+    const placement = this.placements.get(botName);
+    if (placement) {
+      placement.status = 'available';
+      placement.draftedBy = undefined;
+    }
+  }
 }

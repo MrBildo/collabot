@@ -22,6 +22,17 @@ const PACKAGE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 let _instanceRoot: string | undefined;
 
 /**
+ * Resolve the instance target path without requiring it to exist.
+ * Used by init/setup which create the directory.
+ */
+export function resolveInstanceTarget(): string {
+  const fromEnv = process.env.COLLABOT_HOME;
+  return fromEnv
+    ? path.resolve(fromEnv)
+    : path.join(os.homedir(), '.collabot');
+}
+
+/**
  * Resolve the instance root directory.
  *
  * Priority: COLLABOT_HOME env var → ~/.collabot/ default.
@@ -30,15 +41,12 @@ let _instanceRoot: string | undefined;
 export function getInstanceRoot(): string {
   if (_instanceRoot !== undefined) return _instanceRoot;
 
-  const fromEnv = process.env.COLLABOT_HOME;
-  const resolved = fromEnv
-    ? path.resolve(fromEnv)
-    : path.join(os.homedir(), '.collabot');
+  const resolved = resolveInstanceTarget();
 
   if (!fs.existsSync(resolved)) {
     throw new Error(
       `Instance root not found at ${resolved}. ` +
-      (fromEnv
+      (process.env.COLLABOT_HOME
         ? 'Check that COLLABOT_HOME points to an existing directory.'
         : 'Set COLLABOT_HOME or run `collabot init`.'),
     );

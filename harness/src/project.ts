@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import yaml from 'js-yaml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 import type { RoleDefinition } from './types.js';
 
@@ -36,13 +36,13 @@ export function loadProjects(
     .filter((d) => d.isDirectory());
 
   for (const entry of entries) {
-    const manifestPath = path.join(projectsDir, entry.name, 'project.yaml');
+    const manifestPath = path.join(projectsDir, entry.name, 'project.toml');
     if (!fs.existsSync(manifestPath)) continue;
 
     let raw: unknown;
     try {
       const content = fs.readFileSync(manifestPath, 'utf-8');
-      raw = yaml.load(content);
+      raw = parseToml(content);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to read ${manifestPath}: ${msg}`);
@@ -102,18 +102,18 @@ export function ensureVirtualProject(
 ): Project {
   const key = name.toLowerCase();
   const projectDir = path.join(projectsDir, key);
-  const manifestPath = path.join(projectDir, 'project.yaml');
+  const manifestPath = path.join(projectDir, 'project.toml');
 
   if (fs.existsSync(manifestPath)) {
     try {
       const content = fs.readFileSync(manifestPath, 'utf-8');
-      const raw = yaml.load(content);
+      const raw = parseToml(content);
       const result = ProjectManifestSchema.safeParse(raw);
       if (result.success) {
         return result.data;
       }
     } catch {
-      // Corrupt YAML — recreate below
+      // Corrupt TOML — recreate below
     }
   }
 
@@ -127,15 +127,15 @@ export function ensureVirtualProject(
     virtual: true,
   };
 
-  const yamlContent = yaml.dump(project, { lineWidth: -1 });
-  fs.writeFileSync(manifestPath, yamlContent, 'utf-8');
+  const tomlContent = stringifyToml(project);
+  fs.writeFileSync(manifestPath, tomlContent, 'utf-8');
 
   return project;
 }
 
 /**
  * Scaffold a new project manifest on disk and return the Project.
- * Creates `.projects/<name>/project.yaml` with `paths: []`.
+ * Creates `.projects/<name>/project.toml` with `paths: []`.
  */
 export function createProject(
   projectsDir: string,
@@ -163,8 +163,8 @@ export function createProject(
     virtual: false,
   };
 
-  const yamlContent = yaml.dump(project, { lineWidth: -1 });
-  fs.writeFileSync(path.join(projectDir, 'project.yaml'), yamlContent, 'utf-8');
+  const tomlContent = stringifyToml(project);
+  fs.writeFileSync(path.join(projectDir, 'project.toml'), tomlContent, 'utf-8');
 
   return project;
 }

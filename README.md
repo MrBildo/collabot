@@ -55,13 +55,14 @@ Collabot is pre-release (`0.x`) and under active development. What's working tod
 - **Multi-bot coordination** — PM bots dispatch teammates via MCP tools, await results, synthesize
 - **Task lifecycle** — create, dispatch, capture, close — all scoped to projects
 - **Parallel dispatch** — git worktree isolation for concurrent bots on the same repo
-- **333+ tests**, TypeScript strict mode, CI on every PR
+- **376+ tests**, TypeScript strict mode, CI on every PR
 
 ## Quick start
 
 ```
 npm install -g collabot
 collabot init          # scaffold ~/.collabot/
+collabot setup         # configure API key, roles, and bots
 collabot start         # start the harness
 ```
 

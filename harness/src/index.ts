@@ -15,10 +15,9 @@ import { SlackAdapter } from './adapters/slack.js';
 import { BotMessageQueue } from './bot-queue.js';
 import { BotSessionManager } from './bot-session.js';
 import { CronScheduler } from './cron.js';
-import { placeBots } from './bot-placement.js';
+import { placeBots, BotPlacementStore } from './bot-placement.js';
 import { createTask, getOpenTasks, closeTask } from './task.js';
 import { registerWsMethods } from './ws-methods.js';
-import { loadActiveDraft } from './draft.js';
 import { getInstancePath, getInstanceRoot, getPackagePath } from './paths.js';
 import type { InboundHandler, VirtualProjectMeta } from './comms.js';
 import type { DraftAgentFn } from './mcp.js';
@@ -140,10 +139,10 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
   });
 };
 const mcpServers = {
-  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => createHarnessServer({
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
     tracker, draftFn,
-    parentTaskSlug, parentTaskDir, parentProject,
+    parentTaskSlug, parentTaskDir, parentProject, parentDispatchId,
   }),
   readonly: createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'readonly',
@@ -165,7 +164,9 @@ if (botCount > 0) {
   }
 }
 
-// ── 5. Construct + register Slack (not started) ─────────────────
+// ── 5. Create botSessionManager (before adapters need it) ────────
+
+const botSessionManager = new BotSessionManager(config, roles, bots, pool);
 
 // Detect interface modes
 const slackBotCount = config.slack ? Object.keys(config.slack.bots).length : 0;
@@ -205,9 +206,11 @@ if (slackEnabled && config.slack) {
 
 // ── 6. Construct + register WS ──────────────────────────────────
 
+let wsDeps: Parameters<typeof registerWsMethods>[0] | undefined;
 if (wsEnabled) {
   const ws = new WsAdapter({ port: config.ws!.port, host: config.ws!.host });
-  registerWsMethods({ wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers });
+  wsDeps = { wsAdapter: ws, registry, handleTask, roles, config, pool, projects, projectsDir: PROJECTS_DIR, mcpServers, botSessionManager };
+  registerWsMethods(wsDeps);
   pool.setOnChange((agents) => {
     ws.broadcastNotification('pool_status', { agents });
   });
@@ -244,13 +247,16 @@ for (const provider of registry.providers()) {
 
 // ── 8. Bot placement ────────────────────────────────────────────
 
-const botPlacements = placeBots(config, bots, roles, projects, virtualProjectMeta);
+const placementStore = new BotPlacementStore(placeBots(config, bots, roles, projects, virtualProjectMeta));
 
-// ── 9. Create botSessionManager ─────────────────────────────────
+// Late-bind placement store and bots to WS deps.
+// Handlers close over the deps object reference, so setting properties here is visible at call time.
+if (wsDeps) {
+  wsDeps.placementStore = placementStore;
+  wsDeps.bots = bots;
+}
 
-const botSessionManager = new BotSessionManager(config, roles, bots, pool);
-
-// ── 10. Ensure tasks + wire queue handler (placement-aware) ─────
+// ── 9. Ensure tasks + wire queue handler (placement-aware) ──────
 
 // Ensure an open task exists for each virtual project that has bots placed in it
 function ensureProjectTask(projectName: string): { slug: string; taskDir: string } | undefined {
@@ -277,7 +283,7 @@ function ensureProjectTask(projectName: string): { slug: string; taskDir: string
 
 // Collect unique virtual projects with bots and ensure initial tasks
 const virtualProjectsWithBots = new Set<string>();
-for (const placement of botPlacements.values()) {
+for (const placement of placementStore.getAll().values()) {
   const proj = projects.get(placement.project.toLowerCase());
   if (proj?.virtual) {
     virtualProjectsWithBots.add(placement.project.toLowerCase());
@@ -293,7 +299,7 @@ for (const projectName of virtualProjectsWithBots) {
 
 // Wire bot queue handler → bot session manager (placement-aware)
 botQueue.setHandler(async (msg) => {
-  const placement = botPlacements.get(msg.botName);
+  const placement = placementStore.get(msg.botName);
   if (!placement) {
     logger.warn({ botName: msg.botName }, 'No placement for bot — dropping message');
     return;
@@ -359,7 +365,7 @@ const interfaceList = [
   wsEnabled ? `WS (${config.ws!.host}:${config.ws!.port})` : null,
 ].filter(Boolean).join(', ');
 
-const placementList = [...botPlacements.values()]
+const placementList = [...placementStore.getAll().values()]
   .map(p => `${p.botName}@${p.project}(${p.roleName})`)
   .join(', ');
 
@@ -394,16 +400,6 @@ console.log([
 
 botSessionManager.loadSessions(PROJECTS_DIR, projects);
 
-// Recover active draft session (if harness was restarted mid-draft)
-const recoveredDraft = loadActiveDraft(projects, PROJECTS_DIR, pool, roles);
-if (recoveredDraft) {
-  if (recoveredDraft.staleRole) {
-    console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns) — WARNING: role no longer exists\n`);
-  } else {
-    console.log(`  draft: recovered (${recoveredDraft.role}, ${recoveredDraft.turnCount} turns)\n`);
-  }
-}
-
 logger.info({ version }, 'collabot started');
 logger.info({ defaultModel, aliasCount }, 'config loaded');
 logger.info({ roleCount, roleNames }, 'roles loaded');
@@ -411,7 +407,7 @@ logger.info({ botCount, botNames }, 'bots loaded');
 logger.info({ projectCount: projects.size, projectNames: [...projects.values()].map(p => p.name).join(', ') }, 'projects loaded');
 if (lobbyEnsured) logger.info('lobby virtual project ensured');
 if (virtualProjectMeta.size > 0) logger.info({ count: virtualProjectMeta.size, projects: [...virtualProjectMeta.keys()] }, 'provider virtual projects ensured');
-if (botPlacements.size > 0) logger.info({ placements: placementList }, 'bot placements computed');
+if (placementStore.getAll().size > 0) logger.info({ placements: placementList }, 'bot placements computed');
 logger.info({ maxConcurrent: config.pool.maxConcurrent }, 'agent pool initialized');
 
 // ── 13. Start all providers ─────────────────────────────────────
@@ -437,7 +433,7 @@ if (wsEnabled) {
 // ── 14. Set bot presence based on placement ─────────────────────
 
 if (slackAdapter) {
-  for (const [botName, placement] of botPlacements) {
+  for (const [botName, placement] of placementStore.getAll()) {
     const presence = placement.project.toLowerCase() === 'slack-room' ? 'auto' : 'away';
     await slackAdapter.setPresence(botName, presence);
   }

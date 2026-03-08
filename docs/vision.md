@@ -45,6 +45,7 @@ Collabot is a **service installed on a machine**, not a library consumed by proj
 ```
 npm install -g collabot    # install the platform
 collabot init              # scaffold ~/.collabot/ with minimal config
+collabot setup             # configure API key, roles, and bots
 collabot start             # run the service
 ```
 
@@ -70,7 +71,7 @@ Collabot ships with infrastructure, not content.
 - What projects, roles, skills, or content you configure
 - Directory topology beyond what the harness itself needs to function
 
-A fresh Collabot installation is essentially empty. Maybe a default role, maybe a starter project. Everything else — the bots, the roles, the knowledge bases, the conventions — is built up by the team using it. Collabot is home base. The team makes it their own.
+A fresh Collabot installation is empty. The setup wizard lets you pick from template roles and bot personalities, but everything beyond that — the knowledge bases, the conventions, the team shape — is built up by the people using it. Collabot is home base. The team makes it their own.
 
 ---
 

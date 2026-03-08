@@ -22,6 +22,9 @@ if (command === '--help' || command === '-h' || command === undefined) {
 if (command === 'init') {
   const { runInit } = await import('./init.js');
   runInit();
+} else if (command === 'setup') {
+  const { runSetup } = await import('./setup.js');
+  await runSetup();
 } else if (command === 'start' || command === 'dispatch') {
   // Load .env from instance root before delegating
   const instanceRoot = process.env.COLLABOT_HOME
@@ -52,6 +55,7 @@ function printHelp(): void {
   Usage:
     collabot start                Start the harness
     collabot init                 Scaffold a new instance (~/.collabot/)
+    collabot setup                Interactive setup wizard (roles, bots, API key)
     collabot dispatch [options]   One-shot CLI dispatch
     collabot --version            Print version
 

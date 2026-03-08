@@ -18,16 +18,18 @@ npm install -g collabot
 
 ```
 collabot init          # scaffold ~/.collabot/
+collabot setup         # configure API key, roles, and bots
 collabot start         # start the harness
 ```
 
-`collabot init` creates an instance directory at `~/.collabot/` with default configuration, prompt templates, and empty directories for roles, bots, skills, and projects. Edit `~/.collabot/config.toml` to configure model aliases, agent defaults, and adapter settings.
+`collabot init` creates an instance directory at `~/.collabot/` with default configuration, prompt templates, and empty directories for roles, bots, and projects. `collabot setup` walks you through API key configuration, role/bot selection, and optional Slack integration. Edit `~/.collabot/config.toml` to fine-tune model aliases, agent defaults, and adapter settings.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `collabot init` | Scaffold a new instance at `~/.collabot/` |
+| `collabot setup` | Interactive wizard — API key, roles, bots, Slack |
 | `collabot start` | Start the harness |
 | `collabot dispatch` | One-shot CLI dispatch |
 | `collabot --version` | Print version |

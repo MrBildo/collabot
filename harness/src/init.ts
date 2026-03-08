@@ -1,49 +1,12 @@
-import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { getPackagePath } from './paths.js';
-
-const ENV_TEMPLATE = `# Collabot instance — secrets and system paths only.
-# Operational settings (agent defaults, log level, pool size) are in config.toml.
-
-# Slack bot token (xoxb-...)
-SLACK_BOT_TOKEN=
-
-# Slack app-level token for Socket Mode (xapp-...)
-SLACK_APP_TOKEN=
-
-# Path to the installed claude.exe binary.
-# Required on Windows — the SDK has a git-bash path resolution bug.
-# Find yours with: where claude
-CLAUDE_EXECUTABLE_PATH=
-
-# Windows only — path to Git bash.exe with BACKSLASHES.
-# Required because the SDK's git-bash auto-detection resolves to the wrong path.
-# Example: C:\\Program Files\\Git\\bin\\bash.exe
-CLAUDE_CODE_GIT_BASH_PATH=
-`;
-
-const SYSTEM_PROMPT_TEMPLATE = `# System Prompt
-
-<!-- This file is scaffolded by collabot init and owned by the instance. -->
-<!-- Edit this file to customize the system prompt sent to dispatched agents. -->
-`;
-
-const TOOLS_PROMPT_TEMPLATE = `# Tools Prompt
-
-<!-- This file is scaffolded by collabot init and owned by the instance. -->
-<!-- Edit this file to document MCP tools available to dispatched agents. -->
-`;
+import { getPackagePath, resolveInstanceTarget } from './paths.js';
 
 /**
- * Resolve the instance target directory (same logic as paths.ts but without
- * requiring it to exist).
+ * Resolve the path to a file inside harness/templates/.
  */
-function resolveInstanceTarget(): string {
-  const fromEnv = process.env.COLLABOT_HOME;
-  return fromEnv
-    ? path.resolve(fromEnv)
-    : path.join(os.homedir(), '.collabot');
+function templatePath(...segments: string[]): string {
+  return getPackagePath('templates', ...segments);
 }
 
 export function runInit(): void {
@@ -55,30 +18,27 @@ export function runInit(): void {
     process.exit(1);
   }
 
-  // Create directory structure
-  fs.mkdirSync(target, { recursive: true });
-  fs.mkdirSync(path.join(target, 'prompts'), { recursive: true });
-  fs.mkdirSync(path.join(target, 'roles'), { recursive: true });
-  fs.mkdirSync(path.join(target, 'skills'), { recursive: true });
-  fs.mkdirSync(path.join(target, '.projects'), { recursive: true });
+  // Create directory structure — no skills/, no docs/
+  const dirs = ['', 'prompts', 'roles', 'bots', '.projects'];
+  for (const dir of dirs) {
+    fs.mkdirSync(path.join(target, dir), { recursive: true });
+  }
 
-  // Copy config.defaults.toml as config.toml
-  const defaultsPath = getPackagePath('config.defaults.toml');
-  fs.copyFileSync(defaultsPath, path.join(target, 'config.toml'));
+  // Copy templates
+  fs.copyFileSync(templatePath('config.defaults.toml'), path.join(target, 'config.toml'));
+  fs.copyFileSync(templatePath('env.template'), path.join(target, '.env'));
+  fs.copyFileSync(templatePath('prompts', 'system.md'), path.join(target, 'prompts', 'system.md'));
 
-  // Create .env template
-  fs.writeFileSync(path.join(target, '.env'), ENV_TEMPLATE, 'utf8');
-
-  // Create placeholder prompts
-  fs.writeFileSync(path.join(target, 'prompts', 'system.md'), SYSTEM_PROMPT_TEMPLATE, 'utf8');
-  fs.writeFileSync(path.join(target, 'prompts', 'tools.md'), TOOLS_PROMPT_TEMPLATE, 'utf8');
-
+  // Output summary
   console.log(`\nCollabot instance created at ${target}\n`);
-  console.log('  config.toml       configuration (model aliases, pool size, etc.)');
-  console.log('  .env              secrets (API keys, tokens, system paths)');
-  console.log('  prompts/          system and tool prompts');
-  console.log('  roles/            role definitions');
-  console.log('  skills/           skill definitions');
-  console.log('  .projects/        project manifests and task data');
-  console.log('\nNext: edit .env with your API keys, then run `collabot start`.');
+  console.log('  config.toml        operational settings (models, pool, adapters)');
+  console.log('  .env               secrets (API keys, tokens, system paths)');
+  console.log('  prompts/system.md  agent system prompt');
+  console.log('  roles/             role definitions (empty — use `collabot setup` to add)');
+  console.log('  bots/              bot definitions (empty — use `collabot setup` to add)');
+  console.log('  .projects/         project manifests and task data');
+  console.log('\nNext steps:');
+  console.log('  1. Run `collabot setup` to configure API key, roles, and bots');
+  console.log('  2. Then `collabot start` to boot the harness');
+  console.log('\n  Note: the harness requires at least one role to start.');
 }

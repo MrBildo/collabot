@@ -6,11 +6,13 @@ import path from 'node:path';
 import { JSONRPCErrorException } from 'json-rpc-2.0';
 import { AgentPool } from './pool.js';
 import { registerWsMethods, type WsMethodDeps } from './ws-methods.js';
+import { BotSessionManager } from './bot-session.js';
+import { BotPlacementStore, placeBots } from './bot-placement.js';
 import { CommunicationRegistry } from './registry.js';
 import type { WsAdapter } from './adapters/ws.js';
 import type { InboundMessage } from './comms.js';
 import type { Config } from './config.js';
-import type { RoleDefinition, Project } from './types.js';
+import type { RoleDefinition, BotDefinition, Project } from './types.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -46,6 +48,22 @@ type MockDeps = {
   getHandleTaskState: () => { called: boolean; lastMessage: InboundMessage | undefined };
 };
 
+function makeConfig(): Config {
+  return {
+    models: { default: 'claude-sonnet-4-6', aliases: { 'sonnet-latest': 'claude-sonnet-4-6' } },
+    defaults: { stallTimeoutSeconds: 300 },
+    agent: { maxTurns: 50, maxBudgetUsd: 1.00 },
+    logging: { level: 'debug' as const },
+    routing: { default: 'api-dev', rules: [] },
+    pool: { maxConcurrent: 0 },
+    mcp: { streamTimeout: 600000 },
+  } as Config;
+}
+
+function makeBots(): Map<string, BotDefinition> {
+  return new Map();
+}
+
 function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, RoleDefinition> }): MockDeps {
   const pool = new AgentPool();
   const methods = new Map<string, (params: unknown) => unknown>();
@@ -65,6 +83,9 @@ function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, Ro
   let lastMessage: InboundMessage | undefined;
 
   const registry = new CommunicationRegistry();
+  const roles = overrides?.roles ?? new Map([['api-dev', makeRole()]]);
+  const config = makeConfig();
+  const botSessionManager = new BotSessionManager(config, roles, makeBots(), pool);
 
   const deps: WsMethodDeps = {
     wsAdapter: mockWsAdapter,
@@ -74,11 +95,12 @@ function makeMockDeps(overrides?: { projectsDir?: string; roles?: Map<string, Ro
       lastMessage = msg;
       return { status: 'completed' };
     },
-    roles: overrides?.roles ?? new Map([['api-dev', makeRole()]]),
-    config: {} as Config,
+    roles,
+    config,
     pool,
     projects: makeProjects(),
     projectsDir,
+    botSessionManager,
   };
 
   registerWsMethods(deps);
@@ -339,5 +361,121 @@ test('get_task_context — requires project', () => {
   assert.throws(
     () => call(methods, 'get_task_context', { slug: 'my-task' }),
     (err: unknown) => err instanceof JSONRPCErrorException && err.code === -32602,
+  );
+});
+
+// ─── Bot Management Methods ─────────────────────────────────────────────────
+
+function makeMockDepsWithBots(): MockDeps {
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01JNQR0000HAZEL000000000', name: 'hazel', displayName: 'Hazel', description: 'Test bot', version: '1.0.0', soulPrompt: 'You are Hazel.' }],
+  ]);
+  const mock = makeMockDeps();
+  const projects = new Map<string, Project>([
+    ['acme', { name: 'Acme', description: 'Test project', paths: ['../backend-api'], roles: ['api-dev'] }],
+    ['lobby', { name: 'lobby', description: 'Lobby', paths: [], roles: ['api-dev'], virtual: true }],
+  ]);
+  mock.deps.projects = projects;
+  mock.deps.bots = bots;
+
+  const config = makeConfig();
+  config.bots = { hazel: { defaultProject: 'lobby', defaultRole: 'api-dev' } };
+  const placements = placeBots(config, bots, mock.deps.roles, projects, new Map());
+  mock.deps.placementStore = new BotPlacementStore(placements);
+
+  return mock;
+}
+
+// ─── list_bots ──────────────────────────────────────────────────────────────
+
+test('list_bots — returns all bots with placement info', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'list_bots', {}) as { bots: Record<string, unknown>[] };
+
+  assert.strictEqual(result.bots.length, 1);
+  assert.strictEqual(result.bots[0]!['name'], 'hazel');
+  assert.strictEqual(result.bots[0]!['status'], 'available');
+  assert.strictEqual(result.bots[0]!['project'], 'lobby');
+});
+
+test('list_bots — filters by project', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'list_bots', { project: 'nonexistent' }) as { bots: Record<string, unknown>[] };
+  assert.strictEqual(result.bots.length, 0);
+});
+
+test('list_bots — returns empty when no placementStore', () => {
+  const { methods } = makeMockDeps();
+  const result = call(methods, 'list_bots', {}) as { bots: Record<string, unknown>[] };
+  assert.strictEqual(result.bots.length, 0);
+});
+
+// ─── get_bot_status ─────────────────────────────────────────────────────────
+
+test('get_bot_status — returns status for known bot', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'get_bot_status', { bot: 'hazel' }) as Record<string, unknown>;
+
+  assert.strictEqual(result['name'], 'hazel');
+  assert.strictEqual(result['displayName'], 'Hazel');
+  assert.strictEqual(result['status'], 'available');
+  assert.strictEqual(result['project'], 'lobby');
+});
+
+test('get_bot_status — errors for unknown bot', () => {
+  const { methods } = makeMockDepsWithBots();
+
+  assert.throws(
+    () => call(methods, 'get_bot_status', { bot: 'unknown' }),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32003);
+      return true;
+    },
+  );
+});
+
+test('get_bot_status — errors when no placementStore', () => {
+  const { methods } = makeMockDeps();
+
+  assert.throws(
+    () => call(methods, 'get_bot_status', { bot: 'hazel' }),
+    (err: unknown) => err instanceof JSONRPCErrorException && err.code === -32003,
+  );
+});
+
+// ─── move_bot ───────────────────────────────────────────────────────────────
+
+test('move_bot — moves bot to target project', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'move_bot', { bot: 'hazel', project: 'Acme' }) as Record<string, unknown>;
+
+  assert.strictEqual(result['success'], true);
+  assert.strictEqual(result['previousProject'], 'lobby');
+});
+
+test('move_bot — errors for nonexistent project', () => {
+  const { methods } = makeMockDepsWithBots();
+
+  assert.throws(
+    () => call(methods, 'move_bot', { bot: 'hazel', project: 'nonexistent' }),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32006);
+      return true;
+    },
+  );
+});
+
+test('move_bot — errors for unknown bot', () => {
+  const { methods } = makeMockDepsWithBots();
+
+  assert.throws(
+    () => call(methods, 'move_bot', { bot: 'unknown', project: 'Acme' }),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32003);
+      return true;
+    },
   );
 });
