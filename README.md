@@ -60,9 +60,12 @@ Collabot is pre-release (`0.x`) and under active development. What's working tod
 ## Quick start
 
 ```
+npm install -g @anthropic-ai/claude-code   # prerequisite — the AI engine
+claude                                      # log in (browser OAuth, API key, or cloud provider)
+
 npm install -g collabot
 collabot init          # scaffold ~/.collabot/
-collabot setup         # configure API key, roles, and bots
+collabot setup         # verify CLI, pick roles and bots
 collabot start         # start the harness
 ```
 
