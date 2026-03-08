@@ -1,18 +1,6 @@
-import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { getPackagePath } from './paths.js';
-
-/**
- * Resolve the instance target directory (same logic as paths.ts but without
- * requiring it to exist).
- */
-function resolveInstanceTarget(): string {
-  const fromEnv = process.env.COLLABOT_HOME;
-  return fromEnv
-    ? path.resolve(fromEnv)
-    : path.join(os.homedir(), '.collabot');
-}
+import { getPackagePath, resolveInstanceTarget } from './paths.js';
 
 /**
  * Resolve the path to a file inside harness/templates/.

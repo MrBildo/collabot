@@ -1,10 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { execSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { ulid } from 'ulid';
-import { getPackagePath } from './paths.js';
+import { getPackagePath, resolveInstanceTarget } from './paths.js';
 import { runInit } from './init.js';
 
 // ── Types ────────────────────────────────────────────────────
@@ -15,15 +14,6 @@ export type TemplateMeta = {
   displayName: string;
   description: string;
 };
-
-// ── Helpers (exported for testing) ───────────────────────────
-
-function resolveInstanceTarget(): string {
-  const fromEnv = process.env.COLLABOT_HOME;
-  return fromEnv
-    ? path.resolve(fromEnv)
-    : path.join(os.homedir(), '.collabot');
-}
 
 /**
  * List template files of a given type (roles/ or bots/) and parse display info from frontmatter.
