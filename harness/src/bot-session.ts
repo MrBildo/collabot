@@ -25,6 +25,8 @@ import type {
 } from './types.js';
 import type { VirtualProjectSkill } from './comms.js';
 
+const AUTH_FAILURE_MSG = 'Authentication failed — Claude Code CLI is not logged in. Run `claude` in a terminal to authenticate. See https://code.claude.com/docs/en/authentication';
+
 // ── BotSession type ────────────────────────────────────────────
 
 export type BotSession = {
@@ -244,13 +246,41 @@ export class BotSessionManager {
       })) {
         resetStallTimer();
 
-        if (msg.type === 'system' && msg.subtype === 'init') {
+        if (msg.type === 'auth_status' && msg.error) {
+          logger.error({ botName, error: msg.error, output: msg.output }, 'authentication failed');
+          emitEvent('harness:error', { message: `auth_status error: ${msg.error}` });
+          await responseSink(AUTH_FAILURE_MSG);
+          if (registry) {
+            await registry.broadcast(makeChannelMessage(channelId, 'system', 'error', AUTH_FAILURE_MSG));
+          }
+          this.sessions.delete(botName);
+          this.pool.release(session.agentId);
+          controller.abort();
+          break;
+        } else if (msg.type === 'system' && msg.subtype === 'init') {
           emitEvent('session:init', { sessionId: msg.session_id, model: msg.model });
           if (!session.sessionInitialized) {
             session.sessionInitialized = true;
             this.persistSession(session);
           }
         } else if (msg.type === 'assistant') {
+          // Check for API-level errors (auth, billing, rate limit, etc.)
+          if (msg.error) {
+            const errorLabel = msg.error === 'authentication_failed' ? AUTH_FAILURE_MSG
+              : `API error: ${msg.error}. Check Claude Code CLI status.`;
+            logger.error({ botName, error: msg.error }, 'assistant message error');
+            emitEvent('harness:error', { message: `assistant error: ${msg.error}` });
+            await responseSink(errorLabel);
+            if (registry) {
+              await registry.broadcast(makeChannelMessage(channelId, 'system', 'error', errorLabel));
+            }
+            if (msg.error === 'authentication_failed') {
+              this.sessions.delete(botName);
+              this.pool.release(session.agentId);
+              controller.abort();
+              break;
+            }
+          }
           for (const block of msg.message.content) {
             // Text → responseSink + registry broadcast
             if (block.type === 'text' && typeof (block as Record<string, unknown>).text === 'string') {
@@ -475,8 +505,21 @@ export class BotSessionManager {
       logger.error({ err, botName, sessionId: session.sessionId }, 'bot session error');
       emitEvent('harness:error', { message: errMessage.slice(0, 500) });
 
-      // If it's a session/resume error, auto-close
-      if (errMessage.includes('session') || errMessage.includes('resume')) {
+      // Check for auth-related errors in thrown exceptions
+      if (/auth|unauthorized|not.logged.in|login.*required/i.test(errMessage)) {
+        await responseSink(AUTH_FAILURE_MSG);
+        if (registry) {
+          await registry.broadcast(makeChannelMessage(channelId, 'system', 'error', AUTH_FAILURE_MSG));
+        }
+        this.sessions.delete(botName);
+        this.pool.release(session.agentId);
+        try {
+          dispatchStore.updateDispatch(taskDir, dispatchId, {
+            status: 'crashed',
+            completedAt: new Date().toISOString(),
+          });
+        } catch { /* non-fatal */ }
+      } else if (errMessage.includes('session') || errMessage.includes('resume')) {
         const crashMsg = `Session error: ${errMessage}. Session auto-closed.`;
         await responseSink(crashMsg);
         if (registry) {

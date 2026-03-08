@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
+import { exec } from 'node:child_process';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
 import { loadConfig, resolveModelId } from './config.js';
 import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
@@ -395,6 +396,29 @@ console.log([
   `  interfaces: ${interfaceList}`,
   '',
 ].join('\n'));
+
+// ── 11b. Startup auth probe (async, non-blocking) ───────────────
+
+if (botCount > 0) {
+  const authEnv = { ...process.env, CLAUDECODE: undefined };
+  exec(
+    'claude -p "ok" --output-format text --max-turns 1',
+    { encoding: 'utf8', timeout: 30_000, env: authEnv },
+    (err) => {
+      if (err) {
+        const msg = err.message || String(err);
+        if (/auth|unauthorized|not.logged.in|login|credential|api.key/i.test(msg)) {
+          logger.error('Claude Code CLI authentication check failed — bot dispatch will not work until resolved. Run `claude` to authenticate.');
+          console.log('\n  ⚠  Claude Code CLI is not authenticated. Run `claude` to log in.\n');
+        } else {
+          logger.warn({ msg: msg.slice(0, 300) }, 'Claude Code CLI auth probe returned an error (may not be auth-related)');
+        }
+      } else {
+        logger.info('Claude Code CLI auth probe: OK');
+      }
+    },
+  );
+}
 
 // ── 12. Load persisted bot sessions ─────────────────────────────
 
