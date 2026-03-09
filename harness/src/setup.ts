@@ -241,7 +241,7 @@ export async function runSetup(): Promise<void> {
     const claudeDefault = detectedClaude ?? `C:\\Users\\${process.env.USERNAME ?? 'you'}\\.local\\bin\\claude.exe`;
 
     const claudePath = await p.text({
-      message: 'Path to claude.exe (with backslashes)',
+      message: 'Path to claude.exe',
       initialValue: claudeDefault,
     });
 
@@ -259,7 +259,7 @@ export async function runSetup(): Promise<void> {
     const gitBashDefault = detectedBash ?? 'C:\\Program Files\\Git\\bin\\bash.exe';
 
     const gitBashPath = await p.text({
-      message: 'Path to Git bash.exe (with backslashes)',
+      message: 'Path to Git bash.exe',
       initialValue: gitBashDefault,
     });
 
