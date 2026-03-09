@@ -242,8 +242,7 @@ export async function runSetup(): Promise<void> {
 
     const claudePath = await p.text({
       message: 'Path to claude.exe (with backslashes)',
-      placeholder: claudeDefault,
-      initialValue: detectedClaude ?? undefined,
+      initialValue: claudeDefault,
     });
 
     if (p.isCancel(claudePath)) {
@@ -261,8 +260,7 @@ export async function runSetup(): Promise<void> {
 
     const gitBashPath = await p.text({
       message: 'Path to Git bash.exe (with backslashes)',
-      placeholder: gitBashDefault,
-      initialValue: detectedBash ?? undefined,
+      initialValue: gitBashDefault,
     });
 
     if (p.isCancel(gitBashPath)) {
