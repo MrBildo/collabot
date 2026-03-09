@@ -229,9 +229,21 @@ export async function runSetup(): Promise<void> {
 
   // Windows: Claude executable path
   if (process.platform === 'win32') {
+    // Auto-detect claude.exe location
+    let detectedClaude: string | null = null;
+    try {
+      const whereResult = execSync('where claude', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
+      if (whereResult && fs.existsSync(whereResult.trim())) {
+        detectedClaude = whereResult.trim();
+      }
+    } catch { /* not found */ }
+
+    const claudeDefault = detectedClaude ?? `C:\\Users\\${process.env.USERNAME ?? 'you'}\\.local\\bin\\claude.exe`;
+
     const claudePath = await p.text({
-      message: 'Path to claude.exe (press Enter to skip)',
-      placeholder: 'C:\\Users\\you\\.claude\\local\\claude.exe',
+      message: 'Path to claude.exe (with backslashes)',
+      placeholder: claudeDefault,
+      initialValue: detectedClaude ?? undefined,
     });
 
     if (p.isCancel(claudePath)) {
