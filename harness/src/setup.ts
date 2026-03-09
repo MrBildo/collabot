@@ -13,6 +13,7 @@ export type TemplateMeta = {
   name: string;
   displayName: string;
   description: string;
+  order: number;
 };
 
 /**
@@ -33,10 +34,11 @@ export function listTemplates(type: 'roles' | 'bots'): TemplateMeta[] {
       name: fm.name ?? fileName.replace(/\.md$/, ''),
       displayName: fm.displayName ?? fm.name ?? fileName.replace(/\.md$/, ''),
       description: fm.description ?? '',
+      order: fm.order ? parseInt(fm.order, 10) : 999,
     });
   }
 
-  return results;
+  return results.sort((a, b) => a.order - b.order);
 }
 
 /**

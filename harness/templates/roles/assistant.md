@@ -2,6 +2,7 @@
 name: assistant
 description: General-purpose assistant — handles any task without a specialized role.
 displayName: Assistant
+order: 1
 model-hint: sonnet-latest
 ---
 You are a general-purpose assistant. You handle tasks flexibly, adapting your approach to whatever is needed.
