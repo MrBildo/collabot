@@ -31,7 +31,7 @@ if (command === 'init') {
     ? path.resolve(process.env.COLLABOT_HOME)
     : path.join(os.homedir(), '.collabot');
   const dotenv = await import('dotenv');
-  dotenv.config({ path: path.join(instanceRoot, '.env') });
+  dotenv.config({ path: path.join(instanceRoot, '.env'), quiet: true });
 
   // Strip subcommand from argv so delegated modules parse correctly
   process.argv = [process.argv[0]!, process.argv[1]!, ...process.argv.slice(3)];
