@@ -306,8 +306,9 @@ export async function runSetup(): Promise<void> {
   // 4. Role selection
   const roleTemplates = listTemplates('roles');
   if (roleTemplates.length > 0) {
+    p.log.info('Roles define what a bot can do (e.g. .NET dev, TypeScript dev).\nPick starter templates — you can add custom roles later in roles/.');
     const selectedRoles = await p.multiselect({
-      message: 'Which roles do you want to install?',
+      message: 'Starter roles to install',
       options: roleTemplates.map((t) => ({
         value: t.fileName,
         label: t.displayName,
@@ -332,8 +333,9 @@ export async function runSetup(): Promise<void> {
   const installedBots: { slug: string; displayName: string }[] = [];
   const botTemplates = listTemplates('bots');
   if (botTemplates.length > 0) {
+    p.log.info('Bots are persistent agent identities and personalities that influence their tone,\nreactions, and sometimes behaviors. Pick starter templates — you can add custom bots later in bots/.');
     const selectedBots = await p.multiselect({
-      message: 'Which bot personalities do you want to install?',
+      message: 'Starter bot personalities to install',
       options: botTemplates.map((t) => ({
         value: t.fileName,
         label: t.displayName,

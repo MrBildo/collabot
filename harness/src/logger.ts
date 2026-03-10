@@ -30,7 +30,12 @@ const envOverride = !!(
 
 export let logTier: LogTier = resolveBootstrapLogTier();
 
-export const logger = pino({ level: tierToPinoLevel(logTier) }, pino.destination({ sync: true }));
+// Auto-detect TTY: use pino-pretty for interactive terminals, raw JSON when piped
+const isTTY = process.stdout.isTTY === true;
+
+export const logger = isTTY
+  ? pino({ level: tierToPinoLevel(logTier) }, pino.transport({ target: 'pino-pretty', options: { sync: true } }))
+  : pino({ level: tierToPinoLevel(logTier) }, pino.destination({ sync: true }));
 
 /**
  * Apply log level from config.toml. Only takes effect if no env var override was set.
