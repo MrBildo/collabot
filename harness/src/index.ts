@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { exec } from 'node:child_process';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
