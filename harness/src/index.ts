@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { logger, logTier, applyConfigLogLevel } from './logger.js';
 import { loadConfig, resolveModelId } from './config.js';
