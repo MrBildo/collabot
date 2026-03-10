@@ -13,6 +13,7 @@ export type TemplateMeta = {
   name: string;
   displayName: string;
   description: string;
+  order: number;
 };
 
 /**
@@ -33,10 +34,11 @@ export function listTemplates(type: 'roles' | 'bots'): TemplateMeta[] {
       name: fm.name ?? fileName.replace(/\.md$/, ''),
       displayName: fm.displayName ?? fm.name ?? fileName.replace(/\.md$/, ''),
       description: fm.description ?? '',
+      order: fm.order ? parseInt(fm.order, 10) : 999,
     });
   }
 
-  return results;
+  return results.sort((a, b) => a.order - b.order);
 }
 
 /**
@@ -65,9 +67,10 @@ function parseFrontmatterSimple(content: string): Record<string, string> {
 
 /**
  * Read a template file, stamp frontmatter fields (id, version, createdOn, createdBy for roles),
- * and write to the target directory.
+ * and write to the target directory. If outputName is provided, the file is saved as
+ * `<outputName>.md` and the frontmatter `name` field is updated to match.
  */
-export function stampAndCopyEntity(type: 'roles' | 'bots', templateName: string, targetDir: string): string {
+export function stampAndCopyEntity(type: 'roles' | 'bots', templateName: string, targetDir: string, outputName?: string): string {
   const templateFile = getPackagePath('templates', type, templateName);
   let content = fs.readFileSync(templateFile, 'utf8');
 
@@ -89,7 +92,13 @@ export function stampAndCopyEntity(type: 'roles' | 'bots', templateName: string,
     );
   }
 
-  const outPath = path.join(targetDir, type, templateName);
+  // If a custom name is provided, update the frontmatter name field and output filename
+  const finalName = outputName ?? templateName.replace(/\.md$/, '');
+  if (outputName) {
+    content = content.replace(/^name:.*$/m, `name: ${outputName}`);
+  }
+
+  const outPath = path.join(targetDir, type, `${finalName}.md`);
   fs.writeFileSync(outPath, content, 'utf8');
   return outPath;
 }
@@ -229,9 +238,20 @@ export async function runSetup(): Promise<void> {
 
   // Windows: Claude executable path
   if (process.platform === 'win32') {
+    // Auto-detect claude.exe location
+    let detectedClaude: string | null = null;
+    try {
+      const whereResult = execSync('where claude', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
+      if (whereResult && fs.existsSync(whereResult.trim())) {
+        detectedClaude = whereResult.trim();
+      }
+    } catch { /* not found */ }
+
+    const claudeDefault = detectedClaude ?? `C:\\Users\\${process.env.USERNAME ?? 'you'}\\.local\\bin\\claude.exe`;
+
     const claudePath = await p.text({
-      message: 'Path to claude.exe (press Enter to skip)',
-      placeholder: 'C:\\Users\\you\\.claude\\local\\claude.exe',
+      message: 'Path to claude.exe',
+      initialValue: claudeDefault,
     });
 
     if (p.isCancel(claudePath)) {
@@ -248,9 +268,8 @@ export async function runSetup(): Promise<void> {
     const gitBashDefault = detectedBash ?? 'C:\\Program Files\\Git\\bin\\bash.exe';
 
     const gitBashPath = await p.text({
-      message: 'Path to Git bash.exe (with backslashes)',
-      placeholder: gitBashDefault,
-      initialValue: detectedBash ?? undefined,
+      message: 'Path to Git bash.exe',
+      initialValue: gitBashDefault,
     });
 
     if (p.isCancel(gitBashPath)) {
@@ -288,7 +307,8 @@ export async function runSetup(): Promise<void> {
     p.log.success(`${selectedRoles.length} role(s) installed`);
   }
 
-  // 5. Bot selection
+  // 5. Bot selection + naming
+  const installedBotNames: string[] = [];
   const botTemplates = listTemplates('bots');
   if (botTemplates.length > 0) {
     const selectedBots = await p.multiselect({
@@ -308,9 +328,29 @@ export async function runSetup(): Promise<void> {
     }
 
     for (const fileName of selectedBots) {
-      stampAndCopyEntity('bots', fileName, target);
+      const templateLabel = botTemplates.find((t) => t.fileName === fileName)?.displayName ?? fileName;
+
+      const botName = await p.text({
+        message: `Name for ${templateLabel} bot`,
+        placeholder: 'lowercase, letters and hyphens (e.g. hazel)',
+        validate: (val = '') => {
+          if (!val.trim()) return 'Name is required';
+          if (!/^[a-z][a-z0-9-]*$/.test(val.trim())) return 'Lowercase letters, numbers, and hyphens only (must start with a letter)';
+          if (installedBotNames.includes(val.trim())) return 'Name already used';
+          return undefined;
+        },
+      });
+
+      if (p.isCancel(botName)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+      }
+
+      const name = botName.trim();
+      stampAndCopyEntity('bots', fileName, target, name);
+      installedBotNames.push(name);
     }
-    p.log.success(`${selectedBots.length} bot(s) installed`);
+    p.log.success(`${installedBotNames.length} bot(s) installed: ${installedBotNames.join(', ')}`);
   }
 
   // 6. Slack setup
@@ -328,47 +368,74 @@ export async function runSetup(): Promise<void> {
     p.log.info(
       'You\'ll need a Slack App with Socket Mode enabled.\n' +
       'See https://api.slack.com/apps\n' +
-      'Required scopes: chat:write, im:history, im:read, app_mentions:read',
+      'Required scopes: chat:write, im:history, im:read, app_mentions:read\n' +
+      'Each bot needs its own Slack App with separate tokens.',
     );
 
-    const botToken = await p.text({
-      message: 'Bot token (xoxb-...)',
-      placeholder: 'xoxb-...',
-    });
+    // Pick which bots to connect to Slack
+    // Include any bots already on disk (from a previous setup run)
+    const existingBots = fs.existsSync(path.join(target, 'bots'))
+      ? fs.readdirSync(path.join(target, 'bots')).filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, ''))
+      : [];
+    const allBotNames = [...new Set([...installedBotNames, ...existingBots])];
 
-    if (p.isCancel(botToken)) {
-      p.cancel('Setup cancelled.');
-      process.exit(0);
-    }
-
-    const appToken = await p.text({
-      message: 'App token (xapp-...)',
-      placeholder: 'xapp-...',
-    });
-
-    if (p.isCancel(appToken)) {
-      p.cancel('Setup cancelled.');
-      process.exit(0);
-    }
-
-    if (botToken && botToken.trim() && appToken && appToken.trim()) {
-      // Wire to first bot — use its name for env var naming
-      const installedBots = fs.readdirSync(path.join(target, 'bots')).filter((f) => f.endsWith('.md'));
-      const firstBot = installedBots[0]?.replace(/\.md$/, '') ?? 'agent';
-      const envPrefix = firstBot.toUpperCase();
-
-      patchEnvFile(path.join(target, '.env'), `${envPrefix}_BOT_TOKEN`, botToken.trim());
-      patchEnvFile(path.join(target, '.env'), `${envPrefix}_APP_TOKEN`, appToken.trim());
-
-      // Add slack section to config.toml
-      const configPath = path.join(target, 'config.toml');
-      let config = fs.readFileSync(configPath, 'utf8');
-      config += `\n[slack]\ndefaultRole = "assistant"\n\n[slack.bots.${firstBot}]\nbotTokenEnv = "${envPrefix}_BOT_TOKEN"\nappTokenEnv = "${envPrefix}_APP_TOKEN"\n`;
-      fs.writeFileSync(configPath, config, 'utf8');
-
-      p.log.success(`Slack configured for bot "${firstBot}"`);
+    if (allBotNames.length === 0) {
+      p.log.warn('No bots installed — install at least one bot first.');
     } else {
-      p.log.info('Skipped — add Slack tokens to .env later.');
+      const slackBots = await p.multiselect({
+        message: 'Which bots should be connected to Slack?',
+        options: allBotNames.map((name) => ({ value: name, label: name })),
+        required: false,
+      });
+
+      if (p.isCancel(slackBots)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+      }
+
+      if (slackBots.length > 0) {
+        const configPath = path.join(target, 'config.toml');
+        let config = fs.readFileSync(configPath, 'utf8');
+        config += '\n[slack]\ndefaultRole = "assistant"\n';
+
+        for (const botName of slackBots) {
+          p.log.step(`Configuring Slack for "${botName}"`);
+          const envPrefix = botName.toUpperCase().replace(/-/g, '_');
+
+          const appToken = await p.text({
+            message: `${botName} — App token (xapp-...)`,
+            placeholder: 'xapp-...',
+          });
+
+          if (p.isCancel(appToken)) {
+            p.cancel('Setup cancelled.');
+            process.exit(0);
+          }
+
+          const botToken = await p.text({
+            message: `${botName} — Bot token (xoxb-...)`,
+            placeholder: 'xoxb-...',
+          });
+
+          if (p.isCancel(botToken)) {
+            p.cancel('Setup cancelled.');
+            process.exit(0);
+          }
+
+          if (appToken?.trim() && botToken?.trim()) {
+            patchEnvFile(path.join(target, '.env'), `${envPrefix}_APP_TOKEN`, appToken.trim());
+            patchEnvFile(path.join(target, '.env'), `${envPrefix}_BOT_TOKEN`, botToken.trim());
+
+            config += `\n[slack.bots.${botName}]\nbotTokenEnv = "${envPrefix}_BOT_TOKEN"\nappTokenEnv = "${envPrefix}_APP_TOKEN"\n`;
+
+            p.log.success(`Slack configured for "${botName}"`);
+          } else {
+            p.log.info(`Skipped "${botName}" — add tokens to .env later.`);
+          }
+        }
+
+        fs.writeFileSync(configPath, config, 'utf8');
+      }
     }
   }
 
