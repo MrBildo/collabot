@@ -332,10 +332,10 @@ export async function runSetup(): Promise<void> {
 
       const botName = await p.text({
         message: `Name for ${templateLabel} bot`,
-        placeholder: 'lowercase, letters and hyphens (e.g. hazel)',
+        placeholder: 'letters, numbers, and hyphens (e.g. Greg)',
         validate: (val = '') => {
           if (!val.trim()) return 'Name is required';
-          if (!/^[a-z][a-z0-9-]*$/.test(val.trim())) return 'Lowercase letters, numbers, and hyphens only (must start with a letter)';
+          if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(val.trim())) return 'Letters, numbers, and hyphens only (must start with a letter)';
           if (installedBotNames.includes(val.trim())) return 'Name already used';
           return undefined;
         },
