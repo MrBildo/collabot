@@ -66,11 +66,27 @@ function parseFrontmatterSimple(content: string): Record<string, string> {
 }
 
 /**
- * Read a template file, stamp frontmatter fields (id, version, createdOn, createdBy for roles),
- * and write to the target directory. If outputName is provided, the file is saved as
- * `<outputName>.md` and the frontmatter `name` field is updated to match.
+ * Convert a display name to a slug: lowercase, spaces/underscores to hyphens, strip non-alphanumeric.
+ * "Support Agent Greg" → "support-agent-greg", "Greg" → "greg"
  */
-export function stampAndCopyEntity(type: 'roles' | 'bots', templateName: string, targetDir: string, outputName?: string): string {
+export function toSlug(displayName: string): string {
+  return displayName
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/**
+ * Read a template file, stamp frontmatter fields (id, version, createdOn, createdBy for roles),
+ * and write to the target directory.
+ *
+ * For bots: pass displayName to set both `name` (slugified) and `displayName` in frontmatter.
+ * For roles: templateName is used as-is for the output filename.
+ */
+export function stampAndCopyEntity(type: 'roles' | 'bots', templateName: string, targetDir: string, displayName?: string): string {
   const templateFile = getPackagePath('templates', type, templateName);
   let content = fs.readFileSync(templateFile, 'utf8');
 
@@ -92,10 +108,15 @@ export function stampAndCopyEntity(type: 'roles' | 'bots', templateName: string,
     );
   }
 
-  // If a custom name is provided, update the frontmatter name field and output filename
-  const finalName = outputName ?? templateName.replace(/\.md$/, '');
-  if (outputName) {
-    content = content.replace(/^name:.*$/m, `name: ${outputName}`);
+  // For bots with a display name: set name (slug) and displayName in frontmatter
+  let finalName: string;
+  if (displayName) {
+    const slug = toSlug(displayName);
+    finalName = slug;
+    content = content.replace(/^name:.*$/m, `name: ${slug}`);
+    content = content.replace(/^displayName:.*$/m, `displayName: ${displayName}`);
+  } else {
+    finalName = templateName.replace(/\.md$/, '');
   }
 
   const outPath = path.join(targetDir, type, `${finalName}.md`);
@@ -308,7 +329,7 @@ export async function runSetup(): Promise<void> {
   }
 
   // 5. Bot selection + naming
-  const installedBotNames: string[] = [];
+  const installedBots: { slug: string; displayName: string }[] = [];
   const botTemplates = listTemplates('bots');
   if (botTemplates.length > 0) {
     const selectedBots = await p.multiselect({
@@ -330,30 +351,87 @@ export async function runSetup(): Promise<void> {
     for (const fileName of selectedBots) {
       const templateLabel = botTemplates.find((t) => t.fileName === fileName)?.displayName ?? fileName;
 
-      const botName = await p.text({
-        message: `Name for ${templateLabel} bot`,
-        placeholder: 'letters, numbers, and hyphens (e.g. Greg)',
+      const botDisplayName = await p.text({
+        message: `Name for ${templateLabel} bot (e.g. Greg, Support Agent Greg)`,
         validate: (val = '') => {
           if (!val.trim()) return 'Name is required';
-          if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(val.trim())) return 'Letters, numbers, and hyphens only (must start with a letter)';
-          if (installedBotNames.includes(val.trim())) return 'Name already used';
+          const slug = toSlug(val);
+          if (!slug) return 'Name must contain at least one letter';
+          if (installedBots.some((b) => b.slug === slug)) return `"${slug}" already used`;
           return undefined;
         },
       });
 
-      if (p.isCancel(botName)) {
+      if (p.isCancel(botDisplayName)) {
         p.cancel('Setup cancelled.');
         process.exit(0);
       }
 
-      const name = botName.trim();
-      stampAndCopyEntity('bots', fileName, target, name);
-      installedBotNames.push(name);
+      const display = botDisplayName.trim();
+      const slug = toSlug(display);
+      stampAndCopyEntity('bots', fileName, target, display);
+      installedBots.push({ slug, displayName: display });
+      p.log.step(`${display} → bots/${slug}.md`);
     }
-    p.log.success(`${installedBotNames.length} bot(s) installed: ${installedBotNames.join(', ')}`);
+    p.log.success(`${installedBots.length} bot(s) installed`);
   }
 
-  // 6. Slack setup
+  // 6. WebSocket setup
+  const wantsWs = await p.confirm({
+    message: 'Enable WebSocket interface?',
+    initialValue: true,
+  });
+
+  if (p.isCancel(wantsWs)) {
+    p.cancel('Setup cancelled.');
+    process.exit(0);
+  }
+
+  if (wantsWs) {
+    p.log.info(
+      'The WebSocket interface enables the TUI client and external tools\n' +
+      'to connect to the harness via JSON-RPC 2.0.',
+    );
+
+    const wsPort = await p.text({
+      message: 'WebSocket port',
+      initialValue: '9800',
+    });
+
+    if (p.isCancel(wsPort)) {
+      p.cancel('Setup cancelled.');
+      process.exit(0);
+    }
+
+    const wsHost = await p.text({
+      message: 'WebSocket host',
+      initialValue: '127.0.0.1',
+    });
+
+    if (p.isCancel(wsHost)) {
+      p.cancel('Setup cancelled.');
+      process.exit(0);
+    }
+
+    // Config template already includes [ws] — patch it if user changed defaults
+    const configPath = path.join(target, 'config.toml');
+    let config = fs.readFileSync(configPath, 'utf8');
+    const port = wsPort?.trim() || '9800';
+    const host = wsHost?.trim() || '127.0.0.1';
+    config = config.replace(/^port\s*=\s*\d+$/m, `port = ${port}`);
+    config = config.replace(/^host\s*=\s*"[^"]*"$/m, `host = "${host}"`);
+    fs.writeFileSync(configPath, config, 'utf8');
+    p.log.success(`WebSocket enabled on ${host}:${port}`);
+  } else {
+    // Remove [ws] section from config so the adapter stays disabled
+    const configPath = path.join(target, 'config.toml');
+    let config = fs.readFileSync(configPath, 'utf8');
+    config = config.replace(/# ── WebSocket Adapter[^[]*\[ws\]\nport\s*=\s*\d+\nhost\s*=\s*"[^"]*"\n?/s, '');
+    fs.writeFileSync(configPath, config, 'utf8');
+    p.log.step('WebSocket disabled — can be enabled later in config.toml');
+  }
+
+  // 7. Slack setup
   const wantsSlack = await p.confirm({
     message: 'Set up Slack integration?',
     initialValue: false,
@@ -365,79 +443,112 @@ export async function runSetup(): Promise<void> {
   }
 
   if (wantsSlack) {
+    const slackDocPath = path.join(target, 'docs', 'slack-setup.md');
+    // Copy Slack setup guide to instance docs
+    const slackDocTemplate = getPackagePath('templates', 'docs', 'slack-setup.md');
+    if (fs.existsSync(slackDocTemplate)) {
+      fs.mkdirSync(path.join(target, 'docs'), { recursive: true });
+      fs.copyFileSync(slackDocTemplate, slackDocPath);
+    }
+
     p.log.info(
-      'You\'ll need a Slack App with Socket Mode enabled.\n' +
-      'See https://api.slack.com/apps\n' +
+      'Each bot needs its own Slack App with Socket Mode enabled.\n' +
       'Required scopes: chat:write, im:history, im:read, app_mentions:read\n' +
-      'Each bot needs its own Slack App with separate tokens.',
+      (fs.existsSync(slackDocPath)
+        ? `Detailed instructions: ${slackDocPath}`
+        : 'See https://api.slack.com/apps'),
     );
 
     // Pick which bots to connect to Slack
-    // Include any bots already on disk (from a previous setup run)
     const existingBots = fs.existsSync(path.join(target, 'bots'))
       ? fs.readdirSync(path.join(target, 'bots')).filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, ''))
       : [];
-    const allBotNames = [...new Set([...installedBotNames, ...existingBots])];
+    const allBotSlugs = [...new Set([...installedBots.map((b) => b.slug), ...existingBots])];
 
-    if (allBotNames.length === 0) {
+    if (allBotSlugs.length === 0) {
       p.log.warn('No bots installed — install at least one bot first.');
     } else {
       const slackBots = await p.multiselect({
         message: 'Which bots should be connected to Slack?',
-        options: allBotNames.map((name) => ({ value: name, label: name })),
+        options: allBotSlugs.map((slug) => {
+          const display = installedBots.find((b) => b.slug === slug)?.displayName ?? slug;
+          return { value: slug, label: `${display} (${slug})` };
+        }),
         required: false,
       });
 
       if (p.isCancel(slackBots)) {
-        p.cancel('Setup cancelled.');
-        process.exit(0);
-      }
-
-      if (slackBots.length > 0) {
+        // Graceful: skip Slack instead of aborting setup
+        p.log.step('Slack setup skipped — can be configured later in config.toml and .env');
+      } else if (slackBots.length > 0) {
         const configPath = path.join(target, 'config.toml');
         let config = fs.readFileSync(configPath, 'utf8');
         config += '\n[slack]\ndefaultRole = "assistant"\n';
 
-        for (const botName of slackBots) {
-          p.log.step(`Configuring Slack for "${botName}"`);
-          const envPrefix = botName.toUpperCase().replace(/-/g, '_');
+        let slackConfigured = 0;
+        for (const botSlug of slackBots) {
+          const display = installedBots.find((b) => b.slug === botSlug)?.displayName ?? botSlug;
+          p.log.step(`Configuring Slack for "${display}" (${botSlug})`);
+          const envPrefix = botSlug.toUpperCase().replace(/-/g, '_');
 
           const appToken = await p.text({
-            message: `${botName} — App token (xapp-...)`,
-            placeholder: 'xapp-...',
+            message: `${display} — App token (xapp-...)`,
+            placeholder: 'xapp-1-...',
+            validate: (val = '') => {
+              if (!val.trim()) return undefined; // allow empty to skip
+              if (!val.trim().startsWith('xapp-')) return 'App tokens start with xapp-';
+              return undefined;
+            },
           });
 
           if (p.isCancel(appToken)) {
-            p.cancel('Setup cancelled.');
-            process.exit(0);
+            p.log.step(`Skipped remaining Slack bots`);
+            break;
           }
 
           const botToken = await p.text({
-            message: `${botName} — Bot token (xoxb-...)`,
+            message: `${display} — Bot token (xoxb-...)`,
             placeholder: 'xoxb-...',
+            validate: (val = '') => {
+              if (!val.trim()) return undefined; // allow empty to skip
+              if (!val.trim().startsWith('xoxb-')) return 'Bot tokens start with xoxb-';
+              return undefined;
+            },
           });
 
           if (p.isCancel(botToken)) {
-            p.cancel('Setup cancelled.');
-            process.exit(0);
+            p.log.step(`Skipped remaining Slack bots`);
+            break;
           }
 
           if (appToken?.trim() && botToken?.trim()) {
             patchEnvFile(path.join(target, '.env'), `${envPrefix}_APP_TOKEN`, appToken.trim());
             patchEnvFile(path.join(target, '.env'), `${envPrefix}_BOT_TOKEN`, botToken.trim());
 
-            config += `\n[slack.bots.${botName}]\nbotTokenEnv = "${envPrefix}_BOT_TOKEN"\nappTokenEnv = "${envPrefix}_APP_TOKEN"\n`;
+            config += `\n[slack.bots.${botSlug}]\nbotTokenEnv = "${envPrefix}_BOT_TOKEN"\nappTokenEnv = "${envPrefix}_APP_TOKEN"\n`;
 
-            p.log.success(`Slack configured for "${botName}"`);
+            p.log.success(`Slack configured for "${display}"`);
+            slackConfigured++;
           } else {
-            p.log.info(`Skipped "${botName}" — add tokens to .env later.`);
+            p.log.info(`Skipped "${display}" — add tokens to .env later.`);
           }
         }
 
         fs.writeFileSync(configPath, config, 'utf8');
+        if (slackConfigured > 0) {
+          p.log.success(`${slackConfigured} Slack bot(s) configured`);
+        }
       }
     }
   }
 
+  // 8. Wrap up
+  p.log.info(
+    'You can further customize your instance by editing:\n' +
+    `  ${path.join(target, 'config.toml')}  — models, pool, routing, adapters\n` +
+    `  ${path.join(target, '.env')}           — secrets and system paths\n` +
+    `  ${path.join(target, 'roles/')}         — add or edit role definitions\n` +
+    `  ${path.join(target, 'bots/')}          — add or edit bot personalities`,
+  );
   p.outro('Setup complete! Run `collabot start` to boot the harness.');
 }
