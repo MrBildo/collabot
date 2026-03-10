@@ -332,7 +332,7 @@ export async function runSetup(): Promise<void> {
 
       const botName = await p.text({
         message: `Name for ${templateLabel} bot`,
-        placeholder: 'letters, numbers, and hyphens (e.g. Hazel)',
+        placeholder: 'letters, numbers, and hyphens (e.g. Greg)',
         validate: (val = '') => {
           if (!val.trim()) return 'Name is required';
           if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(val.trim())) return 'Letters, numbers, and hyphens only (must start with a letter)';
