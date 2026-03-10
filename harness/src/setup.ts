@@ -393,22 +393,22 @@ export async function runSetup(): Promise<void> {
       'to connect to the harness via JSON-RPC 2.0.',
     );
 
-    const wsPort = await p.text({
-      message: 'WebSocket port',
-      initialValue: '9800',
-    });
-
-    if (p.isCancel(wsPort)) {
-      p.cancel('Setup cancelled.');
-      process.exit(0);
-    }
-
     const wsHost = await p.text({
       message: 'WebSocket host',
       initialValue: '127.0.0.1',
     });
 
     if (p.isCancel(wsHost)) {
+      p.cancel('Setup cancelled.');
+      process.exit(0);
+    }
+
+    const wsPort = await p.text({
+      message: 'WebSocket port',
+      initialValue: '9800',
+    });
+
+    if (p.isCancel(wsPort)) {
       p.cancel('Setup cancelled.');
       process.exit(0);
     }
@@ -545,7 +545,7 @@ export async function runSetup(): Promise<void> {
   // 8. Wrap up
   p.log.info(
     'You can further customize your instance by editing:\n' +
-    `  ${path.join(target, 'config.toml')}  — models, pool, routing, adapters\n` +
+    `  ${path.join(target, 'config.toml')}    — models, pool, routing, adapters\n` +
     `  ${path.join(target, '.env')}           — secrets and system paths\n` +
     `  ${path.join(target, 'roles/')}         — add or edit role definitions\n` +
     `  ${path.join(target, 'bots/')}          — add or edit bot personalities`,
