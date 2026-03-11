@@ -79,6 +79,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       description: p.description,
       paths: p.paths,
       roles: p.roles,
+      isVirtual: isVirtualProject(p),
     }));
     return { projects: projectList };
   });
@@ -705,34 +706,14 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     };
   });
 
-  // move_bot — relocate a bot to a different project (operator override)
-  deps.wsAdapter.addMethod('move_bot', (params: unknown) => {
-    const p = params as Record<string, unknown>;
-    const botName = p['bot'] as string | undefined;
-    const targetProject = p['project'] as string | undefined;
-
-    if (typeof botName !== 'string') {
-      throw new JSONRPCErrorException('bot is required', -32602);
-    }
-    if (typeof targetProject !== 'string') {
-      throw new JSONRPCErrorException('project is required', -32602);
-    }
-
-    if (!deps.placementStore) {
-      throw new JSONRPCErrorException('Placement store not available', -32603);
-    }
-
-    // Validate target project exists
-    if (!deps.projects.has(targetProject.toLowerCase())) {
-      throw new JSONRPCErrorException(`Project "${targetProject}" not found`, WS_ERROR_PROJECT_NOT_FOUND);
-    }
-
-    try {
-      const previousProject = deps.placementStore.moveBot(botName, targetProject);
-      return { success: true, previousProject };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new JSONRPCErrorException(msg, WS_ERROR_BOT_NOT_FOUND);
-    }
+  // list_roles — return all loaded roles
+  deps.wsAdapter.addMethod('list_roles', (_params: unknown) => {
+    const roleList = [...deps.roles.values()].map((r) => ({
+      name: r.name,
+      displayName: r.displayName,
+      description: r.description,
+      modelHint: r.modelHint,
+    }));
+    return { roles: roleList };
   });
 }
