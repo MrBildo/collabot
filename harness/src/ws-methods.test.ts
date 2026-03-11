@@ -233,6 +233,20 @@ test('create_task — validates project required', () => {
   );
 });
 
+test('create_task — rejects virtual projects', () => {
+  const { methods } = makeMockDepsWithBots();
+
+  assert.throws(
+    () => call(methods, 'create_task', { project: 'lobby', name: 'Test task' }),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32602);
+      assert.ok(err.message.includes('virtual project'));
+      return true;
+    },
+  );
+});
+
 // ─── close_task ─────────────────────────────────────────────────────────────
 
 test('close_task — errors for nonexistent task', () => {
@@ -385,6 +399,32 @@ function makeMockDepsWithBots(): MockDeps {
 
   return mock;
 }
+
+// ─── draft — virtual project guard ───────────────────────────────────────────
+
+test('draft — rejects virtual project as target', () => {
+  const projectsDir = makeTempProjectDir('lobby', 'some-task', {
+    slug: 'some-task', name: 'Test', project: 'lobby', status: 'open',
+    created: '2026-03-10T00:00:00Z', description: 'Test', dispatches: [],
+  });
+
+  try {
+    const { methods } = makeMockDepsWithBots();
+    // Override projectsDir so task resolution could work if it got that far
+    // But the virtual guard should fire first
+    assert.throws(
+      () => call(methods, 'draft', { bot: 'hazel', role: 'api-dev', project: 'lobby', task: 'some-task' }),
+      (err: unknown) => {
+        assert.ok(err instanceof JSONRPCErrorException);
+        assert.strictEqual(err.code, -32602);
+        assert.ok(err.message.includes('virtual project'));
+        return true;
+      },
+    );
+  } finally {
+    fs.rmSync(projectsDir, { recursive: true, force: true });
+  }
+});
 
 // ─── list_bots ──────────────────────────────────────────────────────────────
 

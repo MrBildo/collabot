@@ -11,7 +11,7 @@ import type { McpServers } from './core.js';
 import type { BotSessionManager } from './bot-session.js';
 import type { BotPlacementStore } from './bot-placement.js';
 import type { BotDefinition } from './types.js';
-import { getProject, getProjectTasksDir, createProject, loadProjects } from './project.js';
+import { getProject, getProjectTasksDir, createProject, loadProjects, isVirtualProject } from './project.js';
 import { buildTaskContext } from './context.js';
 import { listTasks, createTask, closeTask, getTask } from './task.js';
 import { logger } from './logger.js';
@@ -314,6 +314,9 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     }
 
     const project = resolveProject(deps, projectName);
+    if (isVirtualProject(project)) {
+      throw new JSONRPCErrorException(`Cannot create tasks in virtual project "${project.name}"`, -32602);
+    }
     const tasksDir = getProjectTasksDir(deps.projectsDir, project.name);
     const task = createTask(tasksDir, { name, project: project.name, description });
 
@@ -387,6 +390,9 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     }
 
     const project = resolveProject(deps, projectName);
+    if (isVirtualProject(project)) {
+      throw new JSONRPCErrorException(`Cannot draft into virtual project "${project.name}"`, -32602);
+    }
     const role = deps.roles.get(roleName);
     if (!role) {
       throw new JSONRPCErrorException(`Role "${roleName}" not found`, WS_ERROR_ROLE_NOT_FOUND);
