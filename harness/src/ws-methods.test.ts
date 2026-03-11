@@ -484,38 +484,42 @@ test('get_bot_status — errors when no placementStore', () => {
   );
 });
 
-// ─── move_bot ───────────────────────────────────────────────────────────────
+// ─── move_bot (removed) ─────────────────────────────────────────────────────
 
-test('move_bot — moves bot to target project', () => {
+test('move_bot — is no longer registered', () => {
   const { methods } = makeMockDepsWithBots();
-  const result = call(methods, 'move_bot', { bot: 'hazel', project: 'Acme' }) as Record<string, unknown>;
-
-  assert.strictEqual(result['success'], true);
-  assert.strictEqual(result['previousProject'], 'lobby');
+  assert.strictEqual(methods.has('move_bot'), false);
 });
 
-test('move_bot — errors for nonexistent project', () => {
-  const { methods } = makeMockDepsWithBots();
+// ─── list_roles ─────────────────────────────────────────────────────────────
 
-  assert.throws(
-    () => call(methods, 'move_bot', { bot: 'hazel', project: 'nonexistent' }),
-    (err: unknown) => {
-      assert.ok(err instanceof JSONRPCErrorException);
-      assert.strictEqual(err.code, -32006);
-      return true;
-    },
-  );
+test('list_roles — returns loaded roles', () => {
+  const { methods } = makeMockDeps();
+  const result = call(methods, 'list_roles', {}) as { roles: Array<Record<string, unknown>> };
+
+  assert.strictEqual(result.roles.length, 1);
+  assert.strictEqual(result.roles[0]!['name'], 'api-dev');
+  assert.strictEqual(result.roles[0]!['displayName'], 'API Dev');
+  assert.strictEqual(result.roles[0]!['description'], 'Test role.');
+  assert.strictEqual(result.roles[0]!['modelHint'], 'sonnet-latest');
 });
 
-test('move_bot — errors for unknown bot', () => {
-  const { methods } = makeMockDepsWithBots();
+test('list_roles — returns empty when no roles loaded', () => {
+  const { methods } = makeMockDeps({ roles: new Map() });
+  const result = call(methods, 'list_roles', {}) as { roles: Array<Record<string, unknown>> };
 
-  assert.throws(
-    () => call(methods, 'move_bot', { bot: 'unknown', project: 'Acme' }),
-    (err: unknown) => {
-      assert.ok(err instanceof JSONRPCErrorException);
-      assert.strictEqual(err.code, -32003);
-      return true;
-    },
-  );
+  assert.strictEqual(result.roles.length, 0);
+});
+
+// ─── list_projects (isVirtual) ──────────────────────────────────────────────
+
+test('list_projects — includes isVirtual flag', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'list_projects', {}) as { projects: Array<Record<string, unknown>> };
+
+  const acme = result.projects.find(p => p['name'] === 'Acme');
+  const lobby = result.projects.find(p => p['name'] === 'lobby');
+
+  assert.strictEqual(acme?.['isVirtual'], false);
+  assert.strictEqual(lobby?.['isVirtual'], true);
 });
