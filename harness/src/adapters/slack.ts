@@ -245,6 +245,7 @@ export class SlackAdapter implements CommunicationProvider {
         name: 'slack-etiquette',
         content: SLACK_ETIQUETTE,
       }],
+      taskRotation: true,
     }];
   }
 

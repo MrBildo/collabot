@@ -119,12 +119,14 @@ export class BotPlacementStore {
     return previousProject;
   }
 
-  /** Mark a bot as drafted by an adapter */
-  setDrafted(botName: string, adapterName: string): void {
+  /** Mark a bot as drafted by an adapter, updating project and role */
+  setDrafted(botName: string, adapterName: string, opts?: { project?: string; roleName?: string }): void {
     const placement = this.placements.get(botName);
     if (placement) {
       placement.status = 'drafted';
       placement.draftedBy = adapterName;
+      if (opts?.project) placement.project = opts.project;
+      if (opts?.roleName) placement.roleName = opts.roleName;
     }
   }
 
@@ -142,6 +144,20 @@ export class BotPlacementStore {
     if (placement) {
       placement.status = 'available';
       placement.draftedBy = undefined;
+    }
+  }
+
+  /** Return a bot to lobby — clears project, role, draftedBy. Always returns to lobby. */
+  setUndrafted(botName: string): void {
+    const placement = this.placements.get(botName);
+    if (placement) {
+      placement.status = 'available';
+      placement.project = 'lobby';
+      placement.roleName = 'lobby';
+      placement.draftedBy = undefined;
+      placement.disallowedTools = undefined;
+      placement.skills = undefined;
+      logger.info({ botName }, 'bot undrafted — returned to lobby');
     }
   }
 }
