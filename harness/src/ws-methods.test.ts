@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { JSONRPCErrorException } from 'json-rpc-2.0';
 import { AgentPool } from './pool.js';
-import { registerWsMethods, type WsMethodDeps } from './ws-methods.js';
+import { registerWsMethods, resolveBot, type WsMethodDeps } from './ws-methods.js';
 import { BotSessionManager } from './bot-session.js';
 import { BotPlacementStore, placeBots } from './bot-placement.js';
 import { CommunicationRegistry } from './registry.js';
@@ -436,6 +436,8 @@ test('list_bots — returns all bots with placement info', () => {
   assert.strictEqual(result.bots[0]!['name'], 'hazel');
   assert.strictEqual(result.bots[0]!['status'], 'available');
   assert.strictEqual(result.bots[0]!['project'], 'lobby');
+  // H2: lobby role should be suppressed
+  assert.strictEqual(result.bots[0]!['role'], null);
 });
 
 test('list_bots — filters by project', () => {
@@ -460,6 +462,8 @@ test('get_bot_status — returns status for known bot', () => {
   assert.strictEqual(result['displayName'], 'Hazel');
   assert.strictEqual(result['status'], 'available');
   assert.strictEqual(result['project'], 'lobby');
+  // H2: lobby role should be suppressed
+  assert.strictEqual(result['role'], null);
 });
 
 test('get_bot_status — errors for unknown bot', () => {
@@ -522,4 +526,213 @@ test('list_projects — includes isVirtual flag', () => {
 
   assert.strictEqual(acme?.['isVirtual'], false);
   assert.strictEqual(lobby?.['isVirtual'], true);
+});
+
+// ─── Bot Name Resolution (H6) ───────────────────────────────────────────────
+
+test('resolveBot — resolves exact slug', () => {
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01HAZEL', name: 'hazel', displayName: 'Hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  assert.strictEqual(resolveBot(bots, 'hazel'), 'hazel');
+});
+
+test('resolveBot — resolves by display name', () => {
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01HAZEL', name: 'hazel', displayName: 'Hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  assert.strictEqual(resolveBot(bots, 'Hazel'), 'hazel');
+});
+
+test('resolveBot — case-insensitive slug', () => {
+  const bots = new Map<string, BotDefinition>([
+    ['super-greg', { id: '01GREG', name: 'super-greg', displayName: 'Super Greg', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  assert.strictEqual(resolveBot(bots, 'SUPER-GREG'), 'super-greg');
+});
+
+test('resolveBot — case-insensitive display name', () => {
+  const bots = new Map<string, BotDefinition>([
+    ['super-greg', { id: '01GREG', name: 'super-greg', displayName: 'Super Greg', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  assert.strictEqual(resolveBot(bots, 'super greg'), 'super-greg');
+});
+
+test('resolveBot — throws for unknown bot', () => {
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01HAZEL', name: 'hazel', displayName: 'Hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  assert.throws(
+    () => resolveBot(bots, 'unknown'),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32003);
+      return true;
+    },
+  );
+});
+
+test('resolveBot — errors on ambiguity', () => {
+  // Bot "alpha" has displayName "Beta", bot "beta" has displayName "Alpha"
+  const bots = new Map<string, BotDefinition>([
+    ['alpha', { id: '01A', name: 'alpha', displayName: 'Beta', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+    ['beta', { id: '01B', name: 'beta', displayName: 'Alpha', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  // "alpha" matches slug of 'alpha' AND display name of 'beta'
+  assert.throws(
+    () => resolveBot(bots, 'alpha'),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32007);
+      assert.ok(err.message.includes('Ambiguous'));
+      return true;
+    },
+  );
+});
+
+test('resolveBot — same bot matching both slug and display name is not ambiguous', () => {
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01HAZEL', name: 'hazel', displayName: 'hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  assert.strictEqual(resolveBot(bots, 'hazel'), 'hazel');
+});
+
+// ─── Placement Lifecycle (H1) ────────────────────────────────────────────────
+
+test('setDrafted updates project and role', () => {
+  const config = makeConfig();
+  config.bots = { hazel: { defaultProject: 'lobby', defaultRole: 'api-dev' } };
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01HAZEL', name: 'hazel', displayName: 'Hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  const projects = new Map<string, Project>([
+    ['lobby', { name: 'lobby', description: 'Lobby', paths: [], roles: ['api-dev'], virtual: true }],
+    ['acme', { name: 'Acme', description: 'Test', paths: ['../backend-api'], roles: ['api-dev'] }],
+  ]);
+  const roles = new Map([['api-dev', makeRole()]]);
+  const store = new BotPlacementStore(placeBots(config, bots, roles, projects, new Map()));
+
+  // Before draft
+  assert.strictEqual(store.get('hazel')!.project, 'lobby');
+
+  // Draft with project and role
+  store.setDrafted('hazel', 'ws', { project: 'Acme', roleName: 'api-dev' });
+
+  assert.strictEqual(store.get('hazel')!.status, 'drafted');
+  assert.strictEqual(store.get('hazel')!.project, 'Acme');
+  assert.strictEqual(store.get('hazel')!.roleName, 'api-dev');
+  assert.strictEqual(store.get('hazel')!.draftedBy, 'ws');
+});
+
+test('setUndrafted returns bot to lobby', () => {
+  const config = makeConfig();
+  config.bots = { hazel: { defaultProject: 'lobby', defaultRole: 'api-dev' } };
+  const bots = new Map<string, BotDefinition>([
+    ['hazel', { id: '01HAZEL', name: 'hazel', displayName: 'Hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul' }],
+  ]);
+  const projects = new Map<string, Project>([
+    ['lobby', { name: 'lobby', description: 'Lobby', paths: [], roles: ['api-dev'], virtual: true }],
+    ['acme', { name: 'Acme', description: 'Test', paths: ['../backend-api'], roles: ['api-dev'] }],
+  ]);
+  const roles = new Map([['api-dev', makeRole()]]);
+  const store = new BotPlacementStore(placeBots(config, bots, roles, projects, new Map()));
+
+  // Draft then undraft
+  store.setDrafted('hazel', 'ws', { project: 'Acme', roleName: 'api-dev' });
+  assert.strictEqual(store.get('hazel')!.project, 'Acme');
+
+  store.setUndrafted('hazel');
+  assert.strictEqual(store.get('hazel')!.status, 'available');
+  assert.strictEqual(store.get('hazel')!.project, 'lobby');
+  assert.strictEqual(store.get('hazel')!.draftedBy, undefined);
+});
+
+// ─── Lobby Role Suppression (H2) ─────────────────────────────────────────────
+
+test('list_bots — suppresses role for lobby bots', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'list_bots', {}) as { bots: Record<string, unknown>[] };
+
+  const hazel = result.bots.find(b => b['name'] === 'hazel');
+  assert.ok(hazel);
+  assert.strictEqual(hazel!['project'], 'lobby');
+  assert.strictEqual(hazel!['role'], null);
+});
+
+test('get_bot_status — suppresses role for lobby bots', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'get_bot_status', { bot: 'hazel' }) as Record<string, unknown>;
+
+  assert.strictEqual(result['project'], 'lobby');
+  assert.strictEqual(result['role'], null);
+});
+
+// ─── Bot Name Resolution in WS Methods (H6) ──────────────────────────────────
+
+test('get_bot_status — resolves by display name', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'get_bot_status', { bot: 'Hazel' }) as Record<string, unknown>;
+  assert.strictEqual(result['name'], 'hazel');
+});
+
+test('get_bot_status — resolves case-insensitive slug', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'get_bot_status', { bot: 'HAZEL' }) as Record<string, unknown>;
+  assert.strictEqual(result['name'], 'hazel');
+});
+
+// ─── Model Pinning (H7) ─────────────────────────────────────────────────────
+
+test('set_model — pins model for bot', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'set_model', { bot: 'hazel', model: 'sonnet-latest' }) as Record<string, unknown>;
+
+  assert.strictEqual(result['botName'], 'hazel');
+  assert.strictEqual(result['pinned'], true);
+  assert.strictEqual(result['alias'], 'sonnet-latest');
+});
+
+test('set_model — clears pin when model is null', () => {
+  const { methods } = makeMockDepsWithBots();
+  // First pin
+  call(methods, 'set_model', { bot: 'hazel', model: 'sonnet-latest' });
+  // Then clear
+  const result = call(methods, 'set_model', { bot: 'hazel' }) as Record<string, unknown>;
+  assert.strictEqual(result['pinned'], false);
+});
+
+test('set_model — rejects unknown model alias', () => {
+  const { methods } = makeMockDepsWithBots();
+  assert.throws(
+    () => call(methods, 'set_model', { bot: 'hazel', model: 'nonexistent-model' }),
+    (err: unknown) => {
+      assert.ok(err instanceof JSONRPCErrorException);
+      assert.strictEqual(err.code, -32008);
+      return true;
+    },
+  );
+});
+
+test('get_model — returns current model for bot', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'get_model', { bot: 'hazel' }) as Record<string, unknown>;
+  assert.strictEqual(result['botName'], 'hazel');
+  assert.ok(typeof result['model'] === 'string');
+});
+
+// ─── Filter Level (H8) ──────────────────────────────────────────────────────
+
+test('set_filter_level — sets level for bot', () => {
+  const { methods } = makeMockDepsWithBots();
+  const result = call(methods, 'set_filter_level', { bot: 'hazel', level: 'verbose' }) as Record<string, unknown>;
+  assert.strictEqual(result['botName'], 'hazel');
+  assert.strictEqual(result['filterLevel'], 'verbose');
+});
+
+test('set_filter_level — rejects invalid level', () => {
+  const { methods } = makeMockDepsWithBots();
+  assert.throws(
+    () => call(methods, 'set_filter_level', { bot: 'hazel', level: 'invalid' }),
+    (err: unknown) => err instanceof JSONRPCErrorException && err.code === -32602,
+  );
 });

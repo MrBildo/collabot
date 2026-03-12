@@ -9,6 +9,9 @@ import { assembleBotPrompt } from './prompts.js';
 import { AgentPool } from './pool.js';
 import type { RoleDefinition, BotDefinition } from './types.js';
 
+// BotSession type in tests needs new fields for backward compat
+const defaultSessionFields = { lastNumTurns: 0, filterLevel: 'feedback' as const };
+
 let tmpDir: string;
 
 function makeRoles(...names: string[]): Map<string, RoleDefinition> {
@@ -103,6 +106,7 @@ test('BotSessionManager.loadSessions recovers from disk', () => {
     lastOutputTokens: 0,
     contextWindow: 0,
     maxOutputTokens: 0,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
@@ -143,6 +147,7 @@ test('BotSessionManager.loadSessions skips bots not in loaded bots map', () => {
     lastOutputTokens: 0,
     contextWindow: 0,
     maxOutputTokens: 0,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-deleted-bot.json'), JSON.stringify(session));
@@ -176,32 +181,34 @@ test('BotSessionManager.loadSessions handles missing tasks directory', () => {
 
 // --- assembleBotPrompt tests ---
 
-test('assembleBotPrompt includes soul prompt section', () => {
+test('assembleBotPrompt includes Identity and Personality sections', () => {
   // assembleBotPrompt calls loadSystemPrompt() which needs COLLABOT_HOME.
-  // We test the composition logic by checking the output contains expected markers.
-  // In CI, prompts/system.md must exist under COLLABOT_HOME.
   // Skip if instance root isn't available.
+  const bot: BotDefinition = { id: '01TEST', name: 'hazel', displayName: 'Hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Be curious.' };
+  const role: RoleDefinition = { id: '01ROLE', version: '1.0.0', name: 'ts-dev', description: 'TS dev', createdOn: '2026-01-01T00:00:00Z', createdBy: 'test', displayName: 'TypeScript Dev', modelHint: 'sonnet-latest', prompt: 'You are a dev.' };
   try {
-    const result = assembleBotPrompt('Be curious.', 'You are a dev.', []);
-    assert.ok(result.includes('## Bot Identity'));
+    const result = assembleBotPrompt({ bot, role, project: 'Acme' });
+    assert.ok(result.includes('## Identity'));
+    assert.ok(result.includes('**Hazel** (TypeScript Dev)'));
+    assert.ok(result.includes('**Acme**'));
+    assert.ok(result.includes('## Personality'));
     assert.ok(result.includes('Be curious.'));
     assert.ok(result.includes('You are a dev.'));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('Instance root not found')) {
-      // Expected in environments without COLLABOT_HOME — skip gracefully
       return;
     }
     throw err;
   }
 });
 
-test('assembleBotPrompt with agent-draft permission produces same prompt (tool docs removed)', () => {
+test('assembleBotPrompt falls back to name when displayName not set', () => {
+  const bot: BotDefinition = { id: '01TEST', name: 'hazel', description: 'Test', version: '1.0.0', soulPrompt: 'Soul.' };
+  const role: RoleDefinition = { id: '01ROLE', version: '1.0.0', name: 'ts-dev', description: 'TS', createdOn: '2026-01-01T00:00:00Z', createdBy: 'test', modelHint: 'sonnet-latest', prompt: 'Role.' };
   try {
-    const withDraft = assembleBotPrompt('Soul.', 'Role.', ['agent-draft']);
-    const withoutDraft = assembleBotPrompt('Soul.', 'Role.', []);
-    // Tool docs no longer injected — permissions don't change prompt length
-    assert.strictEqual(withDraft.length, withoutDraft.length);
+    const result = assembleBotPrompt({ bot, role, project: 'Acme' });
+    assert.ok(result.includes('**hazel** (ts-dev)'));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('Instance root not found') || msg.includes('ENOENT')) {
@@ -323,6 +330,7 @@ test('BotSessionManager.getAllSessions returns all loaded sessions', () => {
     lastOutputTokens: 0,
     contextWindow: 0,
     maxOutputTokens: 0,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir1, 'bot-session-hazel.json'), JSON.stringify(session));
@@ -376,6 +384,7 @@ test('BotSessionManager.closeSession removes session and returns summary', () =>
     lastOutputTokens: 500,
     contextWindow: 200000,
     maxOutputTokens: 16384,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
@@ -421,6 +430,7 @@ test('BotSessionManager.loadSessions marks sessions with missing roles as stale'
     lastOutputTokens: 0,
     contextWindow: 0,
     maxOutputTokens: 0,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
@@ -460,6 +470,7 @@ test('BotSessionManager.loadSessions skips closed sessions', () => {
     lastOutputTokens: 0,
     contextWindow: 0,
     maxOutputTokens: 0,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));
@@ -496,6 +507,7 @@ test('BotSessionManager.loadSessions re-registers sessions in pool', () => {
     lastOutputTokens: 0,
     contextWindow: 0,
     maxOutputTokens: 0,
+    ...defaultSessionFields,
   };
 
   fs.writeFileSync(path.join(taskDir, 'bot-session-hazel.json'), JSON.stringify(session));

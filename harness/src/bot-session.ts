@@ -49,7 +49,10 @@ export type BotSession = {
   lastOutputTokens: number;
   contextWindow: number;
   maxOutputTokens: number;
+  lastNumTurns: number;   // API round-trips in the last SDK turn (for context % averaging)
   staleRole?: boolean;    // true if recovered session references a role that no longer exists
+  modelOverride?: string; // per-session model pin (config alias, e.g. 'opus-latest')
+  filterLevel: 'minimal' | 'feedback' | 'verbose';
 };
 
 export type BotSessionSummary = {
@@ -65,6 +68,8 @@ export type BotSessionSummary = {
 
 export class BotSessionManager {
   private sessions = new Map<string, BotSession>();
+  // Model overrides that may be set before session creation (e.g., during draft)
+  private pendingModelOverrides = new Map<string, string>();
 
   constructor(
     private config: Config,
@@ -121,11 +126,12 @@ export class BotSessionManager {
     const dispatchId = session.dispatchId;
     const displayName = role.displayName ?? role.name;
 
-    // Resolve model from role
-    const resolvedModel = resolveModelId(role.modelHint, this.config);
+    // Resolve model: per-session override > role model-hint > config default
+    const modelHint = session.modelOverride ?? role.modelHint;
+    const resolvedModel = resolveModelId(modelHint, this.config);
 
     // Build prompt
-    const systemPromptText = assembleBotPrompt(bot.soulPrompt, role.prompt, role.permissions, projectSkills);
+    const systemPromptText = assembleBotPrompt({ bot, role, project, projectSkills });
 
     // Build session options for SDK
     const sessionOpts: Record<string, unknown> = isFirstTurn
@@ -162,6 +168,16 @@ export class BotSessionManager {
         dispatchStore.appendEvent(taskDir, dispatchId, makeCapturedEvent(type, data));
       } catch { /* non-fatal */ }
     }
+
+    // Filter level gating for WS broadcast (errors/warnings always pass)
+    const shouldBroadcast = (msgType: string): boolean => {
+      if (msgType === 'error' || msgType === 'warning') return true;
+      const level = session.filterLevel;
+      if (level === 'verbose') return true;
+      if (level === 'feedback') return msgType === 'chat' || msgType === 'tool_use';
+      // minimal
+      return msgType === 'chat';
+    };
 
     // Ensure dispatch envelope exists
     const existingEnvelope = dispatchStore.getDispatchEnvelope(taskDir, dispatchId);
@@ -288,30 +304,30 @@ export class BotSessionManager {
               if (text.trim()) {
                 emitEvent('agent:text', { text: text.slice(0, 2000) });
                 await responseSink(text);
-                if (registry) {
+                if (registry && shouldBroadcast('chat')) {
                   await registry.broadcast(makeChannelMessage(channelId, displayName, 'chat', text));
                 }
               }
             }
 
-            // Thinking → event capture + registry broadcast
+            // Thinking → event capture + registry broadcast (verbose only)
             if (block.type === 'thinking' && typeof (block as Record<string, unknown>).thinking === 'string') {
               const thinking = (block as Record<string, unknown>).thinking as string;
               if (thinking.trim()) {
                 emitEvent('agent:thinking', { text: thinking.slice(0, 2000) });
-                if (registry) {
+                if (registry && shouldBroadcast('thinking')) {
                   await registry.broadcast(makeChannelMessage(channelId, displayName, 'thinking', thinking));
                 }
               }
             }
 
-            // Tool use → event capture + error loop detection + registry broadcast
+            // Tool use → event capture + error loop detection + registry broadcast (feedback+)
             if (block.type === 'tool_use') {
               const target = extractToolTarget(block.name, block.input);
 
               if (block.name !== 'StructuredOutput') {
                 emitEvent('agent:tool_call', { toolCallId: block.id, tool: block.name, target });
-                if (registry) {
+                if (registry && shouldBroadcast('tool_use')) {
                   const summary = target ? `${block.name} ${target}` : block.name;
                   await registry.broadcast(makeChannelMessage(
                     channelId, role.name, 'tool_use', summary,
@@ -645,6 +661,10 @@ export class BotSessionManager {
               data.agentId = `bot-${data.botName}-${Date.now()}`;
             }
 
+            // Backcompat: ensure new fields have defaults
+            if (data.lastNumTurns === undefined) data.lastNumTurns = 0;
+            if (data.filterLevel === undefined) data.filterLevel = 'feedback';
+
             // Re-register in pool
             const controller = new AbortController();
             try {
@@ -667,6 +687,35 @@ export class BotSessionManager {
           }
         }
       }
+    }
+  }
+
+  /** Pin a model for a bot's session. Pass undefined to clear the pin. Works before session creation. */
+  setModelOverride(botName: string, modelAlias: string | undefined): void {
+    const session = this.sessions.get(botName);
+    if (session) {
+      session.modelOverride = modelAlias;
+      this.persistSession(session);
+    }
+    // Also store in pending map (for draft → first submit flow)
+    if (modelAlias !== undefined) {
+      this.pendingModelOverrides.set(botName, modelAlias);
+    } else {
+      this.pendingModelOverrides.delete(botName);
+    }
+  }
+
+  /** Get the current model override for a bot (checks session first, then pending). */
+  getModelOverride(botName: string): string | undefined {
+    return this.sessions.get(botName)?.modelOverride ?? this.pendingModelOverrides.get(botName);
+  }
+
+  /** Set the filter level for a bot's session event stream. */
+  setFilterLevel(botName: string, level: 'minimal' | 'feedback' | 'verbose'): void {
+    const session = this.sessions.get(botName);
+    if (session) {
+      session.filterLevel = level;
+      this.persistSession(session);
     }
   }
 
@@ -702,6 +751,8 @@ export class BotSessionManager {
       lastOutputTokens: 0,
       contextWindow: 0,
       maxOutputTokens: 0,
+      lastNumTurns: 0,
+      filterLevel: 'feedback',
     };
 
     // Register in pool
@@ -713,6 +764,13 @@ export class BotSessionManager {
       startedAt: new Date(),
       controller,
     });
+
+    // Apply pending model override (set during draft before session exists)
+    const pendingModel = this.pendingModelOverrides.get(botName);
+    if (pendingModel) {
+      session.modelOverride = pendingModel;
+      this.pendingModelOverrides.delete(botName);
+    }
 
     this.sessions.set(botName, session);
     this.persistSession(session);
@@ -738,6 +796,7 @@ export class BotSessionManager {
       session.lastOutputTokens = usage.outputTokens;
       session.contextWindow = usage.contextWindow;
       session.maxOutputTokens = usage.maxOutputTokens;
+      session.lastNumTurns = usage.numTurns;
     }
     this.persistSession(session);
   }

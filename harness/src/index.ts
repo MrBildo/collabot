@@ -229,10 +229,11 @@ for (const provider of registry.providers()) {
         const vp = ensureVirtualProject(PROJECTS_DIR, req.name, req.description, roleNames, getInstanceRoot());
         projects.set(req.name.toLowerCase(), vp);
 
-        // Store meta (disallowedTools, skills) — runtime only, not persisted
+        // Store meta (disallowedTools, skills, taskRotation) — runtime only, not persisted
         const meta: VirtualProjectMeta = {};
         if (req.disallowedTools) meta.disallowedTools = req.disallowedTools;
         if (req.skills) meta.skills = req.skills;
+        if (req.taskRotation) meta.taskRotation = req.taskRotation;
         if (Object.keys(meta).length > 0) {
           virtualProjectMeta.set(req.name.toLowerCase(), meta);
         }
@@ -280,18 +281,24 @@ function ensureProjectTask(projectName: string): { slug: string; taskDir: string
   }
 }
 
-// Collect unique virtual projects with bots and ensure initial tasks
-const virtualProjectsWithBots = new Set<string>();
+// Collect unique virtual projects with bots — all need initial tasks for bot sessions.
+const allVirtualProjectsWithBots = new Set<string>();
+// Subset: only those that opt in to cron task rotation.
+const cronRotationProjects = new Set<string>();
 for (const placement of placementStore.getAll().values()) {
   const proj = projects.get(placement.project.toLowerCase());
   if (proj?.virtual) {
-    virtualProjectsWithBots.add(placement.project.toLowerCase());
+    allVirtualProjectsWithBots.add(placement.project.toLowerCase());
+    const meta = virtualProjectMeta.get(placement.project.toLowerCase());
+    if (meta?.taskRotation) {
+      cronRotationProjects.add(placement.project.toLowerCase());
+    }
   }
 }
 
-// Pre-ensure tasks for session recovery
+// Pre-ensure tasks for session recovery (all virtual projects with bots)
 const projectTasks = new Map<string, { slug: string; taskDir: string }>();
-for (const projectName of virtualProjectsWithBots) {
+for (const projectName of allVirtualProjectsWithBots) {
   const task = ensureProjectTask(projectName);
   if (task) projectTasks.set(projectName, task);
 }
@@ -442,14 +449,14 @@ if (slackAdapter) {
 
 const cronScheduler = new CronScheduler();
 
-if (botCount > 0 && virtualProjectsWithBots.size > 0) {
+if (botCount > 0 && cronRotationProjects.size > 0) {
   const rotationIntervalMs = (config.slack?.taskRotationIntervalHours ?? 24) * 60 * 60 * 1000;
 
   cronScheduler.register({
     name: 'task-rotation',
     intervalMs: rotationIntervalMs,
     handler: async () => {
-      for (const projectName of virtualProjectsWithBots) {
+      for (const projectName of cronRotationProjects) {
         if (!projects.has(projectName)) continue;
 
         const tasksDir = getProjectTasksDir(PROJECTS_DIR, projectName);

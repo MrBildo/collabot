@@ -114,11 +114,13 @@ export type VirtualProjectRequest = {
   roles: string[];              // empty = all loaded roles
   disallowedTools?: string[];
   skills?: VirtualProjectSkill[];
+  taskRotation?: boolean;       // opt-in to cron task rotation (default: false)
 };
 
 export type VirtualProjectMeta = {
   disallowedTools?: string[];
   skills?: VirtualProjectSkill[];
+  taskRotation?: boolean;       // opt-in to cron task rotation
 };
 
 // NOTE: Channel and Participant types are intentionally deferred.

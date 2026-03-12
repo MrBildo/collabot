@@ -382,3 +382,53 @@ test('BotPlacementStore.setAvailable transitions to available status', () => {
   assert.strictEqual(store.get('hazel')!.status, 'available');
   assert.strictEqual(store.get('hazel')!.draftedBy, undefined);
 });
+
+// ── H1: setDrafted lifecycle ─────────────────────────────────
+
+test('BotPlacementStore.setDrafted updates project and role', () => {
+  const store = makeStore();
+  store.setDrafted('hazel', 'ws', { project: 'research-lab', roleName: 'ts-dev' });
+  const p = store.get('hazel')!;
+  assert.strictEqual(p.status, 'drafted');
+  assert.strictEqual(p.draftedBy, 'ws');
+  assert.strictEqual(p.project, 'research-lab');
+  assert.strictEqual(p.roleName, 'ts-dev');
+});
+
+test('BotPlacementStore.setDrafted without opts only updates status and draftedBy', () => {
+  const store = makeStore();
+  const originalProject = store.get('hazel')!.project;
+  const originalRole = store.get('hazel')!.roleName;
+  store.setDrafted('hazel', 'ws');
+  const p = store.get('hazel')!;
+  assert.strictEqual(p.status, 'drafted');
+  assert.strictEqual(p.draftedBy, 'ws');
+  assert.strictEqual(p.project, originalProject);
+  assert.strictEqual(p.roleName, originalRole);
+});
+
+// ── H1: setUndrafted lifecycle ───────────────────────────────
+
+test('BotPlacementStore.setUndrafted returns bot to lobby', () => {
+  const store = makeStore();
+  store.setDrafted('hazel', 'ws', { project: 'research-lab', roleName: 'ts-dev' });
+  assert.strictEqual(store.get('hazel')!.project, 'research-lab');
+
+  store.setUndrafted('hazel');
+  const p = store.get('hazel')!;
+  assert.strictEqual(p.status, 'available');
+  assert.strictEqual(p.project, 'lobby');
+  assert.strictEqual(p.draftedBy, undefined);
+});
+
+test('BotPlacementStore.setUndrafted clears disallowedTools and skills', () => {
+  const store = makeStore();
+  // Manually set some meta
+  const p = store.get('hazel')!;
+  p.disallowedTools = ['Bash'];
+  p.skills = [{ name: 'test', content: 'test' }];
+
+  store.setUndrafted('hazel');
+  assert.strictEqual(store.get('hazel')!.disallowedTools, undefined);
+  assert.strictEqual(store.get('hazel')!.skills, undefined);
+});

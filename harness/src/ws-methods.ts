@@ -15,8 +15,68 @@ import { getProject, getProjectTasksDir, createProject, loadProjects, isVirtualP
 import { buildTaskContext } from './context.js';
 import { listTasks, createTask, closeTask, getTask } from './task.js';
 import { logger } from './logger.js';
+import { resolveModelId } from './config.js';
 import { scaffoldEntity, validateEntityFrontmatter } from './entity-tools.js';
 import type { EntityType } from './entity-tools.js';
+
+/**
+ * Resolve a bot by slug or display name (case-insensitive).
+ * Errors on ambiguity (slug of one bot collides with display name of another).
+ */
+export function resolveBot(
+  bots: Map<string, BotDefinition>,
+  nameOrSlug: string,
+): string {
+  const lower = nameOrSlug.toLowerCase();
+
+  // Exact slug match (case-insensitive)
+  const slugMatches: string[] = [];
+  const displayMatches: string[] = [];
+
+  for (const [slug, bot] of bots) {
+    if (slug.toLowerCase() === lower) {
+      slugMatches.push(slug);
+    }
+    const dn = bot.displayName ?? bot.name;
+    if (dn.toLowerCase() === lower) {
+      displayMatches.push(slug);
+    }
+  }
+
+  // Exact slug match wins
+  if (slugMatches.length === 1 && displayMatches.length === 0) {
+    return slugMatches[0]!;
+  }
+
+  // Display name match wins if no slug match
+  if (displayMatches.length === 1 && slugMatches.length === 0) {
+    return displayMatches[0]!;
+  }
+
+  // Both match the same bot — fine
+  if (slugMatches.length === 1 && displayMatches.length === 1 && slugMatches[0] === displayMatches[0]) {
+    return slugMatches[0]!;
+  }
+
+  // Ambiguity — slug of one bot matches display name of another
+  const allMatches = [...new Set([...slugMatches, ...displayMatches])];
+  if (allMatches.length > 1) {
+    const names = allMatches.map(s => {
+      const b = bots.get(s);
+      return `${s} (${b?.displayName ?? s})`;
+    }).join(', ');
+    throw new JSONRPCErrorException(
+      `Ambiguous bot name "${nameOrSlug}" — matches: ${names}. Use the exact slug.`,
+      WS_ERROR_BOT_AMBIGUOUS,
+    );
+  }
+
+  if (allMatches.length === 1) {
+    return allMatches[0]!;
+  }
+
+  throw new JSONRPCErrorException(`Bot "${nameOrSlug}" not found`, WS_ERROR_BOT_NOT_FOUND);
+}
 
 const WS_ERROR_TASK_NOT_FOUND = -32000;
 const WS_ERROR_AGENT_NOT_FOUND = -32001;
@@ -25,6 +85,8 @@ const WS_ERROR_BOT_NOT_FOUND = -32003;
 const WS_ERROR_BOT_BUSY = -32004;
 const WS_ERROR_NO_ACTIVE_SESSION = -32005;
 const WS_ERROR_PROJECT_NOT_FOUND = -32006;
+const WS_ERROR_BOT_AMBIGUOUS = -32007;
+const WS_ERROR_INVALID_MODEL = -32008;
 
 export type WsMethodDeps = {
   wsAdapter: WsAdapter;
@@ -56,6 +118,18 @@ function resolveProject(deps: WsMethodDeps, projectName: string): Project {
   } catch {
     throw new JSONRPCErrorException(`Project "${projectName}" not found`, WS_ERROR_PROJECT_NOT_FOUND);
   }
+}
+
+/**
+ * Compute context window usage percentage.
+ * The SDK aggregates token counts across all API calls within a turn.
+ * Dividing by num_turns gives the average per-call context usage, which
+ * approximates "how full is the context window right now."
+ */
+function computeContextPct(inputTokens: number, contextWindow: number, numTurns: number): number {
+  if (contextWindow <= 0 || inputTokens <= 0) return 0;
+  const perCall = inputTokens / Math.max(numTurns, 1);
+  return Math.min(100, Math.round((perCall / contextWindow) * 100));
 }
 
 type PendingDraft = {
@@ -148,15 +222,17 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     // Bot session routing — if bot specified, route to BotSessionManager
     if (botName) {
-      let session = deps.botSessionManager.getSession(botName);
+      // Resolve bot name (slug or display name, case-insensitive) — but only if bots are loaded
+      const resolvedBotName = deps.bots ? resolveBot(deps.bots, botName) : botName;
+      let session = deps.botSessionManager.getSession(resolvedBotName);
 
       // Lazy session creation — draft stores context, first submit_prompt creates the session
       if (!session) {
-        const draft = pendingDrafts.get(botName);
+        const draft = pendingDrafts.get(resolvedBotName);
         if (!draft) {
-          throw new JSONRPCErrorException(`No active session for bot "${botName}". Use /draft first.`, WS_ERROR_NO_ACTIVE_SESSION);
+          throw new JSONRPCErrorException(`No active session for bot "${resolvedBotName}". Use /draft first.`, WS_ERROR_NO_ACTIVE_SESSION);
         }
-        pendingDrafts.delete(botName);
+        pendingDrafts.delete(resolvedBotName);
 
         const draftProject = deps.projects.get(draft.project.toLowerCase());
         const draftCwd = draftProject?.paths[0] ?? draft.taskDir;
@@ -175,7 +251,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
           registry: deps.registry,
         })
           .then(() => {
-            const updated = deps.botSessionManager.getSession(botName);
+            const updated = deps.botSessionManager.getSession(resolvedBotName);
             if (updated) {
               deps.wsAdapter.broadcastNotification('draft_status', {
                 sessionId: updated.sessionId,
@@ -184,8 +260,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
                 project: updated.project,
                 turnCount: updated.turnCount,
                 costUsd: updated.cumulativeCostUsd,
-                contextPct: updated.contextWindow > 0
-                  ? Math.round((updated.lastInputTokens / updated.contextWindow) * 100) : 0,
+                contextPct: computeContextPct(updated.lastInputTokens, updated.contextWindow, updated.lastNumTurns),
                 lastInputTokens: updated.lastInputTokens,
                 lastOutputTokens: updated.lastOutputTokens,
                 lastActivity: updated.lastActivityAt,
@@ -194,10 +269,10 @@ export function registerWsMethods(deps: WsMethodDeps): void {
           })
           .catch((err: unknown) => {
             const errMsg = err instanceof Error ? err.message : String(err);
-            logger.error({ err: errMsg, botName }, 'lazy session creation failed');
+            logger.error({ err: errMsg, botName: resolvedBotName }, 'lazy session creation failed');
           });
 
-        return { status: 'submitted', botName, firstMessage: true };
+        return { status: 'submitted', botName: resolvedBotName, firstMessage: true };
       }
       if (session.staleRole) {
         throw new JSONRPCErrorException(
@@ -220,7 +295,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
       // Fire-and-forget resume
       deps.botSessionManager.handleBotMessage({
-        botName,
+        botName: resolvedBotName,
         roleName: session.role,
         message: content,
         project: session.project,
@@ -233,12 +308,12 @@ export function registerWsMethods(deps: WsMethodDeps): void {
         mcpServer,
         onCompaction: (event) => {
           deps.wsAdapter.broadcastNotification('context_compacted', {
-            sessionId: session.sessionId, botName, ...event,
+            sessionId: session.sessionId, botName: resolvedBotName, ...event,
           });
         },
       })
         .then(() => {
-          const updated = deps.botSessionManager.getSession(botName);
+          const updated = deps.botSessionManager.getSession(resolvedBotName);
           if (updated) {
             deps.wsAdapter.broadcastNotification('draft_status', {
               sessionId: updated.sessionId,
@@ -247,8 +322,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
               project: updated.project,
               turnCount: updated.turnCount,
               costUsd: updated.cumulativeCostUsd,
-              contextPct: updated.contextWindow > 0
-                ? Math.round((updated.lastInputTokens / updated.contextWindow) * 100) : 0,
+              contextPct: computeContextPct(updated.lastInputTokens, updated.contextWindow, updated.lastNumTurns),
               lastInputTokens: updated.lastInputTokens,
               lastOutputTokens: updated.lastOutputTokens,
               lastActivity: updated.lastActivityAt,
@@ -267,7 +341,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
           });
         });
 
-      return { threadId: `bot-${session.sessionId}`, taskSlug: session.taskSlug, botName };
+      return { threadId: `bot-${session.sessionId}`, taskSlug: session.taskSlug, botName: resolvedBotName };
     }
 
     // Autonomous dispatch — requires project
@@ -352,12 +426,13 @@ export function registerWsMethods(deps: WsMethodDeps): void {
   // draft — start a conversational session with a bot
   deps.wsAdapter.addMethod('draft', (params: unknown) => {
     const p = params as Record<string, unknown>;
-    const botName = p['bot'] as string | undefined;
+    const botNameInput = p['bot'] as string | undefined;
     const roleName = p['role'];
     const projectName = p['project'] as string | undefined;
     const taskSlugParam = p['task'] as string | undefined;
+    const modelParam = p['model'] as string | undefined;
 
-    if (typeof botName !== 'string') {
+    if (typeof botNameInput !== 'string') {
       throw new JSONRPCErrorException('bot is required', -32602);
     }
     if (typeof roleName !== 'string') {
@@ -369,6 +444,12 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     if (typeof taskSlugParam !== 'string') {
       throw new JSONRPCErrorException('task is required', -32602);
     }
+
+    // Resolve bot name (slug or display name, case-insensitive)
+    if (!deps.bots) {
+      throw new JSONRPCErrorException('No bots loaded', WS_ERROR_BOT_NOT_FOUND);
+    }
+    const botName = resolveBot(deps.bots, botNameInput);
 
     // Check placement status — guards against race with Slack queue
     if (deps.placementStore) {
@@ -399,6 +480,14 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       throw new JSONRPCErrorException(`Role "${roleName}" not found`, WS_ERROR_ROLE_NOT_FOUND);
     }
 
+    // Validate model alias if provided
+    if (modelParam !== undefined) {
+      const resolved = resolveModelId(modelParam, deps.config);
+      if (resolved === deps.config.models.default && modelParam !== deps.config.models.default && !deps.config.models.aliases[modelParam]) {
+        throw new JSONRPCErrorException(`Unknown model alias "${modelParam}"`, WS_ERROR_INVALID_MODEL);
+      }
+    }
+
     // Resolve task
     const tasksDir = getProjectTasksDir(deps.projectsDir, project.name);
     let taskSlug: string;
@@ -412,7 +501,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     }
 
     // Mark bot as drafted synchronously — closes race window with Slack queue
-    deps.placementStore?.setDrafted(botName, 'ws');
+    deps.placementStore?.setDrafted(botName, 'ws', { project: project.name, roleName });
 
     // Store draft context — session is created lazily on first submit_prompt
     // (avoids empty-message SDK error). get_draft_status returns active: false until first message.
@@ -426,23 +515,34 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       channelId,
     });
 
+    // Apply model pin if requested
+    if (modelParam) {
+      deps.botSessionManager.setModelOverride(botName, modelParam);
+    }
+
     return { botName, sessionId: channelId, taskSlug, project: project.name };
   });
 
   // undraft — close a bot session
   deps.wsAdapter.addMethod('undraft', (params: unknown) => {
     const p = params as Record<string, unknown>;
-    const botName = p['bot'] as string | undefined;
+    const botNameInput = p['bot'] as string | undefined;
 
-    if (typeof botName !== 'string') {
+    if (typeof botNameInput !== 'string') {
       throw new JSONRPCErrorException('bot is required', -32602);
     }
+
+    // Resolve bot name (slug or display name, case-insensitive)
+    if (!deps.bots) {
+      throw new JSONRPCErrorException('No bots loaded', WS_ERROR_BOT_NOT_FOUND);
+    }
+    const botName = resolveBot(deps.bots, botNameInput);
 
     // Handle pending draft (drafted but no message sent yet)
     const pending = pendingDrafts.get(botName);
     if (pending) {
       pendingDrafts.delete(botName);
-      deps.placementStore?.setAvailable(botName);
+      deps.placementStore?.setUndrafted(botName);
       return { botName, sessionId: pending.channelId, taskSlug: pending.taskSlug, turns: 0, cost: 0, durationMs: 0 };
     }
 
@@ -453,8 +553,8 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     const summary = deps.botSessionManager.closeSession(botName);
 
-    // Reset placement status so bot is available again
-    deps.placementStore?.setAvailable(botName);
+    // Return bot to lobby — clears project, role, draftedBy
+    deps.placementStore?.setUndrafted(botName);
 
     return {
       botName: summary.botName,
@@ -469,17 +569,15 @@ export function registerWsMethods(deps: WsMethodDeps): void {
   // get_draft_status — return bot session state + metrics
   deps.wsAdapter.addMethod('get_draft_status', (params: unknown) => {
     const p = params as Record<string, unknown>;
-    const botName = p['bot'] as string | undefined;
+    const botNameInput = p['bot'] as string | undefined;
 
-    if (botName) {
-      const session = deps.botSessionManager.getSession(botName);
+    if (botNameInput) {
+      // Resolve bot name if bots loaded
+      const resolvedName = deps.bots ? resolveBot(deps.bots, botNameInput) : botNameInput;
+      const session = deps.botSessionManager.getSession(resolvedName);
       if (!session) {
-        return { active: false, botName };
+        return { active: false, botName: resolvedName };
       }
-
-      const contextPct = session.contextWindow > 0
-        ? Math.round((session.lastInputTokens / session.contextWindow) * 100)
-        : 0;
 
       return {
         active: true,
@@ -491,7 +589,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
           taskSlug: session.taskSlug,
           turnCount: session.turnCount,
           costUsd: session.cumulativeCostUsd,
-          contextPct,
+          contextPct: computeContextPct(session.lastInputTokens, session.contextWindow, session.lastNumTurns),
           lastInputTokens: session.lastInputTokens,
           contextWindow: session.contextWindow,
           lastActivity: session.lastActivityAt,
@@ -508,10 +606,6 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       return { active: false };
     }
 
-    const contextPct = firstActive.contextWindow > 0
-      ? Math.round((firstActive.lastInputTokens / firstActive.contextWindow) * 100)
-      : 0;
-
     return {
       active: true,
       session: {
@@ -522,7 +616,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
         taskSlug: firstActive.taskSlug,
         turnCount: firstActive.turnCount,
         costUsd: firstActive.cumulativeCostUsd,
-        contextPct,
+        contextPct: computeContextPct(firstActive.lastInputTokens, firstActive.contextWindow, firstActive.lastNumTurns),
         lastInputTokens: firstActive.lastInputTokens,
         contextWindow: firstActive.contextWindow,
         lastActivity: firstActive.lastActivityAt,
@@ -657,14 +751,16 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       .map(pl => {
         const bot = deps.bots!.get(pl.botName);
         const session = deps.botSessionManager.getSession(pl.botName);
+        const isLobby = pl.project.toLowerCase() === 'lobby';
         return {
           name: pl.botName,
           displayName: bot?.displayName ?? pl.botName,
           project: pl.project,
-          role: pl.roleName,
+          role: isLobby ? null : pl.roleName,
           status: pl.status,
           draftedBy: pl.draftedBy,
           sessionTurns: session?.turnCount,
+          contextPct: session ? computeContextPct(session.lastInputTokens, session.contextWindow, session.lastNumTurns) : undefined,
           lastActivity: session?.lastActivityAt,
         };
       });
@@ -675,15 +771,18 @@ export function registerWsMethods(deps: WsMethodDeps): void {
   // get_bot_status — return detailed status for a single bot
   deps.wsAdapter.addMethod('get_bot_status', (params: unknown) => {
     const p = params as Record<string, unknown>;
-    const botName = p['bot'] as string | undefined;
+    const botNameInput = p['bot'] as string | undefined;
 
-    if (typeof botName !== 'string') {
+    if (typeof botNameInput !== 'string') {
       throw new JSONRPCErrorException('bot is required', -32602);
     }
 
     if (!deps.placementStore || !deps.bots) {
-      throw new JSONRPCErrorException(`Bot "${botName}" not found`, WS_ERROR_BOT_NOT_FOUND);
+      throw new JSONRPCErrorException(`Bot "${botNameInput}" not found`, WS_ERROR_BOT_NOT_FOUND);
     }
+
+    // Resolve bot name (slug or display name, case-insensitive)
+    const botName = resolveBot(deps.bots, botNameInput);
 
     const placement = deps.placementStore.get(botName);
     if (!placement) {
@@ -692,16 +791,18 @@ export function registerWsMethods(deps: WsMethodDeps): void {
 
     const bot = deps.bots.get(botName);
     const session = deps.botSessionManager.getSession(botName);
+    const isLobby = placement.project.toLowerCase() === 'lobby';
 
     return {
       name: placement.botName,
       displayName: bot?.displayName ?? placement.botName,
       project: placement.project,
-      role: placement.roleName,
+      role: isLobby ? null : placement.roleName,
       status: placement.status,
       draftedBy: placement.draftedBy,
       sessionTurns: session?.turnCount,
       costUsd: session?.cumulativeCostUsd,
+      contextPct: session ? computeContextPct(session.lastInputTokens, session.contextWindow, session.lastNumTurns) : undefined,
       lastActivity: session?.lastActivityAt,
     };
   });
@@ -715,5 +816,106 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       modelHint: r.modelHint,
     }));
     return { roles: roleList };
+  });
+
+  // ── Model Pinning (H7) ──────────────────────────────────────
+
+  // set_model — pin a model for the current bot session (or clear with no args)
+  deps.wsAdapter.addMethod('set_model', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botNameInput = p['bot'] as string | undefined;
+    const modelAlias = p['model'] as string | undefined;
+
+    if (typeof botNameInput !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
+    }
+
+    if (!deps.bots) {
+      throw new JSONRPCErrorException('No bots loaded', WS_ERROR_BOT_NOT_FOUND);
+    }
+    const botName = resolveBot(deps.bots, botNameInput);
+
+    // If model provided, validate it resolves to something known
+    if (modelAlias !== undefined && modelAlias !== null) {
+      const resolved = resolveModelId(modelAlias, deps.config);
+      if (resolved === deps.config.models.default && modelAlias !== deps.config.models.default && !deps.config.models.aliases[modelAlias]) {
+        throw new JSONRPCErrorException(`Unknown model alias "${modelAlias}"`, WS_ERROR_INVALID_MODEL);
+      }
+      deps.botSessionManager.setModelOverride(botName, modelAlias);
+    } else {
+      // Clear pin
+      deps.botSessionManager.setModelOverride(botName, undefined);
+    }
+
+    // Return current effective model
+    const session = deps.botSessionManager.getSession(botName);
+    const override = deps.botSessionManager.getModelOverride(botName);
+    const placement = deps.placementStore?.get(botName);
+    const roleName = session?.role ?? placement?.roleName;
+    const role = roleName ? deps.roles.get(roleName) : undefined;
+    const effectiveHint = override ?? role?.modelHint ?? deps.config.models.default;
+    const effectiveModel = resolveModelId(effectiveHint, deps.config);
+
+    return {
+      botName,
+      model: effectiveModel,
+      alias: effectiveHint,
+      pinned: override !== undefined,
+    };
+  });
+
+  // get_model — return current model for a bot session
+  deps.wsAdapter.addMethod('get_model', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botNameInput = p['bot'] as string | undefined;
+
+    if (typeof botNameInput !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
+    }
+
+    if (!deps.bots) {
+      throw new JSONRPCErrorException('No bots loaded', WS_ERROR_BOT_NOT_FOUND);
+    }
+    const botName = resolveBot(deps.bots, botNameInput);
+
+    const session = deps.botSessionManager.getSession(botName);
+    const override = deps.botSessionManager.getModelOverride(botName);
+    const placement = deps.placementStore?.get(botName);
+    const roleName = session?.role ?? placement?.roleName;
+    const role = roleName ? deps.roles.get(roleName) : undefined;
+    const effectiveHint = override ?? role?.modelHint ?? deps.config.models.default;
+    const effectiveModel = resolveModelId(effectiveHint, deps.config);
+
+    return {
+      botName,
+      model: effectiveModel,
+      alias: effectiveHint,
+      pinned: override !== undefined,
+    };
+  });
+
+  // ── Filter Level (H8) ───────────────────────────────────────
+
+  // set_filter_level — set the event stream filter level for a bot session
+  deps.wsAdapter.addMethod('set_filter_level', (params: unknown) => {
+    const p = params as Record<string, unknown>;
+    const botNameInput = p['bot'] as string | undefined;
+    const level = p['level'] as string | undefined;
+
+    if (typeof botNameInput !== 'string') {
+      throw new JSONRPCErrorException('bot is required', -32602);
+    }
+    if (level !== 'minimal' && level !== 'feedback' && level !== 'verbose') {
+      throw new JSONRPCErrorException('level must be "minimal", "feedback", or "verbose"', -32602);
+    }
+
+    if (!deps.bots) {
+      throw new JSONRPCErrorException('No bots loaded', WS_ERROR_BOT_NOT_FOUND);
+    }
+    const botName = resolveBot(deps.bots, botNameInput);
+
+    deps.botSessionManager.setFilterLevel(botName, level);
+
+    return { botName, filterLevel: level };
   });
 }
