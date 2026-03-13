@@ -180,7 +180,7 @@ export type DispatchEnvelope = {
   usage?: UsageMetrics;
   structuredResult?: AgentResult;
   parentDispatchId?: string;           // null for top-level
-  botId?: string;                      // null (future)
+  botId?: string;                      // set by bot sessions, absent for autonomous/CLI dispatch
 };
 
 export type DispatchFile = DispatchEnvelope & {
