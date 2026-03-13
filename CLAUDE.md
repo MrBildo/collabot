@@ -21,6 +21,7 @@ Collabot is a general-purpose agent orchestration platform. It dispatches, coord
 │   └── <stack>/<topic>/      # Knowledge bases — META.md + INDEX.md + topic files
 ├── research/
 │   └── <topic>/              # Research outputs — one folder per effort
+├── temp/                        # Scratch files, working docs, agent handoffs — cleaned regularly
 ├── archive/
 │   ├── specs/                # Completed specs
 │   ├── milestones/           # Milestone handoff docs
@@ -37,7 +38,8 @@ Collabot is a general-purpose agent orchestration platform. It dispatches, coord
 4. **Research is grouped.** Each research effort gets its own folder under `research/`. No loose files.
 5. **Archive is append-only.** Things go in, nothing comes out.
 6. **Wikilink-style linking.** Cross-references between `.agents/` documents use `[[path/to/file]]` syntax (no `.md` extension). Use `[[path/to/file|display text]]` when the filename isn't human-friendly.
-7. **Run `/agents-tidy` between milestones** to enforce structure, extract roadmap items, and move completed specs.
+7. **`temp/` is the scratch pad.** Working documents, agent handoffs, audit checklists, and any transient files go here — not in other directories. Before cleaning `temp/`, agents must verify nothing needs to be captured elsewhere (roadmap, memory, archive).
+8. **Run `/agents-tidy` between milestones** to enforce structure, extract roadmap items, and move completed specs.
 
 ### Lifecycle
 
