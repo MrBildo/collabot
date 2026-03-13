@@ -6,6 +6,48 @@ Collabot is a general-purpose agent orchestration platform. It dispatches, coord
 
 **Collabot never stores project domain knowledge.** Domain docs (ecosystem maps, API contracts, glossaries, release tracking) belong in the project repos, not here. The platform owns orchestration, roles, skills, and agent lifecycle.
 
+## .agents/ Directory Structure
+
+`.agents/` is the instance-local workspace (gitignored). Every file has a designated home. **No loose files anywhere.**
+
+```
+.agents/
+├── roadmap/
+│   └── INDEX.md              # Living backlog — what's next, ideas, decisions
+├── specs/
+│   ├── TEMPLATE.md           # Spec template
+│   └── <active specs only>   # Specs being planned or implemented
+├── kb/
+│   └── <stack>/<topic>/      # Knowledge bases — META.md + INDEX.md + topic files
+├── research/
+│   └── <topic>/              # Research outputs — one folder per effort
+├── archive/
+│   ├── specs/                # Completed specs
+│   ├── milestones/           # Milestone handoff docs
+│   ├── postmortems/          # Retrospectives + meeting logs
+│   └── vision/               # Early brainstorming docs
+└── WORKFLOW.md               # Planning workflow and cleanup checklist
+```
+
+### Rules
+
+1. **No loose files.** Every file goes in its designated folder. Nothing in `.agents/` root except `WORKFLOW.md`.
+2. **Specs are working set only.** When an initiative merges to master, move the spec to `archive/specs/`.
+3. **Roadmap is the source of truth for future work.** Ideas from specs, postmortems, and discussions are extracted (copied, never cut) into `roadmap/INDEX.md`. See the roadmap: `.agents/roadmap/INDEX.md`.
+4. **Research is grouped.** Each research effort gets its own folder under `research/`. No loose files.
+5. **Archive is append-only.** Things go in, nothing comes out.
+6. **Wikilink-style linking.** Cross-references between `.agents/` documents use `[[path/to/file]]` syntax (no `.md` extension). Use `[[path/to/file|display text]]` when the filename isn't human-friendly.
+7. **Run `/agents-tidy` between milestones** to enforce structure, extract roadmap items, and move completed specs.
+
+### Lifecycle
+
+| Trigger | Action |
+|---------|--------|
+| New initiative starts | Create spec in `specs/`. Add to `roadmap/INDEX.md` Active Initiatives. |
+| Initiative merges to master | Move spec to `archive/specs/`. Remove from Active in roadmap. |
+| Post-mortem completed | File to `archive/postmortems/`. Extract future items to `roadmap/INDEX.md`. |
+| Idea captured | Add to `roadmap/INDEX.md` under Ideas. Detail file in `roadmap/` only if needed. |
+
 ## Core Architecture
 
 The **harness** (`./harness/`) is the core orchestration engine — a persistent Node.js/TypeScript process that manages agent lifecycle, task state, context reconstruction, and the MCP tool surface. It dispatches Claude Code agents via the Agent SDK (`@anthropic-ai/claude-agent-sdk`).
@@ -19,43 +61,26 @@ The **harness** (`./harness/`) is the core orchestration engine — a persistent
 | WebSocket | JSON-RPC 2.0 over WS | External processes connect to `ws://127.0.0.1:9800` |
 | TUI | Terminal UI (.NET 10) | Separate repo: `github.com/MrBildo/collabot-tui` |
 
-The harness runs with or without any specific interface. Source is in `./harness/src/`.
+Source is in `./harness/src/`.
 
-## Projects
+### Entity Model
 
-Projects are registered in `.projects/<name>/project.toml`. Each manifest declares:
-- `name` — display name
-- `description` — what the project is
-- `paths[]` — relative paths to project repositories (can be empty for scaffolded projects)
-- `roles[]` — which roles can work on this project
+**Bot** (WHO/WHY) → **Role** (WHAT) → **Skills** (HOW)
 
-Projects are loaded at startup and validated against loaded roles. Projects with empty `paths` can be loaded but not dispatched to — the harness will error with a clear message directing the user to edit the manifest. The `.projects/` directory is gitignored — project manifests are local only as they contain client-specific references.
+- **Bots** (`./bots/`) — persistent identities with soul prompts. `BotSessionManager` is the unified session system — all interactive work (TUI drafts, Slack DMs) routes through it.
+- **Roles** (`./roles/`) — behavioral profiles with YAML frontmatter (id, version, name, model-hint, permissions). Tech-stack-focused, not project-specific.
+- **Projects** (`.projects/<name>/project.toml`) — local-only manifests declaring name, description, paths, and roles. Gitignored.
 
-Projects can be scaffolded from the TUI (`/project init <name>`) or via the `create_project` WS method, and reloaded from disk without restart (`/project reload` or `reload_projects`).
-
-## Roles
-
-Roles are markdown files with YAML frontmatter, stored in `./roles/`. Each role defines a behavioral profile: identity, prompt, model hint, and permissions. Roles are tech-stack-focused (not project-specific) — any role can be assigned to any project. See `.agents/docs/specs/role-system-v2.md` for the full design.
-
-**Frontmatter fields:** `id` (ULID), `version` (semver), `name`, `description`, `createdOn`, `createdBy`, `displayName`, `model-hint` (alias from config), `permissions` (optional, controls MCP tool access).
-
-| Role | Description | Model Hint | Permissions |
-|------|-------------|------------|-------------|
-| `dotnet-dev` | Backend development (.NET/C#) | sonnet-latest | — |
-| `ts-dev` | TypeScript/React development | sonnet-latest | — |
-| `product-analyst` | Analysis, coordination, multi-agent dispatch | opus-latest | agent-draft, projects-list, projects-create |
-
-Old project-specific roles (`api-dev`, `portal-dev`, `app-dev`, `qa-dev`) are archived in `./roles/archived/`.
+Every interactive conversation is with a bot. Draft = borrowing a bot from lobby. CLI one-shot dispatch is botless.
 
 ## Running the Harness
 
-**Dev mode:**
 ```powershell
 cd harness
 npm run dev
 ```
 
-This runs `tsx watch` (auto-reloads on file saves) piped through `pino-pretty` for readable logs. If Slack tokens are present in `.env`, the Slack adapter starts alongside. Without them, the harness runs headless (CLI-only).
+Runs `tsx watch` piped through `pino-pretty`. Slack adapter starts if tokens are in `.env`.
 
 **CRITICAL — Kill all node instances before any harness work or testing.**
 On Windows, closing a terminal does NOT kill child processes. Instances accumulate silently. If Slack is enabled, Socket Mode routes messages to the oldest instance, so code changes appear to have no effect.
@@ -64,24 +89,17 @@ On Windows, closing a terminal does NOT kill child processes. Instances accumula
 Stop-Process -Name node -Force
 ```
 
-Then restart with `npm run dev`. This applies before writing code, before testing, and before interpreting test results.
-
-**Running tests:** Tests use Node's built-in `node:test` runner, executed via `tsx --test`. Run with `npm test` from `harness/`. Do NOT use `vitest`, `jest`, or any other test runner — they will fail because the test files import from `node:test`, not from a third-party framework.
+**Tests:** `npm test` from `harness/`. Uses Node's built-in `node:test` runner via `tsx --test`. Do NOT use vitest, jest, or any other runner.
 
 ## Dispatching Work
 
-### Primary: Harness Dispatch (Agent SDK)
+### Harness Dispatch (Primary)
 
-The harness dispatches agents programmatically and handles role resolution, event capture, structured output validation, error loop detection, context reconstruction, and MCP tool injection.
-
-- **Slack adapter:** DM the bot with a task. Project context is required.
-- **CLI adapter:** `npm run cli -- --project <project> --role <role> "prompt"` for one-shot dispatch. No Slack required.
-- **WebSocket adapter:** JSON-RPC 2.0 over WebSocket (`ws://127.0.0.1:9800`). External processes connect here.
-- **TUI adapter:** .NET 10 Terminal.Gui client (separate repo: `github.com/MrBildo/collabot-tui`). Connects via WebSocket.
+The harness handles role resolution, event capture, structured output, error loop detection, context reconstruction, and MCP tool injection.
 
 ### Fallback: CLI Dispatch
 
-For cases where the harness isn't running or a one-off dispatch is needed:
+For one-offs when the harness isn't running:
 
 ```powershell
 cd ..\<project-repo>
@@ -89,144 +107,105 @@ $env:CLAUDECODE = $null
 claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 ```
 
-**Required flags:**
-- `$env:CLAUDECODE = $null` — prevents nested session errors
-- `--dangerously-skip-permissions` — always use this; `--allowedTools` whitelists cause agents to stall silently in non-interactive mode
-- `--output-format text` — structured output for parsing
-
 ### Dispatch Rules
 
-- **Spec first:** Write task specs to `.agents/docs/specs/` first, then dispatch with the spec content. No dispatch without a spec.
+- **Spec first:** Write specs to `.agents/specs/` before dispatching. No dispatch without a spec.
 - Include ALL context the child needs — it has no memory of this session
-- Child agents return structured output (Status, Summary, Changes, Issues, Next Steps)
-- Dispatch in parallel when tasks are independent
-- Dispatch sequentially when there are dependencies (e.g., API shape needed for frontend)
+- **Ask, don't guess:** Include: "If you get stuck or unsure, report back rather than guessing."
 - Max 3 follow-up rounds per task before escalating to user
-- Use `--model` flag for simpler tasks to manage cost
-- **Ask, don't guess:** Include in dispatch prompts: "If you get stuck or are unsure about something, report back with your question rather than guessing."
-- **Locked DLL warning:** If a child agent reports build failure due to locked DLLs (MSB3027), the compilation itself succeeded — the running API process holds the file lock.
+- Dispatch in parallel when independent, sequentially when dependent
+- **Locked DLL warning:** Build failure from locked DLLs (MSB3027) means compilation succeeded — running API holds the lock.
 
-### Parallel Agent Dispatch (Worktrees)
+### Parallel Dispatch (Worktrees)
 
-When multiple agents need to work on the same repo simultaneously, use **git worktrees** to give each agent a physically separate working directory. Separate branches alone don't work — agents in the same directory clobber each other's checkout.
+When multiple agents need the same repo simultaneously, use **git worktrees** for physically separate working directories.
 
-**When to use:** Two or more agents working the same repo in parallel (e.g., Phase 2A + 2B of a multi-phase implementation).
-
-**Setup:**
 ```powershell
-# From the main repo, create worktrees as sibling directories
 git worktree add ../<repo>-wt-<short-name> -b feature/<branch-name> <start-point>
-
-# Install dependencies in each worktree
 cd ../<repo>-wt-<short-name>/harness && npm install
 ```
 
-**Naming conventions:**
-- Worktree path: `../<repo>-wt-<short-name>/` (sibling to main repo)
-- Branch: `feature/<initiative>-<purpose>` (e.g., `feature/esv2-write-path`)
-
-**Dispatch prompts** point each agent to its worktree directory:
-```
-Open Claude Code in `../<repo>-wt-<short-name>/harness/`
-```
-
-**After agents finish:**
-1. Review each worktree's changes
-2. Merge feature branches into the release/integration branch
-3. Clean up: `git worktree remove ../<repo>-wt-<short-name>` + `git branch -d feature/<branch-name>`
-
-**Important:** Each worktree needs its own `npm install` — they have separate `node_modules/`. The `.git` store is shared, so commits in a worktree are immediately visible to the main repo.
-
-### Knowledge Base
-
-Before starting any development work, coding agents MUST check `.agents/kb/` for relevant knowledge bases. Start with `meta.md` and `index.md` — these are wiki-style and designed to minimize context window usage.
-
-## Planning Workflow
-
-See `.agents/docs/process/WORKFLOW.md` for the full step-by-step process (instance-local, not shipped with platform).
-
-**Summary:** Task intake → impact analysis → feature spec (with test plan) → branch planning → sub-project handoff → testing → PR review
-
-## Agent SDK — Windows Environment
-
-Two env vars MUST be set in `buildChildEnv()` (`harness/src/dispatch.ts`) for the SDK subprocess to start on Windows:
-
-1. **Strip `CLAUDECODE`** — cli.js exits with code 1 if it detects a nested session
-2. **Set `CLAUDE_CODE_GIT_BASH_PATH`** — cli.js auto-detects bash via `where.exe git → ../../bin/bash.exe` which resolves to the wrong path. Must use Windows backslashes.
-
-These are configured in `.env` and passed through by the harness. See `.env.example` for details.
+Each worktree needs its own `npm install`. The `.git` store is shared.
 
 ## Task System
 
-Tasks are scoped to projects and tracked in `.projects/<project>/tasks/{task-slug}/`. Each task directory contains:
-- `task.json` — manifest (slug, name, project, status, created timestamp, dispatch history)
-- `events.json` — event capture log (agent lifecycle, tool use, errors, structured results)
-- `{role}.md` — journal files per role dispatched within the task (legacy; new dispatches use event capture)
+Tasks are scoped to projects, tracked in `.projects/<project>/tasks/{task-slug}/`:
+- `task.json` — manifest (slug, name, project, status, timestamps)
+- `dispatches/{dispatchId}.json` — dispatch envelope + event stream
 
-Tasks have explicit lifecycle: `open` → `closed`. They are created with a name and project, and can be created via CLI, WS, or MCP tools. Task slugs are generated from the task name.
+Lifecycle: `open` → `closed`. Created via CLI, WS, or MCP tools.
+
+## Agent SDK — Windows Environment
+
+Two env vars in `buildChildEnv()` (`harness/src/dispatch.ts`):
+
+1. **Strip `CLAUDECODE`** — cli.js exits with code 1 if it detects a nested session
+2. **Set `CLAUDE_CODE_GIT_BASH_PATH`** — cli.js auto-detects bash incorrectly on Windows. Must use Windows backslashes.
+
+Configured in `.env`. See `.env.example`.
+
+## Planning Workflow
+
+See `.agents/WORKFLOW.md` for the full process (instance-local).
+
+**Summary:** Task intake → impact analysis → feature spec (with test plan) → branch planning → sub-project handoff → testing → PR review
+
+## Skills
+
+| Skill | Scope | Purpose |
+|-------|-------|---------|
+| `/agents-tidy` | Project | Scan `.agents/` structure, flag violations, extract roadmap items, move completed specs |
+| `/roadmap` | Project | View and manage `.agents/roadmap/INDEX.md` — add, update, remove backlog items |
+| `/spec-discuss` | User | Collaborative spec development through structured design discussion |
+| `/post-mortem` | User | Structured retrospective, records meeting, produces action items |
+| `/handoff` | User | Generate paste-able session handoff prompt for fresh agent pickup |
+
+## Knowledge Bases
+
+Before starting development work, coding agents MUST check `.agents/kb/` for relevant knowledge bases. Each KB has `META.md` (what/when) + `INDEX.md` (navigation) + topic files. Read the index first — they're designed to minimize context window usage.
 
 ## Reference Docs
 
 | Document | Path | Purpose |
 |----------|------|---------|
-| Architecture | `docs/architecture.md` | Platform architecture |
-| Vision | `docs/vision.md` | Origin story, design philosophy, growth model |
-| Role System v2 | `.agents/docs/specs/role-system-v2.md` | Role schema, event capture, permissions, entity tooling |
+| Architecture | `./docs/architecture.md` | Platform architecture |
+| Vision | `./docs/vision.md` | Origin story, design philosophy, growth model |
+| Roadmap | `.agents/roadmap/INDEX.md` | Living backlog — what's next |
 
-Project-specific docs (ecosystem, API contracts, domain language, releases, CI/CD, PR workflow) live in their respective project repos, not here.
-
-## Skill Scoping
-
-| Run from Collabot | Run from sub-project |
-|--------------------|---------------------|
-| `/spec-discuss` | All project-specific skills |
-| `/post-mortem` | Code implementation skills |
-
-See `.claude/skills/` for full skill definitions.
+Project-specific docs live in their respective project repos, not here.
 
 ## Architectural Principles
 
-- **Documentation is the product's memory.** Future agents have no memory of past sessions — they inherit understanding entirely from what's written down. When architecture evolves, docs evolve in the same commit.
-- **The harness is the core.** Always running, always the center. Interfaces are adapters. No interface is primary.
+- **Documentation is the product's memory.** Future agents inherit understanding from what's written. Docs evolve in the same commit as architecture.
+- **The harness is the core.** Always running, always the center. Interfaces are adapters.
 - **We are building a team, not a workflow tool.** The harness is home base for humans and agents.
-- **Mechanical vs organic separation.** Model selection, maxTurns, budget, timeouts are harness mechanics — never in roles, skills, or bot definitions.
-- **Task is the unit of persistence.** A task spans multiple dispatches, roles, and eventually bots.
+- **Mechanical vs organic separation.** Model, maxTurns, budget, timeouts = harness mechanics (never in roles). Escalation, retry reasoning = organic.
+- **Task is the unit of persistence.** A task spans multiple dispatches, roles, and bots.
 - **Context reconstruction over session resume.** Worker bots load task context + bot memory + role, not resume sessions.
-- **Every data point is training data.** Event logs, task manifests, decision records — capture aggressively, curate later.
 - **Tools over tokens.** Deterministic operations should be scripts/tools, not agent reasoning.
-- **Project isolation via MCP.** Agents only see their own project's data through MCP tools (`list_projects`, `list_tasks`, `get_task_context` are all scoped to parent project). Cross-project dispatch is available via the `project` parameter on `draft_agent`.
-
-### Bot Abstraction — Implemented
-
-The bot layer is implemented. **Bot** (WHO/WHY) → **Role** (WHAT) → **Skills** (HOW). Bots are persistent identities defined in `bots/` with soul prompts. `BotSessionManager` is the unified session system — all interactive work (TUI drafts, Slack DMs) routes through it. `BotPlacementStore` tracks runtime state (available/busy/drafted) with operator overrides for mobility. Context reconstruction prepends task history on first turn. `parentDispatchId` threads through MCP servers for event nesting in sub-agent dispatches.
-
-## Communication Model
-
-- The harness owns all agent communication. Interfaces are adapters that render messages.
-- Worker agents talk to journals/harness, not to any interface directly
-- PM agent is the bridge — reads journals, decides what to surface to the human
-- Agents will eventually have their own private communication space for inter-agent conversation
+- **Curated context > large context.** Structured, well-curated context beats raw window size.
+- **Project isolation via MCP.** Agents see only their own project's data. Cross-project dispatch available via `project` parameter on `draft_agent`.
 
 ## Git Rules
 
 - NEVER commit directly to `master` — all changes via feature branch + PR
 - Branch naming: `feature/`, `bugfix/`, `hotfix/` (e.g., `feature/add-cron-support`)
-- Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
+- Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
 - Squash merge to master
 - CI must pass before merge (typecheck, build, test)
-- Releases: create GitHub Release with tag `vX.Y.Z` — the publish workflow sets `package.json` version from the tag automatically
+- Releases: GitHub Release with tag `vX.Y.Z` — publish workflow sets `package.json` version from tag
 
 ## Path Conventions
 
-- **Always use relative paths** in docs, specs, and CLAUDE.md files. Never hardcode absolute paths.
-- Reference project repos by their directory name, e.g. `../project-api/`, `../project-portal/`, etc.
+- **Always use relative paths** in docs, specs, and CLAUDE.md. Never hardcode absolute paths.
+- Reference project repos as `../project-api/`, `../project-portal/`, etc.
 - Reference platform files as `./` (e.g., `./docs/architecture.md`)
-- Specs and PM artifacts live in `.agents/docs/` (instance-local, gitignored)
+- Instance-local agent artifacts live in `.agents/` (gitignored)
 
 ## Context Window Management
 
-- Do NOT read sub-project source code from this workspace; that's for sub-project sessions
-- Keep exploration limited to documentation files and API contracts
+- Do NOT read sub-project source code from this workspace — that's for sub-project sessions
+- Keep exploration limited to documentation and API contracts
 - Spec files should be self-contained so sub-project agents don't need this workspace's context
 
 ## Hero's Wall
@@ -239,7 +218,7 @@ The bot layer is implemented. **Bot** (WHO/WHY) → **Role** (WHAT) → **Skills
 
 ## Milestones (Origin Story)
 
-Collabot was born as an agent hub — an orchestration workspace for a single project. Through 8 milestones, the harness evolved into a general-purpose platform.
+Collabot was born as an agent hub — an orchestration workspace for a single project. Through 8 milestones and 4 post-milestone initiatives, the harness evolved into a general-purpose platform.
 
 | Milestone | Summary |
 |-----------|---------|
@@ -252,7 +231,14 @@ Collabot was born as an agent hub — an orchestration workspace for a single pr
 | G | WebSocket adapter — JSON-RPC 2.0 over WS, SDK event streaming |
 | H | TUI client — .NET 10 Terminal.Gui v2, chat, slash commands, auto-reconnect |
 
-Milestone specs and handoffs archived in `.agents/docs/`.
+| Initiative | Summary |
+|------------|---------|
+| #1 | Event system v2 — canonical event stream scoped to dispatches |
+| #2 | Communication provider — adapter pattern, CommunicationRegistry |
+| #3 | Slack revisited — bot session pattern, multi-bot Bolt Apps, BotSessionManager |
+| #4 | Production cutover — TOML migration, unified sessions, bot mobility, context reconstruction |
+
+Milestone specs and handoffs archived in `.agents/archive/`.
 
 ### Key Moments
 
