@@ -26,6 +26,7 @@ config.toml
 
 # Environment
 harness/.env
+.agent.env
 
 # npm pack artifacts
 *.tgz

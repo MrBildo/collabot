@@ -176,6 +176,15 @@ Before starting development work, coding agents MUST check `.agents/kb/` for rel
 
 Project-specific docs live in their respective project repos, not here.
 
+## Collaboard (Kanban)
+
+Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitignored).
+
+- **Collabot board slug:** `collabot` — harness platform work
+- **Auth key:** Use the key from THIS project's `.agent.env` for the Collabot board. If you need to touch the TUI board, use the key from the TUI project's `.agent.env`.
+- Cards that are on the daily driver critical path get the `CLI Parity` label
+- When completing work on a card, add a comment with the branch name and/or PR link
+
 ## Architectural Principles
 
 - **Documentation is the product's memory.** Future agents inherit understanding from what's written. Docs evolve in the same commit as architecture.
