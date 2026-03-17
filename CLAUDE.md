@@ -75,6 +75,21 @@ Source is in `./harness/src/`.
 
 Every interactive conversation is with a bot. Draft = borrowing a bot from lobby. CLI one-shot dispatch is botless.
 
+## Dev Directory
+
+`dev/` contains all instance-local files for development (gitignored). This is the dev equivalent of `~/.collabot/` in production.
+
+```
+dev/
+├── bots/           # Bot definitions (soul prompts)
+├── roles/          # Role definitions
+├── .projects/      # Project manifests + task data
+├── prompts/        # Runtime system prompt
+└── config.toml     # Instance config (from config.defaults.toml)
+```
+
+`COLLABOT_HOME` in `harness/.env` points to `dev/`. The harness resolves all instance paths from there.
+
 ## Running the Harness
 
 ```powershell
