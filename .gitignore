@@ -1,14 +1,9 @@
 # Claude Code local settings
 .claude/*
-!.claude/skills/
 **/.claude/settings.local.json
 
-# Instance content (local only)
-.projects/
-bots/
-roles/
-!harness/templates/bots/
-!harness/templates/roles/
+# Dev instance (local only)
+dev/
 
 # Agent workspace (local only)
 .agents/
@@ -16,13 +11,6 @@ roles/
 # Node
 harness/node_modules/
 harness/dist/
-
-# .NET
-harness/tui/bin/
-harness/tui/obj/
-
-# Instance config (use config.defaults.toml as template)
-config.toml
 
 # Environment
 harness/.env
