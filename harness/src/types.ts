@@ -152,6 +152,7 @@ export type EventType =
   | 'harness:stall'
   | 'harness:abort'
   | 'harness:error'
+  | 'harness:timeout'
   // Interaction
   | 'user:message'
   // System observations
@@ -175,7 +176,7 @@ export type DispatchEnvelope = {
   cwd: string;
   startedAt: string;                   // RFC 3339
   completedAt?: string;                // RFC 3339 — null while running
-  status: 'running' | 'completed' | 'aborted' | 'crashed';
+  status: 'running' | 'completed' | 'aborted' | 'timed_out' | 'crashed';
   cost?: number;
   usage?: UsageMetrics;
   structuredResult?: AgentResult;
@@ -194,4 +195,69 @@ export type DispatchIndexEntry = {
   cost?: number;
   startedAt: string;
   parentDispatchId?: string;
+};
+
+// ── Unified Dispatch (collaDispatch) ─────────────────────────
+
+export type CollaDispatchOptions = {
+  // Entity references — required
+  project: string;
+  role: string;
+  prompt: string;
+
+  // Entity references — optional
+  bot?: string;           // named bot or selection picks next available
+
+  // Constraints (fall back to config defaults)
+  tokenBudget?: number;
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+  timeoutMs?: number;
+
+  // Dispatch control
+  mcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>;
+  abortController?: AbortController;
+
+  // Session resume (for bot sessions / multi-turn)
+  resume?: string;        // session ID for SDK resume
+  sessionId?: string;     // session ID for first turn (new session)
+  taskSlug?: string;      // existing task slug (skip creation)
+  taskDir?: string;       // existing task dir (skip creation)
+
+  // Callbacks (for interactive adapters)
+  onEvent?: (event: AgentEvent) => void;
+  onLoopWarning?: (pattern: string, count: number) => void;
+  onCompaction?: (event: { trigger: string; preTokens: number }) => void;
+
+  // Options
+  useStructuredOutput?: boolean;      // default true for non-interactive
+  loopDetectionThresholds?: LoopDetectionThresholds;
+  parentDispatchId?: string;
+
+  // Bot prompt context (when bot is resolved externally, e.g., BSM)
+  botDefinition?: BotDefinition;
+  projectSkills?: import('./comms.js').VirtualProjectSkill[];
+};
+
+export type CollaDispatchCost = {
+  totalUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  turns: number;
+  tokenBudget: number | null;
+  tokenBudgetPercent: number | null;
+};
+
+export type CollaDispatchResult = {
+  status: 'completed' | 'aborted' | 'timed_out' | 'crashed';
+  result?: string;
+  structuredResult?: AgentResult;
+  taskSlug: string;
+  dispatchId: string;
+  cost: CollaDispatchCost;
+  duration_ms: number;
+  model: string;
+  usage?: UsageMetrics;
 };
