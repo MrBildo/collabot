@@ -55,6 +55,10 @@ export const ConfigSchema = z.object({
     port: z.number().int().positive().default(9800),
     host: z.string().default('127.0.0.1'),
   }).optional(),
+  cron: z.object({
+    enabled: z.boolean().default(true),
+    jobsDirectory: z.string().default('cron'),
+  }).optional().default({ enabled: true, jobsDirectory: 'cron' }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
