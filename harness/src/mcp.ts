@@ -9,14 +9,14 @@ import type { Project } from './project.js';
 import type { AgentPool } from './pool.js';
 import { listTasks } from './task.js';
 import { logger } from './logger.js';
-import type { DispatchResult, RoleDefinition } from './types.js';
+import type { CollaDispatchResult, RoleDefinition } from './types.js';
 
 // ============================================================
 // DispatchTracker — maps agent IDs to in-flight dispatch promises
 // ============================================================
 
 export type TrackedDispatch = {
-  promise: Promise<DispatchResult>;
+  promise: Promise<CollaDispatchResult>;
   role: string;
   startedAt: Date;
   taskDir?: string;
@@ -26,11 +26,11 @@ export type TrackedDispatch = {
 export class DispatchTracker {
   private pending = new Map<string, TrackedDispatch>();
 
-  track(agentId: string, entry: Omit<TrackedDispatch, 'promise'> & { promise: Promise<DispatchResult> }): void {
+  track(agentId: string, entry: Omit<TrackedDispatch, 'promise'> & { promise: Promise<CollaDispatchResult> }): void {
     this.pending.set(agentId, entry);
   }
 
-  async await(agentId: string): Promise<DispatchResult> {
+  async await(agentId: string): Promise<CollaDispatchResult> {
     const entry = this.pending.get(agentId);
     if (!entry) {
       throw new Error(`No tracked dispatch for agent "${agentId}"`);
@@ -59,7 +59,7 @@ export type DraftAgentFn = (
   roleName: string,
   taskContext: string,
   options?: { taskSlug?: string; taskDir?: string; cwd?: string; parentDispatchId?: string },
-) => Promise<DispatchResult>;
+) => Promise<CollaDispatchResult>;
 
 // ============================================================
 // Server options
@@ -325,7 +325,7 @@ function buildLifecycleTools(options: HarnessServerOptions) {
             content: [{ type: 'text' as const, text: JSON.stringify({
               status: result.status,
               result: result.structuredResult ?? (result.result ? { summary: result.result } : undefined),
-              cost: result.cost,
+              cost: result.cost.totalUsd,
               duration_ms: result.duration_ms,
             }) }],
           };

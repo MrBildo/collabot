@@ -135,6 +135,8 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     cwd: opts?.cwd,
     parentDispatchId: opts?.parentDispatchId,
     pool,
+    projects,
+    projectsDir: PROJECTS_DIR,
   });
 };
 const mcpServers = {
@@ -494,7 +496,9 @@ if (cronScheduler.list().length > 0) {
 const inboundHandler: InboundHandler = async (msg) => {
   const result = await handleTask(msg, registry, roles, config, pool, mcpServers, projects, PROJECTS_DIR);
   return {
-    status: result.status === 'completed' ? 'completed' as const : result.status === 'aborted' ? 'aborted' as const : 'crashed' as const,
+    status: result.status === 'completed' ? 'completed' as const
+      : (result.status === 'aborted' || result.status === 'timed_out') ? 'aborted' as const
+      : 'crashed' as const,
     summary: result.structuredResult?.summary ?? result.result?.slice(0, 200),
   };
 };
