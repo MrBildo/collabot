@@ -6,7 +6,7 @@ import type { InboundMessage } from './comms.js';
 import type { CommunicationRegistry } from './registry.js';
 import type { AgentPool } from './pool.js';
 import type { Config } from './config.js';
-import type { RoleDefinition, CollaDispatchResult, Project } from './types.js';
+import type { RoleDefinition, CollabDispatchResult, Project } from './types.js';
 import type { McpServers } from './core.js';
 import type { BotSessionManager } from './bot-session.js';
 import type { BotPlacementStore } from './bot-placement.js';
@@ -100,7 +100,7 @@ export type WsMethodDeps = {
     mcpServers: McpServers | undefined,
     projects: Map<string, Project>,
     projectsDir: string,
-  ) => Promise<CollaDispatchResult>;
+  ) => Promise<CollabDispatchResult>;
   roles: Map<string, RoleDefinition>;
   config: Config;
   pool: AgentPool;

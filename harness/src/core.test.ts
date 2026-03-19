@@ -74,17 +74,17 @@ function makeProjects(): Map<string, Project> {
   ]);
 }
 
-// --- Mock collaDispatch to capture the prompt ---
+// --- Mock collabDispatch to capture the prompt ---
 let capturedPrompt: string | undefined;
 
 function getCaptured(): string {
-  assert.ok(capturedPrompt !== undefined, 'collaDispatch should have been called');
+  assert.ok(capturedPrompt !== undefined, 'collabDispatch should have been called');
   return capturedPrompt;
 }
 
-mock.module('./colla-dispatch.js', {
+mock.module('./collab-dispatch.js', {
   namedExports: {
-    collaDispatch: mock.fn(async (options: { prompt: string }) => {
+    collabDispatch: mock.fn(async (options: { prompt: string }) => {
       capturedPrompt = options.prompt;
       return {
         status: 'completed',
@@ -177,8 +177,8 @@ test('follow-up dispatch with prior results — prompt includes task history', a
 
   await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
 
-  // collaDispatch receives the raw prompt from handleTask.
-  // Context reconstruction now happens inside collaDispatch (mocked),
+  // collabDispatch receives the raw prompt from handleTask.
+  // Context reconstruction now happens inside collabDispatch (mocked),
   // so handleTask passes through the original content.
   const prompt = getCaptured();
   assert.ok(prompt.includes('Now add rate limiting'), 'should include the message content');

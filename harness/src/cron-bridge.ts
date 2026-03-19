@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { logger } from './logger.js';
-import { collaDispatch, type CollaDispatchContext } from './colla-dispatch.js';
+import { collabDispatch, type CollabDispatchContext } from './collab-dispatch.js';
 import { loadHandler, type CronJobDefinition, type AgentJobDefinition, type HandlerJobDefinition } from './cron-loader.js';
-import type { CollaDispatchResult } from './types.js';
+import type { CollabDispatchResult } from './types.js';
 import type { Config } from './config.js';
 
 // ── CronHandlerContext ──────────────────────────────────────
@@ -37,7 +37,7 @@ export type CronHandlerContext = {
     prompt: string;
     bot?: string;
     mcpServers?: string[];
-  }): Promise<CollaDispatchResult>;
+  }): Promise<CollabDispatchResult>;
   getRunLog(limit?: number): RunLogEntry[];
   signal: AbortSignal;
   log: typeof logger;
@@ -46,7 +46,7 @@ export type CronHandlerContext = {
 // ── Bridge ──────────────────────────────────────────────────
 
 export type CronBridgeOptions = {
-  ctx: CollaDispatchContext;
+  ctx: CollabDispatchContext;
   runsDir: string;           // COLLABOT_HOME/cron/runs/
   projectsDir: string;       // COLLABOT_HOME/.projects/
 };
@@ -76,7 +76,7 @@ function buildAgentJobHandler(
     logger.info({ jobName: def.name, role: def.role, project: def.project }, 'cron agent job firing');
 
     try {
-      const result = await collaDispatch({
+      const result = await collabDispatch({
         project: def.project,
         role: def.role,
         bot: def.bot,
@@ -126,7 +126,7 @@ function buildHandlerJobHandler(
 ): () => Promise<void> {
   return async () => {
     const startTime = Date.now();
-    const dispatchResults: CollaDispatchResult[] = [];
+    const dispatchResults: CollabDispatchResult[] = [];
     const abortController = new AbortController();
 
     logger.info({ jobName: def.name }, 'cron handler job firing');
@@ -161,7 +161,7 @@ function buildHandlerJobHandler(
       job: def,
       lastRunAt: null, // Populated by scheduler state
       async dispatch(opts) {
-        const result = await collaDispatch({
+        const result = await collabDispatch({
           project: opts.project,
           role: opts.role,
           prompt: opts.prompt,

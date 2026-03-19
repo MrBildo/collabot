@@ -15,9 +15,9 @@ import { createTask, getTask } from './task.js';
 import { buildTaskContext } from './context.js';
 import { AgentResultSchema } from './types.js';
 import type {
-  CollaDispatchOptions,
-  CollaDispatchResult,
-  CollaDispatchCost,
+  CollabDispatchOptions,
+  CollabDispatchResult,
+  CollabDispatchCost,
   RoleDefinition,
   BotDefinition,
   ToolCall,
@@ -47,7 +47,7 @@ const AGENT_RESULT_JSON_SCHEMA: Record<string, unknown> = {
 
 // ── Context — passed once at startup, shared across dispatches ──
 
-export type CollaDispatchContext = {
+export type CollabDispatchContext = {
   config: Config;
   roles: Map<string, RoleDefinition>;
   bots: Map<string, BotDefinition>;
@@ -105,7 +105,7 @@ export function draftBot(
 function buildCostFromResult(
   resultMsg: SDKResultMessage | undefined,
   tokenBudget: number | null,
-): CollaDispatchCost {
+): CollabDispatchCost {
   if (!resultMsg) {
     return {
       totalUsd: 0,
@@ -142,7 +142,7 @@ function buildCostFromResult(
 // ── Unified Dispatch ───────────────────────────────────────────
 
 /**
- * collaDispatch — the unified dispatch entry point.
+ * collabDispatch — the unified dispatch entry point.
  *
  * Enforces the full entity model: Project + Task + Role + Bot.
  * Handles entity resolution, task lifecycle, prompt assembly,
@@ -151,10 +151,10 @@ function buildCostFromResult(
  *
  * All adapters (Slack, TUI, CLI, Cron, MCP) call this function.
  */
-export async function collaDispatch(
-  options: CollaDispatchOptions,
-  ctx: CollaDispatchContext,
-): Promise<CollaDispatchResult> {
+export async function collabDispatch(
+  options: CollabDispatchOptions,
+  ctx: CollabDispatchContext,
+): Promise<CollabDispatchResult> {
   const startTime = Date.now();
 
   // ── 1. Resolve project ─────────────────────────────────────
@@ -327,7 +327,7 @@ export async function collaDispatch(
     timeoutMs: timeoutMs || 'none',
     tokenBudget: tokenBudget || 'none',
     isResume: !!options.resume,
-  }, 'collaDispatch: dispatching agent');
+  }, 'collabDispatch: dispatching agent');
 
   // Create dispatch envelope
   try {
@@ -558,7 +558,7 @@ export async function collaDispatch(
           cost: msg.total_cost_usd,
           model,
           duration_ms: Date.now() - startTime,
-        }, 'collaDispatch: agent completed');
+        }, 'collabDispatch: agent completed');
       }
     }
 
@@ -640,7 +640,7 @@ export async function collaDispatch(
       const status = abortReason === 'timeout' ? 'timed_out' as const : 'aborted' as const;
 
       if (abortReason === 'timeout') {
-        logger.warn({ taskSlug, timeoutMs }, 'collaDispatch: dispatch timed out');
+        logger.warn({ taskSlug, timeoutMs }, 'collabDispatch: dispatch timed out');
         emitEvent('harness:timeout', { timeoutMs, duration_ms: Date.now() - startTime });
       } else if (abortReason === 'stall') {
         emitEvent('harness:stall', { timeoutMs: stallTimeoutMs });
@@ -674,7 +674,7 @@ export async function collaDispatch(
       return buildResult('crashed', AUTH_FAILURE_MSG, startTime, taskSlug, dispatchId, resolvedModel, resultMsg, tokenBudget);
     }
 
-    logger.error({ err, message }, 'collaDispatch: agent crashed');
+    logger.error({ err, message }, 'collabDispatch: agent crashed');
     emitEvent('harness:error', { message });
     emitEvent('session:complete', { status: 'crashed', error: message });
     updateDispatchEnvelope(dispatchStore, taskDir, dispatchId, 'crashed');
@@ -709,9 +709,9 @@ function updateDispatchEnvelope(
 function crashResult(
   error: string,
   startTime: number,
-  options: CollaDispatchOptions,
-): CollaDispatchResult {
-  logger.error({ error }, 'collaDispatch: entity resolution failed');
+  options: CollabDispatchOptions,
+): CollabDispatchResult {
+  logger.error({ error }, 'collabDispatch: entity resolution failed');
   return {
     status: 'crashed',
     taskSlug: options.taskSlug ?? 'unknown',
@@ -723,7 +723,7 @@ function crashResult(
 }
 
 function buildResult(
-  status: CollaDispatchResult['status'],
+  status: CollabDispatchResult['status'],
   error: string | undefined,
   startTime: number,
   taskSlug: string,
@@ -731,7 +731,7 @@ function buildResult(
   model: string,
   resultMsg: SDKResultMessage | undefined,
   tokenBudget: number | undefined,
-): CollaDispatchResult {
+): CollabDispatchResult {
   return {
     status,
     result: error,

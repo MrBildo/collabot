@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { logger } from './logger.js';
-import { collaDispatch, type CollaDispatchContext } from './colla-dispatch.js';
+import { collabDispatch, type CollabDispatchContext } from './collab-dispatch.js';
 import { findTaskByThread, createTask } from './task.js';
 import { getProject, getProjectTasksDir, projectHasPaths } from './project.js';
-import type { DispatchResult, RoleDefinition, CollaDispatchResult, AgentEvent } from './types.js';
+import type { DispatchResult, RoleDefinition, CollabDispatchResult, AgentEvent } from './types.js';
 import type { InboundMessage, ChannelMessage } from './comms.js';
 import type { CommunicationRegistry } from './registry.js';
 import type { Config } from './config.js';
@@ -12,7 +12,7 @@ import type { AgentPool } from './pool.js';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import type { Project } from './project.js';
 
-function formatResult(result: CollaDispatchResult): string {
+function formatResult(result: CollabDispatchResult): string {
   if (result.status === 'completed') {
     if (result.structuredResult) {
       const sr = result.structuredResult;
@@ -93,7 +93,7 @@ export function makeChannelMessage(
  *
  * Handles adapter-specific concerns (thread-based task resolution,
  * preflight checks, status broadcasting, result posting) and delegates
- * the actual dispatch to collaDispatch().
+ * the actual dispatch to collabDispatch().
  */
 export type McpServers = {
   createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => McpSdkServerConfigWithInstance;
@@ -109,7 +109,7 @@ export async function handleTask(
   mcpServers: McpServers | undefined,
   projects: Map<string, Project>,
   projectsDir: string,
-): Promise<CollaDispatchResult> {
+): Promise<CollabDispatchResult> {
   // Project is required
   const projectName = message.project;
   if (!projectName) {
@@ -232,7 +232,7 @@ export async function handleTask(
   };
 
   try {
-    const ctx: CollaDispatchContext = {
+    const ctx: CollabDispatchContext = {
       config,
       roles,
       bots: new Map(), // handleTask doesn't use bots — that's BSM territory
@@ -241,7 +241,7 @@ export async function handleTask(
       pool: pool!,
     };
 
-    const result = await collaDispatch({
+    const result = await collabDispatch({
       project: projectName,
       role: roleName,
       prompt: message.content,
@@ -276,7 +276,7 @@ export async function handleTask(
  * draftAgent — pool-managed dispatch primitive.
  *
  * Used by the MCP draft_agent tool for non-blocking agent dispatch.
- * Thin wrapper around collaDispatch() with pool registration.
+ * Thin wrapper around collabDispatch() with pool registration.
  */
 export async function draftAgent(
   roleName: string,
@@ -296,7 +296,7 @@ export async function draftAgent(
     projects?: Map<string, Project>;
     projectsDir?: string;
   },
-): Promise<CollaDispatchResult> {
+): Promise<CollabDispatchResult> {
   const taskSlug = options?.taskSlug ?? `task-${Date.now()}`;
   const pool = options?.pool;
 
@@ -336,7 +336,7 @@ export async function draftAgent(
     : undefined;
 
   try {
-    const ctx: CollaDispatchContext = {
+    const ctx: CollabDispatchContext = {
       config,
       roles,
       bots: new Map(),
@@ -345,7 +345,7 @@ export async function draftAgent(
       pool: pool!,
     };
 
-    return await collaDispatch({
+    return await collabDispatch({
       project: options?.project ?? 'unknown',
       role: roleName,
       prompt: taskContext,
@@ -365,9 +365,9 @@ export async function draftAgent(
 }
 
 /**
- * Convert CollaDispatchResult to legacy DispatchResult for backward compatibility.
+ * Convert CollabDispatchResult to legacy DispatchResult for backward compatibility.
  */
-export function toDispatchResult(result: CollaDispatchResult): DispatchResult {
+export function toDispatchResult(result: CollabDispatchResult): DispatchResult {
   return {
     status: result.status === 'timed_out' ? 'aborted' : result.status,
     result: result.result,

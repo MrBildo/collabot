@@ -6,7 +6,7 @@ import os from 'node:os';
 import { CronScheduler } from './cron.js';
 import { parseJobFolder } from './cron-loader.js';
 import { buildJobHandler, readRunLog } from './cron-bridge.js';
-import type { CollaDispatchContext } from './colla-dispatch.js';
+import type { CollabDispatchContext } from './collab-dispatch.js';
 import type { Config } from './config.js';
 import { AgentPool } from './pool.js';
 
@@ -75,7 +75,7 @@ describe('Cron integration', () => {
     // Build a mock context that captures dispatch calls
     const dispatches: Array<{ project: string; role: string; prompt: string }> = [];
 
-    // We can't call the real collaDispatch (needs SDK), but we can test
+    // We can't call the real collabDispatch (needs SDK), but we can test
     // the bridge wiring by mocking at a higher level.
     // For now, verify the handler can be built without errors.
     assert.equal(def.type, 'agent');

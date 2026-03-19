@@ -9,14 +9,14 @@ import type { Project } from './project.js';
 import type { AgentPool } from './pool.js';
 import { listTasks } from './task.js';
 import { logger } from './logger.js';
-import type { CollaDispatchResult, RoleDefinition } from './types.js';
+import type { CollabDispatchResult, RoleDefinition } from './types.js';
 
 // ============================================================
 // DispatchTracker — maps agent IDs to in-flight dispatch promises
 // ============================================================
 
 export type TrackedDispatch = {
-  promise: Promise<CollaDispatchResult>;
+  promise: Promise<CollabDispatchResult>;
   role: string;
   startedAt: Date;
   taskDir?: string;
@@ -26,11 +26,11 @@ export type TrackedDispatch = {
 export class DispatchTracker {
   private pending = new Map<string, TrackedDispatch>();
 
-  track(agentId: string, entry: Omit<TrackedDispatch, 'promise'> & { promise: Promise<CollaDispatchResult> }): void {
+  track(agentId: string, entry: Omit<TrackedDispatch, 'promise'> & { promise: Promise<CollabDispatchResult> }): void {
     this.pending.set(agentId, entry);
   }
 
-  async await(agentId: string): Promise<CollaDispatchResult> {
+  async await(agentId: string): Promise<CollabDispatchResult> {
     const entry = this.pending.get(agentId);
     if (!entry) {
       throw new Error(`No tracked dispatch for agent "${agentId}"`);
@@ -59,7 +59,7 @@ export type DraftAgentFn = (
   roleName: string,
   taskContext: string,
   options?: { taskSlug?: string; taskDir?: string; cwd?: string; parentDispatchId?: string },
-) => Promise<CollaDispatchResult>;
+) => Promise<CollabDispatchResult>;
 
 // ============================================================
 // Server options

@@ -197,9 +197,9 @@ export type DispatchIndexEntry = {
   parentDispatchId?: string;
 };
 
-// ── Unified Dispatch (collaDispatch) ─────────────────────────
+// ── Unified Dispatch (collabDispatch) ─────────────────────────
 
-export type CollaDispatchOptions = {
+export type CollabDispatchOptions = {
   // Entity references — required
   project: string;
   role: string;
@@ -239,7 +239,7 @@ export type CollaDispatchOptions = {
   projectSkills?: import('./comms.js').VirtualProjectSkill[];
 };
 
-export type CollaDispatchCost = {
+export type CollabDispatchCost = {
   totalUsd: number;
   inputTokens: number;
   outputTokens: number;
@@ -250,13 +250,13 @@ export type CollaDispatchCost = {
   tokenBudgetPercent: number | null;
 };
 
-export type CollaDispatchResult = {
+export type CollabDispatchResult = {
   status: 'completed' | 'aborted' | 'timed_out' | 'crashed';
   result?: string;
   structuredResult?: AgentResult;
   taskSlug: string;
   dispatchId: string;
-  cost: CollaDispatchCost;
+  cost: CollabDispatchCost;
   duration_ms: number;
   model: string;
   usage?: UsageMetrics;
