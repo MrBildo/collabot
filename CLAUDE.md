@@ -134,6 +134,16 @@ npx knip --include files  # quick check — orphan files only (same as CI)
 
 **Config:** `harness/knip.json`. Entry points are auto-discovered. Templates and test files are handled automatically.
 
+## Definition of Done
+
+**A feature is not done until it is observable in the running harness.** Typecheck passing and tests green are necessary but NOT sufficient. If you create a new module, it must be imported and called from a production path (`index.ts`, `cli.ts`, or another module that is). If you start the harness with `npm run dev` and see no evidence of your feature in the logs, the feature is dead code — regardless of how many tests pass.
+
+Before moving any card to Review or declaring work complete:
+1. `npm run typecheck` — must pass
+2. `npm test` — must pass
+3. `npx knip --include files` — must show zero unused files
+4. `npm run dev` — your feature must appear in startup logs or be exercisable through an adapter
+
 ## Dispatching Work
 
 ### Harness Dispatch (Primary)
