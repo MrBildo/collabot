@@ -146,6 +146,8 @@ Before moving any card to Review or declaring work complete:
 
 **Keepalive pings:** If you set up a `CronCreate` keepalive during a long session, run `npx knip --include files`, not `tsc --noEmit`. Typecheck proves code compiles; Knip proves code is connected. The latter catches real problems.
 
+**Unsupervised multi-card work:** When implementing multiple cards without human oversight, run the full verification suite (steps 1-4 above) after every 2-3 cards. If Knip reports unused files or the harness fails to boot, **stop immediately** — do not continue building on unverified work. Leave a note on the card and in the session explaining what failed. Building 6 modules without verifying any of them compounds errors silently.
+
 ## Dispatching Work
 
 ### Harness Dispatch (Primary)
