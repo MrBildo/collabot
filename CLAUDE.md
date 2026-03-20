@@ -205,6 +205,16 @@ See `.agents/WORKFLOW.md` for the full process (instance-local).
 
 **Summary:** Task intake → impact analysis → feature spec (with test plan) → branch planning → sub-project handoff → testing → PR review
 
+### Card Authoring — Entry Point Rule
+
+When a card creates a new module (a new `.ts` file), the card description MUST include an **Entry point** line near the top — not buried in deliverables. This tells the implementing agent exactly where the new code gets called from.
+
+```
+**Entry point:** `index.ts` must import `loadCronJobs()` and call it after entity loading, before scheduler start.
+```
+
+If the card adds functionality that requires startup wiring, this must be explicit. A card without an entry point line implies the module is called from an existing module that already has a production path — if that's not the case, add the line. This prevents the failure mode where a module is built, tested, and committed but never wired into the running system.
+
 ## Skills
 
 | Skill | Scope | Purpose |
