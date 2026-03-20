@@ -108,6 +108,32 @@ Stop-Process -Name node -Force
 
 **Tests:** `npm test` from `harness/`. Uses Node's built-in `node:test` runner via `tsx --test`. Do NOT use vitest, jest, or any other runner.
 
+## Verification — Dead Code Detection
+
+The harness uses **Knip** to detect orphan modules — files that exist but are never imported from any entry point. This is a CI gate. PRs will fail if orphan files are found.
+
+**When to run:** After creating or modifying any source file. Run before committing and before moving any card to Review.
+
+```powershell
+cd harness
+npm run lint:dead-code    # full report (files, exports, dependencies)
+npx knip --include files  # quick check — orphan files only (same as CI)
+```
+
+**How to read the output:**
+- `Unused files` — **CRITICAL.** A file exists but nothing imports it. This means you built a module but never wired it into the startup sequence or another production path. The code is dead. Fix: import it from `index.ts` or wherever it needs to be called.
+- `Unused exports` — **WARNING.** A function or type is exported but never used outside its file. May be intentional (public API for consumers) or may indicate a function you wrote but forgot to call. Investigate before ignoring.
+- `Unused dependencies` — **INFO.** A package in `package.json` that no source file imports. May indicate a removed feature or a dependency only used at runtime (like `pino-pretty`). These are excluded via `ignoreDependencies` in `knip.json`.
+
+**How to respond to findings:**
+1. **If Knip flags a file you just created:** You forgot to wire it in. Find the entry point (`index.ts`, `cli.ts`, or an existing module) that should import and call your new code. Do NOT delete the file or suppress the warning — fix the wiring.
+2. **If Knip flags an export you just wrote:** Either import and use it from the caller, or remove the `export` keyword if it's only used internally.
+3. **Never suppress Knip by removing the check.** If you believe a finding is a false positive, add it to `knip.json` configuration with a comment explaining why.
+
+**The rule:** If Knip says a file is unused, the harness doesn't know it exists. Typecheck and tests cannot catch this — a module can compile, pass all tests, and still be dead code. Knip is the only tool that detects this failure class.
+
+**Config:** `harness/knip.json`. Entry points are auto-discovered. Templates and test files are handled automatically.
+
 ## Dispatching Work
 
 ### Harness Dispatch (Primary)
@@ -218,7 +244,7 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitigno
 - Branch naming: `feature/`, `bugfix/`, `hotfix/` (e.g., `feature/add-cron-support`)
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
 - Squash merge to master
-- CI must pass before merge (typecheck, build, test)
+- CI must pass before merge (typecheck, dead code check, build, test)
 - Releases: GitHub Release with tag `vX.Y.Z` — publish workflow sets `package.json` version from tag
 
 ## Path Conventions
