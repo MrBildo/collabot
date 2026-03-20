@@ -144,6 +144,8 @@ Before moving any card to Review or declaring work complete:
 3. `npx knip --include files` — must show zero unused files
 4. `npm run dev` — your feature must appear in startup logs or be exercisable through an adapter
 
+**Keepalive pings:** If you set up a `CronCreate` keepalive during a long session, run `npx knip --include files`, not `tsc --noEmit`. Typecheck proves code compiles; Knip proves code is connected. The latter catches real problems.
+
 ## Dispatching Work
 
 ### Harness Dispatch (Primary)
