@@ -148,6 +148,12 @@ Before moving any card to Review or declaring work complete:
 
 **Unsupervised multi-card work:** When implementing multiple cards without human oversight, run the full verification suite (steps 1-4 above) after every 2-3 cards. If Knip reports unused files or the harness fails to boot, **stop immediately** — do not continue building on unverified work. Leave a note on the card and in the session explaining what failed. Building 6 modules without verifying any of them compounds errors silently.
 
+**Implementation journal:** When working on a card, add a comment to the card AS you work — not just when you're done. Include: files modified, entry point changes (or "none yet"), verification status. Example:
+
+> **In progress — modified:** `cron-loader.ts` (new), `config.ts` (added [cron] schema). **Entry point changes:** none yet — needs `index.ts` wiring. **Verified:** typecheck ✓, tests ✓, Knip: 1 unused file (expected until wired).
+
+The absence of "entry point changes" on a card that creates a new module is a visible red flag — to the agent, the human, and any future agent reading the card.
+
 ## Dispatching Work
 
 ### Harness Dispatch (Primary)
