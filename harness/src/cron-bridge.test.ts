@@ -469,14 +469,14 @@ describe('ConfigResolver', () => {
     assert.deepStrictEqual(capturedCtx.config.job, {});
   });
 
-  test('ctx.config.projectEnv reads .agent.env from the project path', async () => {
+  test('ctx.config.projectEnv reads .agents.env from the project path', async () => {
     let capturedCtx: CronHandlerContext | undefined;
     const projectsDir = trackTmpDir('cron-projenv-');
 
-    // Create a fake project's .agent.env
+    // Create a fake project's .agents.env
     const projectDir = path.join(projectsDir, 'myproject');
     fs.mkdirSync(projectDir, { recursive: true });
-    fs.writeFileSync(path.join(projectDir, '.agent.env'), [
+    fs.writeFileSync(path.join(projectDir, '.agents.env'), [
       '# Comment line',
       'API_KEY=secret123',
       'DB_HOST=localhost',
@@ -529,7 +529,7 @@ describe('ConfigResolver', () => {
     const projectsDir = trackTmpDir('cron-projenv-');
     const projectDir = path.join(projectsDir, 'edgecase');
     fs.mkdirSync(projectDir, { recursive: true });
-    fs.writeFileSync(path.join(projectDir, '.agent.env'), [
+    fs.writeFileSync(path.join(projectDir, '.agents.env'), [
       'VALID_KEY=value',
       'no-equals-here',
       'ANOTHER=works',

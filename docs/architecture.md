@@ -172,7 +172,7 @@ Handler jobs receive a context object with:
 |----------|------|---------|
 | `config.job` | `Record<string, unknown>` | Parsed `settings.toml` for this job |
 | `config.harness` | `Config` | Full harness config |
-| `config.projectEnv(project)` | `Record<string, string>` | Read a project's `.agent.env` |
+| `config.projectEnv(project)` | `Record<string, string>` | Read a project's `.agents.env` |
 | `job` | `CronJobDefinition` | The job's definition |
 | `lastRunAt` | `Date \| null` | When this job last fired |
 | `dispatch(opts)` | `Promise<CollabDispatchResult>` | Dispatch an agent via `collabDispatch()` |

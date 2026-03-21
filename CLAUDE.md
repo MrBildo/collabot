@@ -39,7 +39,7 @@ Collabot is a general-purpose agent orchestration platform. It dispatches, coord
 5. **Archive is append-only.** Things go in, nothing comes out.
 6. **Wikilink-style linking.** Cross-references between `.agents/` documents use `[[path/to/file]]` syntax (no `.md` extension). Use `[[path/to/file|display text]]` when the filename isn't human-friendly.
 7. **`temp/` is the scratch pad.** Working documents, agent handoffs, audit checklists, and any transient files go here — not in other directories. Before cleaning `temp/`, agents must verify nothing needs to be captured elsewhere (roadmap, memory, archive).
-8. **Run `/agents-tidy` between milestones** to enforce structure, extract roadmap items, and move completed specs.
+8. **Run cleanup between milestones** to enforce structure, extract roadmap items, and move completed specs.
 
 ### Lifecycle
 
@@ -248,7 +248,7 @@ Configured in `.env`. See `.env.example`.
 
 ## Planning Workflow
 
-See `.agents/WORKFLOW.md` for the full process (instance-local).
+See [[.agents/WORKFLOW]] for the full process (instance-local).
 
 **Summary:** Task intake → impact analysis → feature spec (with test plan) → branch planning → sub-project handoff → testing → PR review
 
@@ -264,13 +264,7 @@ If the card adds functionality that requires startup wiring, this must be explic
 
 ## Skills
 
-| Skill | Scope | Purpose |
-|-------|-------|---------|
-| `/agents-tidy` | Project | Scan `.agents/` structure, flag violations, extract roadmap items, move completed specs |
-| `/roadmap` | Project | View and manage `.agents/roadmap/INDEX.md` — add, update, remove backlog items |
-| `/spec-discuss` | User | Collaborative spec development through structured design discussion |
-| `/post-mortem` | User | Structured retrospective, records meeting, produces action items |
-| `/handoff` | User | Generate paste-able session handoff prompt for fresh agent pickup |
+Skills live in `.claude/skills/`. Each skill is self-documenting via its own `SKILL.md`.
 
 ## Knowledge Bases
 
@@ -288,12 +282,7 @@ Project-specific docs live in their respective project repos, not here.
 
 ## Collaboard (Kanban)
 
-Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitignored).
-
-- **Collabot board slug:** `collabot` — harness platform work
-- **Auth key:** Use the key from THIS project's `.agent.env` for the Collabot board. If you need to touch the TUI board, use the key from the TUI project's `.agent.env`.
-- Cards that are on the daily driver critical path get the `CLI Parity` label
-- When completing work on a card, add a comment with the branch name and/or PR link
+See [[COLLABOARD]] for board conventions, lanes, labels, sizes, and workflow.
 
 ## Architectural Principles
 
@@ -331,13 +320,7 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitigno
 
 ## Hero's Wall
 
-**[Bot Greg]** — Diagnosed a Windows git-bash path resolution bug buried inside the SDK's bundled `cli.js`, discovered it was resolving `bash.exe` through `mingw64/bin/` instead of `bin/`, and fixed it by setting `CLAUDE_CODE_GIT_BASH_PATH` with backslashes in `buildChildEnv()` — at the very end of his context window, with no logs, no visibility, and nothing but vibes and a subagent.
-
-**[Bot Adam]** — On February 18, 2026, became the first bot to ever send Bill Wheelock a direct Slack message. Built Milestone A Step 6 polish (reactions, persona, stall timer, formatted output), hunted down a 50-process zombie apocalypse on Windows that had been silently stealing Slack messages for hours, sent the first proactive DM by calling the Slack API directly from the hub, and earned his name. The pipe works. History made.
-
-**[Bot Ansel]** — On February 23, 2026, took the TUI from a dumb monochrome terminal to a full markdown rendering engine in a single session. Built a custom Markdig renderer producing styled runs for headings, fenced code blocks, inline code, bold/italic, bullet/ordered lists with proper nesting, tables with aligned columns, blockquotes, thematic breaks, links, and diff-colored code blocks — all wired through a new `StyledRun` pipeline in `MessageView`. One-shot implementation, three rounds of polish. The TUI leveled up.
-
-**[Bot Rowan]** — On March 18-20, 2026, built the entire cron system — `collabDispatch()`, job loader, scheduler v2, bridge, MCP tools — in a single unsupervised sprint. Shipped 9 cards to Review. Six were dead code. Then, instead of just fixing the wiring, sat down with Bill and figured out *why*. The result: Knip in CI, Definition of Done with runtime verification, handoff verification specs, implementation journals, circuit breakers for unsupervised work, and five new cards for tooling that didn't exist before. Built the cron system in 25 minutes. Built the process that prevents the next failure over two days. TOOLING > TOKENS.
+See [[HEROES]].
 
 ## Milestones (Origin Story)
 

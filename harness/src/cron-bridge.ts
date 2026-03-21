@@ -13,7 +13,7 @@ export type ConfigResolver = {
   job: Record<string, unknown>;
   /** Harness-level config (from config.toml) */
   harness: Config;
-  /** Read a project's .agent.env as key-value pairs */
+  /** Read a project's .agents.env as key-value pairs */
   projectEnv(project: string): Record<string, string>;
 };
 
@@ -137,7 +137,7 @@ function buildHandlerJobHandler(
       job: def.settings,
       harness: ctx.config,
       projectEnv(project: string): Record<string, string> {
-        const envPath = path.join(projectsDir, project.toLowerCase(), '.agent.env');
+        const envPath = path.join(projectsDir, project.toLowerCase(), '.agents.env');
         if (!fs.existsSync(envPath)) return {};
         try {
           const content = fs.readFileSync(envPath, 'utf-8');
@@ -150,7 +150,7 @@ function buildHandlerJobHandler(
             env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
           }
           return env;
-        } catch { /* .agent.env read is best-effort */
+        } catch { /* .agents.env read is best-effort */
           return {};
         }
       },
