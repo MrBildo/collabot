@@ -5,7 +5,7 @@ import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
 import { loadProjects, ensureVirtualProject, getProjectTasksDir } from './project.js';
 import { loadBots } from './bots.js';
 import { AgentPool } from './pool.js';
-import { draftAgent, handleTask } from './core.js';
+import { draftAgent, handleTask, type McpServers } from './core.js';
 import { createHarnessServer, DispatchTracker } from './mcp.js';
 import { CommunicationRegistry } from './registry.js';
 import { CliAdapter } from './adapters/cli.js';
@@ -14,6 +14,10 @@ import { SlackAdapter } from './adapters/slack.js';
 import { BotMessageQueue } from './bot-queue.js';
 import { BotSessionManager } from './bot-session.js';
 import { CronScheduler } from './cron.js';
+import { loadCronJobs } from './cron-loader.js';
+import { buildJobHandler } from './cron-bridge.js';
+import { createCronMcpServer } from './cron-mcp.js';
+import type { CollabDispatchContext } from './collab-dispatch.js';
 import { placeBots, BotPlacementStore } from './bot-placement.js';
 import { createTask, getOpenTasks, closeTask } from './task.js';
 import { registerWsMethods } from './ws-methods.js';
@@ -139,7 +143,7 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     projectsDir: PROJECTS_DIR,
   });
 };
-const mcpServers = {
+const mcpServers: McpServers = {
   createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
     tracker, draftFn,
@@ -447,10 +451,31 @@ if (slackAdapter) {
   }
 }
 
-// ── 15. Start cron (multi-project rotation) ─────────────────────
+// ── 15. Start cron ───────────────────────────────────────────────
 
-const cronScheduler = new CronScheduler();
+const cronJobsDir = config.cron ? getInstancePath(config.cron.jobsDirectory) : '';
+const cronRunsDir = cronJobsDir ? `${cronJobsDir}/runs` : '';
+const cronStatePath = cronJobsDir ? `${cronJobsDir}/cron-state.json` : undefined;
+const cronScheduler = new CronScheduler(cronStatePath);
 
+// Build CollabDispatchContext for cron bridge
+const cronDispatchCtx: CollabDispatchContext = {
+  config,
+  roles,
+  bots,
+  projects,
+  projectsDir: PROJECTS_DIR,
+  pool,
+};
+
+// Load v2 cron jobs from job files
+const cronJobs = loadCronJobs(config);
+for (const job of cronJobs) {
+  const handler = buildJobHandler(job, { ctx: cronDispatchCtx, runsDir: cronRunsDir, projectsDir: PROJECTS_DIR });
+  cronScheduler.registerDefinition(job, handler);
+}
+
+// Legacy task-rotation (interval-based)
 if (botCount > 0 && cronRotationProjects.size > 0) {
   const rotationIntervalMs = (config.slack?.taskRotationIntervalHours ?? 24) * 60 * 60 * 1000;
 
@@ -486,10 +511,22 @@ if (botCount > 0 && cronRotationProjects.size > 0) {
   });
 }
 
+if (cronJobs.length > 0) {
+  logger.info({ count: cronJobs.length, jobs: cronJobs.map(j => j.name) }, 'cron v2 jobs loaded');
+}
+
+// Hydrate persisted state before starting
+cronScheduler.hydrateState();
+
 if (cronScheduler.list().length > 0) {
   cronScheduler.startAll();
   logger.info({ jobs: cronScheduler.list() }, 'cron scheduler started');
 }
+
+// ── 15b. Cron MCP server ─────────────────────────────────────────
+
+const cronMcpServer = createCronMcpServer({ scheduler: cronScheduler, config });
+mcpServers.cron = cronMcpServer;
 
 // ── 16. Register inbound handler ────────────────────────────────
 

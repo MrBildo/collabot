@@ -98,6 +98,7 @@ export function makeChannelMessage(
 export type McpServers = {
   createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => McpSdkServerConfigWithInstance;
   readonly: McpSdkServerConfigWithInstance;
+  cron?: McpSdkServerConfigWithInstance;
 };
 
 export async function handleTask(
@@ -192,12 +193,16 @@ export async function handleTask(
   ));
 
   // MCP server selection based on role permissions
-  let selectedMcpServer: McpSdkServerConfigWithInstance | undefined;
+  let agentMcpServers: Record<string, McpSdkServerConfigWithInstance> | undefined;
   if (mcpServers) {
     const isFullAccess = role.permissions?.includes('agent-draft') ?? false;
-    selectedMcpServer = isFullAccess
+    const selectedMcpServer = isFullAccess
       ? mcpServers.createFull(taskSlug, taskDir, project.name)
       : mcpServers.readonly;
+    agentMcpServers = { harness: selectedMcpServer };
+    if (isFullAccess && mcpServers.cron) {
+      agentMcpServers.cron = mcpServers.cron;
+    }
   }
 
   // Pool management
@@ -250,7 +255,7 @@ export async function handleTask(
       abortController: agentController,
       onLoopWarning,
       onEvent,
-      ...(selectedMcpServer ? { mcpServers: { harness: selectedMcpServer } } : {}),
+      ...(agentMcpServers ? { mcpServers: agentMcpServers } : {}),
     }, ctx);
 
     // Adapter status
