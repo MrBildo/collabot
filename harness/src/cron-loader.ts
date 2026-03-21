@@ -17,6 +17,8 @@ const BaseJobFrontmatterSchema = z.object({
   enabled: z.boolean().default(true),
   singleton: z.boolean().default(true),
   handler: z.boolean().optional(),
+  timezone: z.string().optional(),      // IANA timezone (e.g., "America/New_York")
+  maxConsecutiveFailures: z.number().int().positive().optional(), // auto-disable threshold (overrides global)
 
   // Entity references
   bot: z.string().min(1).optional(),
@@ -50,6 +52,8 @@ export type AgentJobDefinition = {
   schedule: string;
   enabled: boolean;
   singleton: boolean;
+  timezone?: string;        // IANA timezone for cron expressions
+  maxConsecutiveFailures?: number; // auto-disable threshold (overrides global)
   bot?: string;
   role: string;
   project: string;
@@ -68,6 +72,8 @@ export type HandlerJobDefinition = {
   schedule: string;
   enabled: boolean;
   singleton: boolean;
+  timezone?: string;        // IANA timezone for cron expressions
+  maxConsecutiveFailures?: number; // auto-disable threshold (overrides global)
   bot?: string;
   role?: string;
   project?: string;
@@ -174,6 +180,8 @@ function parseAgentJob(
     schedule: fm.schedule,
     enabled: fm.enabled,
     singleton: fm.singleton,
+    timezone: fm.timezone,
+    maxConsecutiveFailures: fm.maxConsecutiveFailures,
     bot: fm.bot,
     role: fm.role,
     project: fm.project,
@@ -228,6 +236,8 @@ function parseHandlerJob(
     schedule: fm.schedule,
     enabled: fm.enabled,
     singleton: fm.singleton,
+    timezone: fm.timezone,
+    maxConsecutiveFailures: fm.maxConsecutiveFailures,
     bot: fm.bot,
     role: fm.role,
     project: fm.project,

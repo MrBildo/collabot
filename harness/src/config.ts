@@ -58,7 +58,8 @@ export const ConfigSchema = z.object({
   cron: z.object({
     enabled: z.boolean().default(true),
     jobsDirectory: z.string().default('cron'),
-  }).optional().default({ enabled: true, jobsDirectory: 'cron' }),
+    maxConsecutiveFailures: z.number().int().positive().default(5),
+  }).optional().default({ enabled: true, jobsDirectory: 'cron', maxConsecutiveFailures: 5 }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

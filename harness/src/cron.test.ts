@@ -346,6 +346,181 @@ describe('CronScheduler v2', () => {
     scheduler.stopAll();
   });
 
+  test('job with timezone calculates next fire time correctly', () => {
+    const scheduler = new CronScheduler();
+    scheduler.registerDefinition(
+      makeAgentDef({
+        name: 'tz-job',
+        slug: 'tz-job',
+        schedule: '0 9 * * *',
+        timezone: 'America/New_York',
+      }),
+      async () => {},
+    );
+    scheduler.startAll();
+
+    const state = scheduler.getState('tz-job');
+    assert.ok(state?.nextRunAt, 'should have a next run time');
+
+    // Verify 9:00 AM ET = 13:00 or 14:00 UTC depending on DST
+    const nextRun = new Date(state.nextRunAt);
+    const hours = nextRun.getUTCHours();
+    assert.ok(hours === 13 || hours === 14, `Expected UTC hour 13 or 14, got ${hours}`);
+    assert.equal(nextRun.getUTCMinutes(), 0);
+
+    scheduler.stopAll();
+  });
+
+  test('job without timezone uses system default', () => {
+    const scheduler = new CronScheduler();
+    scheduler.registerDefinition(
+      makeAgentDef({
+        name: 'no-tz-job',
+        slug: 'no-tz-job',
+        schedule: '0 12 * * *',
+      }),
+      async () => {},
+    );
+    scheduler.startAll();
+
+    const state = scheduler.getState('no-tz-job');
+    assert.ok(state?.nextRunAt, 'should have a next run time');
+    scheduler.stopAll();
+  });
+
+  test('job auto-disables after reaching consecutive failure threshold', async () => {
+    const scheduler = new CronScheduler(undefined, 3); // global threshold = 3
+    let callCount = 0;
+
+    // Use a very short interval to trigger quickly via tick
+    const def = makeAgentDef({
+      name: 'fail-job',
+      slug: 'fail-job',
+      schedule: 'every 1m',
+      singleton: false,
+    });
+
+    scheduler.registerDefinition(def, async () => {
+      callCount++;
+      throw new Error(`fail #${callCount}`);
+    });
+
+    // Manually run the job 3 times via the internal handler path
+    // We can't easily trigger the tick loop, so we test state transitions
+    // by accessing the registered job's handler directly through startAll + tick
+    scheduler.startAll();
+
+    // Override nextRunAt to trigger immediately on next tick
+    const state = scheduler.getState('fail-job');
+    assert.ok(state);
+    state.nextRunAt = new Date(Date.now() - 1000).toISOString();
+
+    // Wait for tick to fire and handler to reject
+    await new Promise(r => setTimeout(r, 1200));
+
+    // After first failure
+    assert.equal(scheduler.getState('fail-job')?.consecutiveFailures, 1);
+    assert.equal(scheduler.getState('fail-job')?.status, 'idle');
+
+    // Trigger second failure
+    scheduler.getState('fail-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('fail-job')?.consecutiveFailures, 2);
+    assert.equal(scheduler.getState('fail-job')?.status, 'idle');
+
+    // Trigger third failure — should auto-disable
+    scheduler.getState('fail-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('fail-job')?.consecutiveFailures, 3);
+    assert.equal(scheduler.getState('fail-job')?.status, 'disabled');
+
+    scheduler.stopAll();
+  });
+
+  test('auto-disabled job is skipped by tick loop', async () => {
+    const scheduler = new CronScheduler(undefined, 1); // threshold = 1
+    let callCount = 0;
+
+    scheduler.registerDefinition(
+      makeAgentDef({ name: 'skip-job', slug: 'skip-job', schedule: 'every 1m', singleton: false }),
+      async () => { callCount++; throw new Error('fail'); },
+    );
+
+    scheduler.startAll();
+
+    // Trigger first failure — should auto-disable at threshold 1
+    scheduler.getState('skip-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('skip-job')?.status, 'disabled');
+    const countAfterDisable = callCount;
+
+    // Set nextRunAt again — tick should skip because status is disabled
+    scheduler.getState('skip-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(callCount, countAfterDisable, 'handler should not have been called again');
+
+    scheduler.stopAll();
+  });
+
+  test('per-job maxConsecutiveFailures overrides global default', async () => {
+    const scheduler = new CronScheduler(undefined, 10); // global = 10
+    let callCount = 0;
+
+    scheduler.registerDefinition(
+      makeAgentDef({
+        name: 'custom-threshold',
+        slug: 'custom-threshold',
+        schedule: 'every 1m',
+        singleton: false,
+        maxConsecutiveFailures: 2,
+      }),
+      async () => { callCount++; throw new Error('fail'); },
+    );
+
+    scheduler.startAll();
+
+    // First failure
+    scheduler.getState('custom-threshold')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('custom-threshold')?.status, 'idle');
+
+    // Second failure — should disable (per-job threshold = 2)
+    scheduler.getState('custom-threshold')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('custom-threshold')?.status, 'disabled');
+    assert.equal(scheduler.getState('custom-threshold')?.consecutiveFailures, 2);
+
+    scheduler.stopAll();
+  });
+
+  test('successful run resets consecutiveFailures counter', async () => {
+    const scheduler = new CronScheduler(undefined, 5);
+    let shouldFail = true;
+
+    scheduler.registerDefinition(
+      makeAgentDef({ name: 'reset-job', slug: 'reset-job', schedule: 'every 1m', singleton: false }),
+      async () => { if (shouldFail) throw new Error('fail'); },
+    );
+
+    scheduler.startAll();
+
+    // Two failures
+    scheduler.getState('reset-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    scheduler.getState('reset-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('reset-job')?.consecutiveFailures, 2);
+
+    // Now succeed
+    shouldFail = false;
+    scheduler.getState('reset-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(scheduler.getState('reset-job')?.consecutiveFailures, 0);
+    assert.equal(scheduler.getState('reset-job')?.status, 'idle');
+
+    scheduler.stopAll();
+  });
+
   test('one-shot job transitions to disabled even after handler error', async () => {
     const scheduler = new CronScheduler();
 

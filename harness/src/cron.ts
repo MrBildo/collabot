@@ -27,13 +27,13 @@ export type CronJobState = {
 // ── Schedule types ──────────────────────────────────────────
 
 type ResolvedSchedule =
-  | { type: 'cron'; expression: string }
+  | { type: 'cron'; expression: string; tz?: string }
   | { type: 'interval'; ms: number }
   | { type: 'once'; at: Date };
 
 const MIN_INTERVAL_MS = 60_000; // 1 minute minimum
 
-function resolveSchedule(schedule: string): ResolvedSchedule {
+function resolveSchedule(schedule: string, timezone?: string): ResolvedSchedule {
   // "every Xm" / "every Xh" / "every Xd"
   const intervalMatch = schedule.match(/^every\s+(\d+)(m|h|d)$/i);
   if (intervalMatch) {
@@ -59,8 +59,9 @@ function resolveSchedule(schedule: string): ResolvedSchedule {
 
   // Standard 5-field cron expression
   try {
-    CronExpressionParser.parse(schedule);
-    return { type: 'cron', expression: schedule };
+    const opts = timezone ? { tz: timezone } : undefined;
+    CronExpressionParser.parse(schedule, opts);
+    return { type: 'cron', expression: schedule, tz: timezone };
   } catch {
     throw new Error(`Invalid cron schedule: "${schedule}"`);
   }
@@ -68,7 +69,8 @@ function resolveSchedule(schedule: string): ResolvedSchedule {
 
 function getNextFireTime(schedule: ResolvedSchedule): Date | null {
   if (schedule.type === 'cron') {
-    const interval = CronExpressionParser.parse(schedule.expression);
+    const opts = schedule.tz ? { tz: schedule.tz } : undefined;
+    const interval = CronExpressionParser.parse(schedule.expression, opts);
     return interval.next().toDate();
   }
   if (schedule.type === 'interval') {
@@ -104,9 +106,11 @@ export class CronScheduler {
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private legacyTimers = new Map<string, ReturnType<typeof setInterval>>();
   private statePath: string | undefined;
+  private defaultMaxConsecutiveFailures: number;
 
-  constructor(statePath?: string) {
+  constructor(statePath?: string, defaultMaxConsecutiveFailures = 5) {
     this.statePath = statePath;
+    this.defaultMaxConsecutiveFailures = defaultMaxConsecutiveFailures;
   }
 
   /**
@@ -147,7 +151,7 @@ export class CronScheduler {
       throw new Error(`Cron job "${def.name}" already registered`);
     }
 
-    const schedule = resolveSchedule(def.schedule);
+    const schedule = resolveSchedule(def.schedule, def.timezone);
 
     this.jobs.set(def.name, {
       definition: def,
@@ -341,8 +345,24 @@ export class CronScheduler {
         job.state.runCount++;
         job.state.lastError = message;
         job.state.consecutiveFailures++;
-        job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
         logger.error({ jobName: name, error: message }, 'cron job error');
+
+        if (job.schedule.type === 'once') {
+          job.state.status = 'disabled';
+        } else {
+          const threshold = job.definition?.maxConsecutiveFailures
+            ?? this.defaultMaxConsecutiveFailures;
+          if (job.state.consecutiveFailures >= threshold) {
+            job.state.status = 'disabled';
+            logger.warn(
+              { jobName: name, consecutiveFailures: job.state.consecutiveFailures, threshold },
+              'cron job auto-disabled after exceeding consecutive failure threshold',
+            );
+          } else {
+            job.state.status = 'idle';
+          }
+        }
+
         this.persistState();
       });
   }
