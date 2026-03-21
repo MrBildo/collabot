@@ -75,6 +75,15 @@ maxConcurrent = 0
 port = 9800
 host = "127.0.0.1"
 
+# ── Cron ──────────────────────────────────────────────────────
+# enabled: global kill switch — false stops all cron job loading/scheduling.
+# jobsDirectory: folder name relative to COLLABOT_HOME (default: cron/).
+# Individual jobs have their own enabled field in frontmatter.
+
+[cron]
+enabled = true
+jobsDirectory = "cron"
+
 # ── Slack Adapter ─────────────────────────────────────────────
 # Enable by adding bot credentials. Each bot needs a Slack App with
 # Socket Mode enabled. Token env var names point to .env entries.

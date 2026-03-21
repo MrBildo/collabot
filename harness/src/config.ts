@@ -18,7 +18,10 @@ export const ConfigSchema = z.object({
   }),
   defaults: z.object({
     stallTimeoutSeconds: z.number().positive().default(300),
-  }).default({ stallTimeoutSeconds: 300 }),
+    dispatchTimeoutMs: z.number().int().nonnegative().default(0), // 0 = no timeout
+    tokenBudget: z.number().int().nonnegative().default(0),       // 0 = no limit
+    maxBudgetUsd: z.number().nonnegative().default(0),            // 0 = no limit
+  }).default({ stallTimeoutSeconds: 300, dispatchTimeoutMs: 0, tokenBudget: 0, maxBudgetUsd: 0 }),
   agent: z.object({
     maxTurns: z.number().int().nonnegative().default(0),
     maxBudgetUsd: z.number().nonnegative().default(0),
@@ -52,6 +55,10 @@ export const ConfigSchema = z.object({
     port: z.number().int().positive().default(9800),
     host: z.string().default('127.0.0.1'),
   }).optional(),
+  cron: z.object({
+    enabled: z.boolean().default(true),
+    jobsDirectory: z.string().default('cron'),
+  }).optional().default({ enabled: true, jobsDirectory: 'cron' }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

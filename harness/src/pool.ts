@@ -1,6 +1,8 @@
 export interface ActiveAgent {
   id: string;
   role: string;
+  botId?: string;
+  botName?: string;
   taskSlug?: string;
   startedAt: Date;
   controller: AbortController;
@@ -10,6 +12,8 @@ export interface ActiveAgent {
 export interface AgentSnapshot {
   id: string;
   role: string;
+  botId?: string;
+  botName?: string;
   taskSlug?: string;
   startedAt: Date;
 }
@@ -60,9 +64,11 @@ export class AgentPool {
   }
 
   private snapshot(): AgentSnapshot[] {
-    return Array.from(this.active.values()).map(({ id, role, taskSlug, startedAt }) => ({
+    return Array.from(this.active.values()).map(({ id, role, botId, botName, taskSlug, startedAt }) => ({
       id,
       role,
+      ...(botId ? { botId } : {}),
+      ...(botName ? { botName } : {}),
       taskSlug,
       startedAt,
     }));

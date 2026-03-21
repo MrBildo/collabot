@@ -667,10 +667,13 @@ export class BotSessionManager {
 
             // Re-register in pool
             const controller = new AbortController();
+            const recoveredBot = this.bots.get(data.botName);
             try {
               this.pool.register({
                 id: data.agentId,
                 role: data.role,
+                botId: recoveredBot?.id,
+                botName: data.botName,
                 taskSlug: data.taskSlug,
                 startedAt: new Date(data.startedAt),
                 controller,
@@ -757,9 +760,12 @@ export class BotSessionManager {
 
     // Register in pool
     const controller = new AbortController();
+    const botDef = this.bots.get(botName);
     this.pool.register({
       id: agentId,
       role: roleName,
+      botId: botDef?.id,
+      botName,
       taskSlug,
       startedAt: new Date(),
       controller,

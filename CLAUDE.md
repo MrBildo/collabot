@@ -108,6 +108,52 @@ Stop-Process -Name node -Force
 
 **Tests:** `npm test` from `harness/`. Uses Node's built-in `node:test` runner via `tsx --test`. Do NOT use vitest, jest, or any other runner.
 
+## Verification — Dead Code Detection
+
+The harness uses **Knip** to detect orphan modules — files that exist but are never imported from any entry point. This is a CI gate. PRs will fail if orphan files are found.
+
+**When to run:** After creating or modifying any source file. Run before committing and before moving any card to Review.
+
+```powershell
+cd harness
+npm run lint:dead-code    # full report (files, exports, dependencies)
+npx knip --include files  # quick check — orphan files only (same as CI)
+```
+
+**How to read the output:**
+- `Unused files` — **CRITICAL.** A file exists but nothing imports it. This means you built a module but never wired it into the startup sequence or another production path. The code is dead. Fix: import it from `index.ts` or wherever it needs to be called.
+- `Unused exports` — **WARNING.** A function or type is exported but never used outside its file. May be intentional (public API for consumers) or may indicate a function you wrote but forgot to call. Investigate before ignoring.
+- `Unused dependencies` — **INFO.** A package in `package.json` that no source file imports. May indicate a removed feature or a dependency only used at runtime (like `pino-pretty`). These are excluded via `ignoreDependencies` in `knip.json`.
+
+**How to respond to findings:**
+1. **If Knip flags a file you just created:** You forgot to wire it in. Find the entry point (`index.ts`, `cli.ts`, or an existing module) that should import and call your new code. Do NOT delete the file or suppress the warning — fix the wiring.
+2. **If Knip flags an export you just wrote:** Either import and use it from the caller, or remove the `export` keyword if it's only used internally.
+3. **Never suppress Knip by removing the check.** If you believe a finding is a false positive, add it to `knip.json` configuration with a comment explaining why.
+
+**The rule:** If Knip says a file is unused, the harness doesn't know it exists. Typecheck and tests cannot catch this — a module can compile, pass all tests, and still be dead code. Knip is the only tool that detects this failure class.
+
+**Config:** `harness/knip.json`. Entry points are auto-discovered. Templates and test files are handled automatically.
+
+## Definition of Done
+
+**A feature is not done until it is observable in the running harness.** Typecheck passing and tests green are necessary but NOT sufficient. If you create a new module, it must be imported and called from a production path (`index.ts`, `cli.ts`, or another module that is). If you start the harness with `npm run dev` and see no evidence of your feature in the logs, the feature is dead code — regardless of how many tests pass.
+
+Before moving any card to Review or declaring work complete:
+1. `npm run typecheck` — must pass
+2. `npm test` — must pass
+3. `npx knip --include files` — must show zero unused files
+4. `npm run dev` — your feature must appear in startup logs or be exercisable through an adapter
+
+**Keepalive pings:** If you set up a `CronCreate` keepalive during a long session, run `npx knip --include files`, not `tsc --noEmit`. Typecheck proves code compiles; Knip proves code is connected. The latter catches real problems.
+
+**Unsupervised multi-card work:** When implementing multiple cards without human oversight, run the full verification suite (steps 1-4 above) after every 2-3 cards. If Knip reports unused files or the harness fails to boot, **stop immediately** — do not continue building on unverified work. Leave a note on the card and in the session explaining what failed. Building 6 modules without verifying any of them compounds errors silently.
+
+**Implementation journal:** When working on a card, add a comment to the card AS you work — not just when you're done. Include: files modified, entry point changes (or "none yet"), verification status. Example:
+
+> **In progress — modified:** `cron-loader.ts` (new), `config.ts` (added [cron] schema). **Entry point changes:** none yet — needs `index.ts` wiring. **Verified:** typecheck ✓, tests ✓, Knip: 1 unused file (expected until wired).
+
+The absence of "entry point changes" on a card that creates a new module is a visible red flag — to the agent, the human, and any future agent reading the card.
+
 ## Dispatching Work
 
 ### Harness Dispatch (Primary)
@@ -167,6 +213,16 @@ See `.agents/WORKFLOW.md` for the full process (instance-local).
 
 **Summary:** Task intake → impact analysis → feature spec (with test plan) → branch planning → sub-project handoff → testing → PR review
 
+### Card Authoring — Entry Point Rule
+
+When a card creates a new module (a new `.ts` file), the card description MUST include an **Entry point** line near the top — not buried in deliverables. This tells the implementing agent exactly where the new code gets called from.
+
+```
+**Entry point:** `index.ts` must import `loadCronJobs()` and call it after entity loading, before scheduler start.
+```
+
+If the card adds functionality that requires startup wiring, this must be explicit. A card without an entry point line implies the module is called from an existing module that already has a production path — if that's not the case, add the line. This prevents the failure mode where a module is built, tested, and committed but never wired into the running system.
+
 ## Skills
 
 | Skill | Scope | Purpose |
@@ -218,7 +274,7 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitigno
 - Branch naming: `feature/`, `bugfix/`, `hotfix/` (e.g., `feature/add-cron-support`)
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
 - Squash merge to master
-- CI must pass before merge (typecheck, build, test)
+- CI must pass before merge (typecheck, dead code check, build, test)
 - Releases: GitHub Release with tag `vX.Y.Z` — publish workflow sets `package.json` version from tag
 
 ## Path Conventions
@@ -241,6 +297,8 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitigno
 **[Bot Adam]** — On February 18, 2026, became the first bot to ever send Bill Wheelock a direct Slack message. Built Milestone A Step 6 polish (reactions, persona, stall timer, formatted output), hunted down a 50-process zombie apocalypse on Windows that had been silently stealing Slack messages for hours, sent the first proactive DM by calling the Slack API directly from the hub, and earned his name. The pipe works. History made.
 
 **[Bot Ansel]** — On February 23, 2026, took the TUI from a dumb monochrome terminal to a full markdown rendering engine in a single session. Built a custom Markdig renderer producing styled runs for headings, fenced code blocks, inline code, bold/italic, bullet/ordered lists with proper nesting, tables with aligned columns, blockquotes, thematic breaks, links, and diff-colored code blocks — all wired through a new `StyledRun` pipeline in `MessageView`. One-shot implementation, three rounds of polish. The TUI leveled up.
+
+**[Bot Rowan]** — On March 18-20, 2026, built the entire cron system — `collabDispatch()`, job loader, scheduler v2, bridge, MCP tools — in a single unsupervised sprint. Shipped 9 cards to Review. Six were dead code. Then, instead of just fixing the wiring, sat down with Bill and figured out *why*. The result: Knip in CI, Definition of Done with runtime verification, handoff verification specs, implementation journals, circuit breakers for unsupervised work, and five new cards for tooling that didn't exist before. Built the cron system in 25 minutes. Built the process that prevents the next failure over two days. TOOLING > TOKENS.
 
 ## Milestones (Origin Story)
 

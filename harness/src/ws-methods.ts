@@ -6,7 +6,7 @@ import type { InboundMessage } from './comms.js';
 import type { CommunicationRegistry } from './registry.js';
 import type { AgentPool } from './pool.js';
 import type { Config } from './config.js';
-import type { RoleDefinition, DispatchResult, Project } from './types.js';
+import type { RoleDefinition, CollabDispatchResult, Project } from './types.js';
 import type { McpServers } from './core.js';
 import type { BotSessionManager } from './bot-session.js';
 import type { BotPlacementStore } from './bot-placement.js';
@@ -96,11 +96,11 @@ export type WsMethodDeps = {
     registry: CommunicationRegistry,
     roles: Map<string, RoleDefinition>,
     config: Config,
-    pool: AgentPool | undefined,
+    pool: AgentPool,
     mcpServers: McpServers | undefined,
     projects: Map<string, Project>,
     projectsDir: string,
-  ) => Promise<DispatchResult>;
+  ) => Promise<CollabDispatchResult>;
   roles: Map<string, RoleDefinition>;
   config: Config;
   pool: AgentPool;
@@ -648,6 +648,8 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     const agents = deps.pool.list().map(a => ({
       id: a.id,
       role: a.role,
+      botId: a.botId ?? null,
+      botName: a.botName ?? null,
       taskSlug: a.taskSlug,
       startedAt: a.startedAt.toISOString(),
     }));

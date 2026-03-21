@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Dead code check
+        run: npx knip --include files
+
       - name: Build
         run: npm run build
 

@@ -298,6 +298,8 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     cwd: opts?.cwd,
     parentDispatchId: opts?.parentDispatchId,
     pool,
+    projects,
+    projectsDir: PROJECTS_DIR,
   });
 };
 
