@@ -245,8 +245,9 @@ export class CronScheduler {
   resume(name: string): void {
     const job = this.jobs.get(name);
     if (!job) throw new Error(`Job "${name}" not found`);
-    if (job.state.status === 'paused') {
+    if (job.state.status === 'paused' || job.state.status === 'disabled') {
       job.state.status = 'idle';
+      job.state.consecutiveFailures = 0; // reset on manual resume
       const next = getNextFireTime(job.schedule);
       job.state.nextRunAt = next?.toISOString() ?? null;
       this.persistState();
@@ -289,12 +290,48 @@ export class CronScheduler {
         job.state.runCount = saved.runCount;
         job.state.lastError = saved.lastError;
         job.state.consecutiveFailures = saved.consecutiveFailures;
+
+        // Restore status for durable states only — 'running' is transient and can't survive restart
+        if (saved.status === 'disabled' || saved.status === 'paused') {
+          job.state.status = saved.status;
+        }
       }
       logger.info({ jobCount: Object.keys(raw).length }, 'cron state hydrated');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn({ error: msg }, 'failed to hydrate cron state');
     }
+  }
+
+  // ── Test helper ──────────────────────────────────────────
+
+  /**
+   * Manually fire one iteration of the tick loop and await all triggered jobs.
+   * Can be called without startAll() — designed for deterministic testing.
+   */
+  async triggerTick(): Promise<void> {
+    const now = new Date();
+    const promises: Promise<void>[] = [];
+
+    for (const [name, job] of this.jobs) {
+      if (job.state.status === 'disabled' || job.state.status === 'paused') continue;
+      if (job.state.status === 'running' && job.singleton) continue;
+
+      if (!job.state.nextRunAt) continue;
+      const nextRun = new Date(job.state.nextRunAt);
+      if (now < nextRun) continue;
+
+      promises.push(this.runJobAsync(name));
+
+      if (job.schedule.type === 'once') {
+        job.state.nextRunAt = null;
+      } else {
+        const next = getNextFireTime(job.schedule);
+        job.state.nextRunAt = next?.toISOString() ?? null;
+      }
+    }
+
+    await Promise.all(promises);
   }
 
   // ── Private ───────────────────────────────────────────────
@@ -326,45 +363,48 @@ export class CronScheduler {
   }
 
   private runJob(name: string): void {
+    this.runJobAsync(name).catch(() => { /* errors handled inside runJobAsync */ });
+  }
+
+  private async runJobAsync(name: string): Promise<void> {
     const job = this.jobs.get(name);
     if (!job) return;
 
     job.state.status = 'running';
     job.state.lastRunAt = new Date().toISOString();
 
-    job.handler()
-      .then(() => {
-        job.state.runCount++;
-        job.state.lastError = null;
-        job.state.consecutiveFailures = 0;
-        job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
-        this.persistState();
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        job.state.runCount++;
-        job.state.lastError = message;
-        job.state.consecutiveFailures++;
-        logger.error({ jobName: name, error: message }, 'cron job error');
+    try {
+      await job.handler();
+      job.state.runCount++;
+      job.state.lastError = null;
+      job.state.consecutiveFailures = 0;
+      job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
+      this.persistState();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      job.state.runCount++;
+      job.state.lastError = message;
+      job.state.consecutiveFailures++;
+      logger.error({ jobName: name, error: message }, 'cron job error');
 
-        if (job.schedule.type === 'once') {
+      if (job.schedule.type === 'once') {
+        job.state.status = 'disabled';
+      } else {
+        const threshold = job.definition?.maxConsecutiveFailures
+          ?? this.defaultMaxConsecutiveFailures;
+        if (job.state.consecutiveFailures >= threshold) {
           job.state.status = 'disabled';
+          logger.warn(
+            { jobName: name, consecutiveFailures: job.state.consecutiveFailures, threshold },
+            'cron job auto-disabled after exceeding consecutive failure threshold',
+          );
         } else {
-          const threshold = job.definition?.maxConsecutiveFailures
-            ?? this.defaultMaxConsecutiveFailures;
-          if (job.state.consecutiveFailures >= threshold) {
-            job.state.status = 'disabled';
-            logger.warn(
-              { jobName: name, consecutiveFailures: job.state.consecutiveFailures, threshold },
-              'cron job auto-disabled after exceeding consecutive failure threshold',
-            );
-          } else {
-            job.state.status = 'idle';
-          }
+          job.state.status = 'idle';
         }
+      }
 
-        this.persistState();
-      });
+      this.persistState();
+    }
   }
 
   private persistState(): void {
