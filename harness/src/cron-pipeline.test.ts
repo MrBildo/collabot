@@ -1,4 +1,4 @@
-import { test, describe, mock } from 'node:test';
+import { test, describe, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +7,20 @@ import type { CollabDispatchResult } from './types.js';
 import type { CronHandlerContext, CronBridgeOptions } from './cron-bridge.js';
 import type { Config } from './config.js';
 import { AgentPool } from './pool.js';
+
+// Track temp dirs for cleanup
+const tempDirs: string[] = [];
+function trackTmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+after(() => {
+  for (const dir of tempDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // ── Mocks ────────────────────────────────────────────────────
 // Mock collabDispatch — returns canned results controllable per test
@@ -31,7 +45,6 @@ mock.module('./cron-loader.js', {
 
 // Import after mocks are registered
 const { readRunLog, buildJobHandler } = await import('./cron-bridge.js');
-const { parseJobFolder } = await import('./cron-loader.js');
 
 // ── Test Helpers ─────────────────────────────────────────────
 
@@ -57,8 +70,8 @@ function makeBridgeOptions(overrides?: Partial<CronBridgeOptions>): CronBridgeOp
       projectsDir: '/tmp/.projects',
       pool: new AgentPool(),
     },
-    runsDir: fs.mkdtempSync(path.join(os.tmpdir(), 'cron-pipeline-runs-')),
-    projectsDir: fs.mkdtempSync(path.join(os.tmpdir(), 'cron-pipeline-projects-')),
+    runsDir: trackTmpDir('cron-pipeline-runs-'),
+    projectsDir: trackTmpDir('cron-pipeline-projects-'),
     ...overrides,
   };
 }
@@ -85,7 +98,7 @@ function makeDispatchResult(overrides?: Partial<CollabDispatchResult>): CollabDi
 }
 
 function makeTempJobDir(slug: string, files: Record<string, string>): { jobDir: string; baseDir: string } {
-  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-pipeline-'));
+  const baseDir = trackTmpDir('cron-pipeline-');
   const jobDir = path.join(baseDir, slug);
   fs.mkdirSync(jobDir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
@@ -97,7 +110,7 @@ function makeTempJobDir(slug: string, files: Record<string, string>): { jobDir: 
 // ── Suite 1: Agent job full pipeline (parseJobFolder → buildJobHandler → mock dispatch → run log) ──
 
 describe('Agent job full pipeline', () => {
-  test('parseJobFolder → buildJobHandler → collabDispatch (mocked) → run log entry', async () => {
+  test('buildJobHandler → collabDispatch (mocked) → run log entry', async () => {
     const { jobDir, baseDir } = makeTempJobDir('pipeline-agent', {
       'job.md': [
         '---',
@@ -113,10 +126,7 @@ describe('Agent job full pipeline', () => {
       ].join('\n'),
     });
 
-    // Step 1: parseJobFolder
-    const realParseJobFolder = (await import('./cron-loader.js')).parseJobFolder;
-    // parseJobFolder is mocked — use the real fs-based implementation from the actual module
-    // Since we mock.module'd cron-loader, we need to manually parse. Let's just construct the def.
+    // Construct a job definition directly (parseJobFolder is mocked in this file)
     const def = {
       type: 'agent' as const,
       id: '01PIPELINE000000000000000000',
@@ -234,7 +244,10 @@ describe('Agent job full pipeline', () => {
 
 // ── Suite 2: Handler job with mock Collaboard API (board-watcher pattern) ──
 
-describe('Board-watcher handler with mock Collaboard API', () => {
+describe('handler job pipeline with mock fetch and dispatch', () => {
+  // Tests the handler job pipeline (buildJobHandler + CronHandlerContext + dispatch + run log)
+  // using board-watcher-like logic as the scenario. Does not test the actual template handler.
+  //
   // The board-watcher handler makes fetch() calls to a Collaboard API and
   // conditionally dispatches agents. We simulate the handler inline (same
   // logic as the template) and mock fetch + collabDispatch.
@@ -311,7 +324,7 @@ describe('Board-watcher handler with mock Collaboard API', () => {
       jobDir: '/tmp/board-watcher',
     };
 
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-proj-'));
+    const projectsDir = trackTmpDir('bw-proj-');
     // Create project env with auth key
     const projDir = path.join(projectsDir, 'test-project');
     fs.mkdirSync(projDir, { recursive: true });
@@ -361,7 +374,7 @@ describe('Board-watcher handler with mock Collaboard API', () => {
       jobDir: '/tmp/board-watcher',
     };
 
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-proj-'));
+    const projectsDir = trackTmpDir('bw-proj-');
     const projDir = path.join(projectsDir, 'active-project');
     fs.mkdirSync(projDir, { recursive: true });
     fs.writeFileSync(path.join(projDir, '.agent.env'), 'COLLABOARD_AUTH_KEY=active-key\n', 'utf-8');
@@ -431,7 +444,7 @@ describe('Board-watcher handler with mock Collaboard API', () => {
     };
 
     // No .agent.env file for this project
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-proj-'));
+    const projectsDir = trackTmpDir('bw-proj-');
 
     mockLoadHandlerImpl = async () => handlerFn;
     mockCollabDispatchImpl = async () => {
@@ -469,7 +482,7 @@ describe('Board-watcher handler with mock Collaboard API', () => {
       jobDir: '/tmp/error',
     };
 
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-proj-'));
+    const projectsDir = trackTmpDir('bw-proj-');
     const projDir = path.join(projectsDir, 'error-project');
     fs.mkdirSync(projDir, { recursive: true });
     fs.writeFileSync(path.join(projDir, '.agent.env'), 'COLLABOARD_AUTH_KEY=err-key\n', 'utf-8');
@@ -517,7 +530,7 @@ describe('Board-watcher handler with mock Collaboard API', () => {
       jobDir: '/tmp/multi',
     };
 
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-proj-'));
+    const projectsDir = trackTmpDir('bw-proj-');
     for (const proj of ['proj-a', 'proj-b']) {
       const projDir = path.join(projectsDir, proj);
       fs.mkdirSync(projDir, { recursive: true });
