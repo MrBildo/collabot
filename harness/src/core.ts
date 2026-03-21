@@ -11,6 +11,8 @@ import type { Config } from './config.js';
 import type { AgentPool } from './pool.js';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import type { Project } from './project.js';
+import { selectMcpServersForRole } from './mcp.js';
+import type { McpServers } from './mcp.js';
 
 function formatResult(result: CollabDispatchResult): string {
   if (result.status === 'completed') {
@@ -95,12 +97,6 @@ export function makeChannelMessage(
  * preflight checks, status broadcasting, result posting) and delegates
  * the actual dispatch to collabDispatch().
  */
-export type McpServers = {
-  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => McpSdkServerConfigWithInstance;
-  readonly: McpSdkServerConfigWithInstance;
-  cron?: McpSdkServerConfigWithInstance;
-};
-
 export async function handleTask(
   message: InboundMessage,
   registry: CommunicationRegistry,
@@ -193,17 +189,9 @@ export async function handleTask(
   ));
 
   // MCP server selection based on role permissions
-  let agentMcpServers: Record<string, McpSdkServerConfigWithInstance> | undefined;
-  if (mcpServers) {
-    const isFullAccess = role.permissions?.includes('agent-draft') ?? false;
-    const selectedMcpServer = isFullAccess
-      ? mcpServers.createFull(taskSlug, taskDir, project.name)
-      : mcpServers.readonly;
-    agentMcpServers = { harness: selectedMcpServer };
-    if (isFullAccess && mcpServers.cron) {
-      agentMcpServers.cron = mcpServers.cron;
-    }
-  }
+  const agentMcpServers = mcpServers
+    ? selectMcpServersForRole(role, mcpServers, { taskSlug, taskDir, parentProject: project.name })
+    : undefined;
 
   // Pool management
   const agentController = new AbortController();
@@ -293,8 +281,7 @@ export async function draftAgent(
     cwd?: string;
     parentDispatchId?: string;
     pool: AgentPool;
-    mcpServer?: McpSdkServerConfigWithInstance;
-    cronMcpServer?: McpSdkServerConfigWithInstance;
+    mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
     projects?: Map<string, Project>;
     projectsDir?: string;
   },
@@ -355,12 +342,7 @@ export async function draftAgent(
       abortController: agentController,
       onLoopWarning,
       onEvent,
-      ...(options?.mcpServer ? {
-        mcpServers: {
-          harness: options.mcpServer,
-          ...(options.cronMcpServer ? { cron: options.cronMcpServer } : {}),
-        },
-      } : {}),
+      ...(options?.mcpServers ? { mcpServers: options.mcpServers } : {}),
     }, ctx);
   } finally {
     pool.release(agentId);

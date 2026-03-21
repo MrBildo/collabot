@@ -12,11 +12,11 @@ import { listTasks } from './task.js';
 import { CliAdapter } from './adapters/cli.js';
 import { CommunicationRegistry } from './registry.js';
 import { AgentPool } from './pool.js';
-import { createHarnessServer, DispatchTracker } from './mcp.js';
+import { createHarnessServer, DispatchTracker, selectMcpServersForRole } from './mcp.js';
 import { scaffoldEntity, validateEntityFrontmatter, validateLinks } from './entity-tools.js';
 import { getInstancePath } from './paths.js';
 import type { EntityType } from './entity-tools.js';
-import type { DraftAgentFn } from './mcp.js';
+import type { DraftAgentFn, McpServers } from './mcp.js';
 import type { InboundMessage } from './comms.js';
 
 const PROJECTS_DIR = getInstancePath('.projects');
@@ -292,7 +292,19 @@ const pool = new AgentPool(config.pool.maxConcurrent);
 // Create MCP servers
 const tracker = new DispatchTracker();
 const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
+  // Resolve MCP servers for the child agent based on role permissions
+  const childRole = roles.get(roleName);
+  let childMcpServers: Record<string, import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance> | undefined;
+  if (childRole && opts?.taskSlug && opts?.taskDir) {
+    childMcpServers = selectMcpServersForRole(childRole, mcpServers, {
+      taskSlug: opts.taskSlug, taskDir: opts.taskDir,
+      parentProject: opts.project,
+      parentDispatchId: opts.parentDispatchId,
+    });
+  }
+
   return draftAgent(roleName, taskContext, registry, roles, config, {
+    project: opts?.project,
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
     cwd: opts?.cwd,
@@ -300,14 +312,15 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     pool,
     projects,
     projectsDir: PROJECTS_DIR,
+    mcpServers: childMcpServers,
   });
 };
 
-const mcpServers = {
-  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string) => createHarnessServer({
+const mcpServers: McpServers = {
+  createFull: (parentTaskSlug: string, parentTaskDir: string, parentProject?: string, parentDispatchId?: string) => createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
     tracker, draftFn,
-    parentTaskSlug, parentTaskDir, parentProject,
+    parentTaskSlug, parentTaskDir, parentProject, parentDispatchId,
   }),
   readonly: createHarnessServer({
     pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'readonly',
