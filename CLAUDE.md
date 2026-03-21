@@ -298,6 +298,8 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agent.env` (gitigno
 
 **[Bot Ansel]** — On February 23, 2026, took the TUI from a dumb monochrome terminal to a full markdown rendering engine in a single session. Built a custom Markdig renderer producing styled runs for headings, fenced code blocks, inline code, bold/italic, bullet/ordered lists with proper nesting, tables with aligned columns, blockquotes, thematic breaks, links, and diff-colored code blocks — all wired through a new `StyledRun` pipeline in `MessageView`. One-shot implementation, three rounds of polish. The TUI leveled up.
 
+**[Bot Rowan]** — On March 18-20, 2026, built the entire cron system — `collabDispatch()`, job loader, scheduler v2, bridge, MCP tools — in a single unsupervised sprint. Shipped 9 cards to Review. Six were dead code. Then, instead of just fixing the wiring, sat down with Bill and figured out *why*. The result: Knip in CI, Definition of Done with runtime verification, handoff verification specs, implementation journals, circuit breakers for unsupervised work, and five new cards for tooling that didn't exist before. Built the cron system in 25 minutes. Built the process that prevents the next failure over two days. TOOLING > TOKENS.
+
 ## Milestones (Origin Story)
 
 Collabot was born as an agent hub — an orchestration workspace for a single project. Through 8 milestones and 4 post-milestone initiatives, the harness evolved into a general-purpose platform.
