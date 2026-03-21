@@ -328,7 +328,7 @@ describe('handler job pipeline with mock fetch and dispatch', () => {
     // Create project env with auth key
     const projDir = path.join(projectsDir, 'test-project');
     fs.mkdirSync(projDir, { recursive: true });
-    fs.writeFileSync(path.join(projDir, '.agent.env'), 'COLLABOARD_AUTH_KEY=test-key-123\n', 'utf-8');
+    fs.writeFileSync(path.join(projDir, '.agents.env'), 'COLLABOARD_AUTH_KEY=test-key-123\n', 'utf-8');
 
     mockLoadHandlerImpl = async () => handlerFn;
 
@@ -377,7 +377,7 @@ describe('handler job pipeline with mock fetch and dispatch', () => {
     const projectsDir = trackTmpDir('bw-proj-');
     const projDir = path.join(projectsDir, 'active-project');
     fs.mkdirSync(projDir, { recursive: true });
-    fs.writeFileSync(path.join(projDir, '.agent.env'), 'COLLABOARD_AUTH_KEY=active-key\n', 'utf-8');
+    fs.writeFileSync(path.join(projDir, '.agents.env'), 'COLLABOARD_AUTH_KEY=active-key\n', 'utf-8');
 
     const cannedResult = makeDispatchResult({
       taskSlug: 'board-task-001',
@@ -443,7 +443,7 @@ describe('handler job pipeline with mock fetch and dispatch', () => {
       jobDir: '/tmp/noauth',
     };
 
-    // No .agent.env file for this project
+    // No .agents.env file for this project
     const projectsDir = trackTmpDir('bw-proj-');
 
     mockLoadHandlerImpl = async () => handlerFn;
@@ -485,7 +485,7 @@ describe('handler job pipeline with mock fetch and dispatch', () => {
     const projectsDir = trackTmpDir('bw-proj-');
     const projDir = path.join(projectsDir, 'error-project');
     fs.mkdirSync(projDir, { recursive: true });
-    fs.writeFileSync(path.join(projDir, '.agent.env'), 'COLLABOARD_AUTH_KEY=err-key\n', 'utf-8');
+    fs.writeFileSync(path.join(projDir, '.agents.env'), 'COLLABOARD_AUTH_KEY=err-key\n', 'utf-8');
 
     mockLoadHandlerImpl = async () => handlerFn;
     mockCollabDispatchImpl = async () => {
@@ -534,7 +534,7 @@ describe('handler job pipeline with mock fetch and dispatch', () => {
     for (const proj of ['proj-a', 'proj-b']) {
       const projDir = path.join(projectsDir, proj);
       fs.mkdirSync(projDir, { recursive: true });
-      fs.writeFileSync(path.join(projDir, '.agent.env'), `COLLABOARD_AUTH_KEY=key-${proj}\n`, 'utf-8');
+      fs.writeFileSync(path.join(projDir, '.agents.env'), `COLLABOARD_AUTH_KEY=key-${proj}\n`, 'utf-8');
     }
 
     const cannedResult = makeDispatchResult({ taskSlug: 'multi-task' });

@@ -1,12 +1,17 @@
-# Claude Code local settings
+# Agent workspace (instance-local)
+.agents/
+
+# Claude Code (instance-local)
 .claude/*
-**/.claude/settings.local.json
+
+# Auth keys
+.agents.env
+
+# MCP config (user-level)
+.mcp.json
 
 # Dev instance (local only)
 dev/
-
-# Agent workspace (local only)
-.agents/
 
 # Node
 harness/node_modules/
@@ -14,7 +19,6 @@ harness/dist/
 
 # Environment
 harness/.env
-.agent.env
 
 # npm pack artifacts
 *.tgz

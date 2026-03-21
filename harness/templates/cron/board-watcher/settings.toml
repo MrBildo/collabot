@@ -1,5 +1,5 @@
 # Board-to-project mappings. Each entry maps a Collaboard board
-# to the project whose .agent.env has the COLLABOARD_AUTH_KEY.
+# to the project whose .agents.env has the COLLABOARD_AUTH_KEY.
 #
 # The handler checks each board for new activity since last run.
 # Clean boards = zero agent cost. Dirty boards dispatch an agent
