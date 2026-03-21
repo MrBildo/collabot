@@ -184,7 +184,7 @@ claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 When dispatching coding or evaluation sub-agents via the Agent tool:
 
 - **Model:** Always use `model: "opus"` (Opus High)
-- **Skills injection:** Manually inject the TypeScript dev skill (`C:\Users\mrbil\.claude\skills\typescript-dev\SKILL.md`) into every sub-agent prompt. Include the .NET dev skill (`C:\Users\mrbil\.claude\skills\dotnet-dev\SKILL.md`) when the task touches C# code.
+- **Skills injection:** Manually inject the TypeScript dev skill (`~/.claude/skills/typescript-dev/SKILL.md`) into every sub-agent prompt. Include the .NET dev skill (`~/.claude/skills/dotnet-dev/SKILL.md`) when the task touches C# code.
 - **Report format:** Every sub-agent must return a standardized report. Include this template in the prompt:
 
 ```

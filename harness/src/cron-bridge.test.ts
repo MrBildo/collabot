@@ -1,4 +1,4 @@
-import { test, describe, mock } from 'node:test';
+import { test, describe, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,6 +8,20 @@ import type { CronHandlerContext, CronBridgeOptions } from './cron-bridge.js';
 import type { HandlerJobDefinition } from './cron-loader.js';
 import type { Config } from './config.js';
 import { AgentPool } from './pool.js';
+
+// Track temp dirs for cleanup
+const tempDirs: string[] = [];
+function trackTmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+after(() => {
+  for (const dir of tempDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // ── Mocks ────────────────────────────────────────────────────
 // Mock collabDispatch — returns canned results controllable per test
@@ -77,8 +91,8 @@ function makeBridgeOptions(overrides?: Partial<CronBridgeOptions>): CronBridgeOp
       projectsDir: '/tmp/.projects',
       pool: new AgentPool(),
     },
-    runsDir: fs.mkdtempSync(path.join(os.tmpdir(), 'cron-runs-')),
-    projectsDir: fs.mkdtempSync(path.join(os.tmpdir(), 'cron-projects-')),
+    runsDir: trackTmpDir('cron-runs-'),
+    projectsDir: trackTmpDir('cron-projects-'),
     ...overrides,
   };
 }
@@ -108,13 +122,13 @@ function makeDispatchResult(overrides?: Partial<CollabDispatchResult>): CollabDi
 
 describe('Run log persistence', () => {
   test('readRunLog returns empty array when no log exists', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-bridge-'));
+    const tmpDir = trackTmpDir('cron-bridge-');
     const entries = readRunLog(tmpDir, 'nonexistent', 10);
     assert.deepStrictEqual(entries, []);
   });
 
   test('readRunLog reads JSONL entries', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-bridge-'));
+    const tmpDir = trackTmpDir('cron-bridge-');
     const entry1: RunLogEntry = {
       runAt: '2026-03-18T10:00:00.000Z',
       duration_ms: 5000,
@@ -144,7 +158,7 @@ describe('Run log persistence', () => {
   });
 
   test('readRunLog respects limit', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-bridge-'));
+    const tmpDir = trackTmpDir('cron-bridge-');
     const lines: string[] = [];
     for (let i = 0; i < 10; i++) {
       lines.push(JSON.stringify({
@@ -167,7 +181,7 @@ describe('Run log persistence', () => {
   });
 
   test('readRunLog handles malformed lines gracefully', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-bridge-'));
+    const tmpDir = trackTmpDir('cron-bridge-');
     const logPath = path.join(tmpDir, 'bad-lines.jsonl');
     fs.writeFileSync(logPath, [
       JSON.stringify({ runAt: '2026-03-18T10:00:00Z', duration_ms: 1000, status: 'completed', dispatchCount: 1, totalCostUsd: 0, taskSlugs: [] }),
@@ -332,7 +346,11 @@ describe('Handler job execution path', () => {
     const def = makeHandlerDef({ bot: 'my-bot', tokenBudget: 5000, maxTurns: 10, maxBudgetUsd: 1.5 });
     const options = makeBridgeOptions();
 
-    mockCollabDispatchImpl = async () => cannedResult;
+    let capturedDispatchOpts: Record<string, unknown> | undefined;
+    mockCollabDispatchImpl = async (opts: unknown) => {
+      capturedDispatchOpts = opts as Record<string, unknown>;
+      return cannedResult;
+    };
     mockLoadHandlerImpl = async () => {
       return async (ctx: unknown) => {
         capturedCtx = ctx as CronHandlerContext;
@@ -349,6 +367,13 @@ describe('Handler job execution path', () => {
     await handler();
 
     assert.ok(capturedCtx, 'handler must have been called');
+
+    // Verify constraint forwarding from job definition to collabDispatch
+    assert.ok(capturedDispatchOpts, 'collabDispatch should have been called');
+    assert.equal(capturedDispatchOpts.bot, 'my-bot', 'bot should be forwarded from job definition');
+    assert.equal(capturedDispatchOpts.tokenBudget, 5000, 'tokenBudget should be forwarded from job definition');
+    assert.equal(capturedDispatchOpts.maxTurns, 10, 'maxTurns should be forwarded from job definition');
+    assert.equal(capturedDispatchOpts.maxBudgetUsd, 1.5, 'maxBudgetUsd should be forwarded from job definition');
   });
 
   test('completed handler run writes a run log entry', async () => {
@@ -446,7 +471,7 @@ describe('ConfigResolver', () => {
 
   test('ctx.config.projectEnv reads .agent.env from the project path', async () => {
     let capturedCtx: CronHandlerContext | undefined;
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-projenv-'));
+    const projectsDir = trackTmpDir('cron-projenv-');
 
     // Create a fake project's .agent.env
     const projectDir = path.join(projectsDir, 'myproject');
@@ -481,7 +506,7 @@ describe('ConfigResolver', () => {
 
   test('ctx.config.projectEnv returns empty object for nonexistent project', async () => {
     let capturedCtx: CronHandlerContext | undefined;
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-projenv-'));
+    const projectsDir = trackTmpDir('cron-projenv-');
     const def = makeHandlerDef();
     const options = makeBridgeOptions({ projectsDir });
 
@@ -501,7 +526,7 @@ describe('ConfigResolver', () => {
 
   test('ctx.config.projectEnv skips lines without equals sign', async () => {
     let capturedCtx: CronHandlerContext | undefined;
-    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-projenv-'));
+    const projectsDir = trackTmpDir('cron-projenv-');
     const projectDir = path.join(projectsDir, 'edgecase');
     fs.mkdirSync(projectDir, { recursive: true });
     fs.writeFileSync(path.join(projectDir, '.agent.env'), [
