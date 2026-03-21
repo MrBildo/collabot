@@ -1,6 +1,6 @@
 # Agent Orchestration Architecture
 
-> Living document. Last updated 2026-03-04.
+> Living document. Last updated 2026-03-21.
 
 ## Overview
 
@@ -47,7 +47,11 @@ The harness (`harness/src/`) is the orchestration engine:
 | `project.ts` | Project manifest loading, virtual project support |
 | `config.ts` | TOML config schema — models, agent defaults, bots, adapters |
 | `prompts.ts` | `assembleBotPrompt()` — role + skills + soul prompt assembly |
-| `cron.ts` | `CronScheduler` — setInterval-based, multi-project task rotation |
+| `collab-dispatch.ts` | `collabDispatch()` — unified dispatch entry point (entity model, task lifecycle, SDK call, event capture) |
+| `cron.ts` | `CronScheduler` v2 — cron expressions, per-job state, singleton enforcement, pause/resume, state persistence |
+| `cron-loader.ts` | Job folder parser — reads `job.md` frontmatter + `settings.toml`, produces typed `CronJobDefinition` |
+| `cron-bridge.ts` | Execution bridge — builds runnable handlers from job definitions, manages `CronHandlerContext`, run log persistence |
+| `cron-mcp.ts` | Cron MCP tools — list, get, create, delete, pause, resume, run log query |
 | `entity-tools.ts` | Entity listing/reading tools (roles, bots, skills) |
 
 ## Adapters
@@ -111,8 +115,95 @@ The harness exposes MCP tools that bots can call during dispatch:
 | `get_task_context` | Reconstruct context from dispatch history |
 | `list_tasks` | Query tasks for the current project |
 | `list_projects` | List available projects |
+| `list_cron_jobs` | List all cron jobs with state |
+| `get_cron_job` | Get job definition + state + run log |
+| `create_cron_job` | Create a new agent cron job on disk |
+| `delete_cron_job` | Remove a cron job folder |
+| `pause_cron_job` | Pause a job without deleting |
+| `resume_cron_job` | Resume a paused job |
+| `get_cron_run_log` | Query recent run log entries |
 
-All tools are scoped to the parent project — bots only see their own project's data.
+All tools are scoped to the parent project — bots only see their own project's data. Cron MCP tools require the `agent-draft` permission on the role.
+
+## Cron System
+
+The cron system (v2) enables scheduled autonomous agent work — recurring tasks, board monitoring, standup reports, and any job that should fire on a schedule without human initiation.
+
+### Architecture
+
+Four modules collaborate:
+
+```
+job.md + settings.toml + handler.ts     (instance content, in COLLABOT_HOME/cron/)
+         │
+         ▼
+   cron-loader.ts        parse job folders → CronJobDefinition[]
+         │
+         ▼
+   cron-bridge.ts        build executable handlers, manage CronHandlerContext, run logs
+         │
+         ▼
+    cron.ts               CronScheduler — tick loop, state persistence, pause/resume
+         │
+   cron-mcp.ts           MCP tools for runtime job management
+```
+
+### Job Types
+
+**Agent jobs** — the simple path. A `job.md` with YAML frontmatter (name, schedule, role, project) and a markdown body that becomes the agent prompt. The bridge calls `collabDispatch()` directly. No custom code needed.
+
+**Handler jobs** — the programmable path. A `job.md` with `handler: true` plus a `handler.ts` file (and optional `settings.toml`). The handler receives a `CronHandlerContext` with config access, dispatch capability, run log history, and an abort signal. Handlers can make HTTP calls, inspect external state, and conditionally dispatch zero or more agents. The board-watcher is the canonical example: it checks Collaboard for activity and only dispatches when there's work to do.
+
+### Job Lifecycle
+
+1. **Load** — `loadCronJobs()` scans the configured jobs directory, parses each subfolder's `job.md`
+2. **Register** — `buildJobHandler()` wraps each definition into a runnable function, `registerDefinition()` adds it to the scheduler
+3. **Schedule** — the scheduler's 1-second tick loop evaluates cron expressions, intervals, or one-shot times
+4. **Fire** — when a job's next fire time arrives, the handler executes
+5. **Bridge** — agent jobs call `collabDispatch()`, handler jobs call the loaded TypeScript function
+6. **Run log** — every execution (success or failure) appends to `runs/{jobName}.jsonl`
+7. **State** — per-job state (lastRunAt, runCount, consecutiveFailures) persists to `cron-state.json`
+
+### CronHandlerContext
+
+Handler jobs receive a context object with:
+
+| Property | Type | Purpose |
+|----------|------|---------|
+| `config.job` | `Record<string, unknown>` | Parsed `settings.toml` for this job |
+| `config.harness` | `Config` | Full harness config |
+| `config.projectEnv(project)` | `Record<string, string>` | Read a project's `.agent.env` |
+| `job` | `CronJobDefinition` | The job's definition |
+| `lastRunAt` | `Date \| null` | When this job last fired |
+| `dispatch(opts)` | `Promise<CollabDispatchResult>` | Dispatch an agent via `collabDispatch()` |
+| `getRunLog(limit?)` | `RunLogEntry[]` | Recent run history |
+| `signal` | `AbortSignal` | Abort signal for cancellation |
+| `log` | `Logger` | Structured logger |
+
+### Configuration
+
+The `[cron]` section in `config.toml`:
+
+```toml
+[cron]
+enabled = true
+jobsDirectory = "cron"               # relative to COLLABOT_HOME
+maxConsecutiveFailures = 5            # auto-disable threshold (overridable per job)
+```
+
+### Auto-Disable
+
+Jobs that fail consecutively are automatically disabled. The threshold defaults to `maxConsecutiveFailures` in config but can be overridden per job in frontmatter. Disabled jobs can be resumed via the `resume_cron_job` MCP tool or by restarting the harness (which resets state).
+
+### Templates
+
+Shipped templates in `harness/templates/cron/` provide starting points:
+
+- `board-watcher/` — handler job that checks Collaboard for activity
+- `collabot-standup/` — agent job that generates daily standup reports
+- `task-rotation/` — handler job stub for daily task rotation (legacy)
+
+Users copy templates to their instance's cron directory and customize.
 
 ## Startup Sequence
 
@@ -126,4 +217,4 @@ Per D18 design decision, the harness starts in a defined order:
 6. **Banner** — print startup summary
 7. **Start** — start all adapters (Socket Mode connections, WS server, etc.)
 8. **Presence** — set bot presence on adapters that support it
-9. **Cron** — start scheduled task rotation
+9. **Cron** — load job definitions, build handlers, hydrate state, start scheduler + MCP server
