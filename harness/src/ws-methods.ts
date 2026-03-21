@@ -7,7 +7,8 @@ import type { CommunicationRegistry } from './registry.js';
 import type { AgentPool } from './pool.js';
 import type { Config } from './config.js';
 import type { RoleDefinition, CollabDispatchResult, Project } from './types.js';
-import type { McpServers } from './core.js';
+import type { McpServers } from './mcp.js';
+import { selectMcpServersForRole } from './mcp.js';
 import type { BotSessionManager } from './bot-session.js';
 import type { BotPlacementStore } from './bot-placement.js';
 import type { BotDefinition } from './types.js';
@@ -237,6 +238,14 @@ export function registerWsMethods(deps: WsMethodDeps): void {
         const draftProject = deps.projects.get(draft.project.toLowerCase());
         const draftCwd = draftProject?.paths[0] ?? draft.taskDir;
 
+        // Resolve MCP servers for this role
+        const draftRole = deps.roles.get(draft.roleName);
+        const draftMcpServers = deps.mcpServers && draftRole
+          ? selectMcpServersForRole(draftRole, deps.mcpServers, {
+              taskSlug: draft.taskSlug, taskDir: draft.taskDir, parentProject: draft.project,
+            })
+          : undefined;
+
         // Route the first message through handleBotMessage — it creates the session
         deps.botSessionManager.handleBotMessage({
           botName: draft.botName,
@@ -249,6 +258,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
           channelId: draft.channelId,
           responseSink: async () => {},
           registry: deps.registry,
+          mcpServers: draftMcpServers,
         })
           .then(() => {
             const updated = deps.botSessionManager.getSession(resolvedBotName);
@@ -285,13 +295,12 @@ export function registerWsMethods(deps: WsMethodDeps): void {
       const sessionProject = deps.projects.get(session.project.toLowerCase());
       const sessionCwd = sessionProject?.paths[0];
 
-      let mcpServer;
-      if (deps.mcpServers && sessionRole) {
-        const isFullAccess = sessionRole.permissions?.includes('agent-draft') ?? false;
-        mcpServer = isFullAccess
-          ? deps.mcpServers.createFull(session.taskSlug, session.taskDir, session.project, session.dispatchId)
-          : deps.mcpServers.readonly;
-      }
+      const mcpServersForRole = deps.mcpServers && sessionRole
+        ? selectMcpServersForRole(sessionRole, deps.mcpServers, {
+            taskSlug: session.taskSlug, taskDir: session.taskDir,
+            parentProject: session.project, parentDispatchId: session.dispatchId,
+          })
+        : undefined;
 
       // Fire-and-forget resume
       deps.botSessionManager.handleBotMessage({
@@ -305,7 +314,7 @@ export function registerWsMethods(deps: WsMethodDeps): void {
         channelId: session.channelId,
         responseSink: async () => {}, // TUI uses registry broadcast
         registry: deps.registry,
-        mcpServer,
+        mcpServers: mcpServersForRole,
         onCompaction: (event) => {
           deps.wsAdapter.broadcastNotification('context_compacted', {
             sessionId: session.sessionId, botName: resolvedBotName, ...event,

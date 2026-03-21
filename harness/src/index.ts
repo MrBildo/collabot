@@ -5,8 +5,9 @@ import { loadRoles, ModelHintEnum, PermissionsEnum } from './roles.js';
 import { loadProjects, ensureVirtualProject, getProjectTasksDir } from './project.js';
 import { loadBots } from './bots.js';
 import { AgentPool } from './pool.js';
-import { draftAgent, handleTask, type McpServers } from './core.js';
-import { createHarnessServer, DispatchTracker } from './mcp.js';
+import { draftAgent, handleTask } from './core.js';
+import type { McpServers } from './mcp.js';
+import { createHarnessServer, DispatchTracker, selectMcpServersForRole } from './mcp.js';
 import { CommunicationRegistry } from './registry.js';
 import { CliAdapter } from './adapters/cli.js';
 import { WsAdapter } from './adapters/ws.js';
@@ -132,20 +133,23 @@ registry.register(new CliAdapter());
 
 // Initialize MCP servers — shared tracker and draftFn for lifecycle tools
 const tracker = new DispatchTracker();
+// NOTE: draftFn closes over `mcpServers` (defined below, line ~158) and `mcpServers.cron` (set at ~555).
+// Safe because closures capture the variable binding, not the value — draftFn is only called at runtime
+// after startup completes and all variables are initialized.
 const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
-  // Resolve role for permission-based MCP injection
+  // Resolve MCP servers for the child agent based on role permissions
   const role = roles.get(roleName);
-  const isFullAccess = role?.permissions?.includes('agent-draft') ?? false;
-  const mcpServer = isFullAccess && opts?.taskSlug && opts?.taskDir
-    ? createHarnessServer({
-        pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
-        tracker, draftFn,
-        parentTaskSlug: opts.taskSlug, parentTaskDir: opts.taskDir,
-        parentDispatchId: opts.parentDispatchId,
-      })
-    : undefined;
+  let childMcpServers: Record<string, import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance> | undefined;
+  if (role && opts?.taskSlug && opts?.taskDir) {
+    childMcpServers = selectMcpServersForRole(role, mcpServers, {
+      taskSlug: opts.taskSlug, taskDir: opts.taskDir,
+      parentProject: opts.project,
+      parentDispatchId: opts.parentDispatchId,
+    });
+  }
 
   return draftAgent(roleName, taskContext, registry, roles, config, {
+    project: opts?.project,
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
     cwd: opts?.cwd,
@@ -153,8 +157,7 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     pool,
     projects,
     projectsDir: PROJECTS_DIR,
-    mcpServer,
-    cronMcpServer: isFullAccess ? mcpServers.cron : undefined,
+    mcpServers: childMcpServers,
   });
 };
 const mcpServers: McpServers = {
@@ -363,6 +366,14 @@ botQueue.setHandler(async (msg) => {
     }
   };
 
+  // Resolve MCP servers for this role
+  const sessionRole = roles.get(placement.roleName);
+  const mcpServersForRole = sessionRole
+    ? selectMcpServersForRole(sessionRole, mcpServers, {
+        taskSlug: task.slug, taskDir: task.taskDir, parentProject: placement.project,
+      })
+    : undefined;
+
   try {
     await botSessionManager.handleBotMessage({
       botName: msg.botName,
@@ -373,6 +384,7 @@ botQueue.setHandler(async (msg) => {
       taskDir: task.taskDir,
       cwd,
       responseSink,
+      mcpServers: mcpServersForRole,
       disallowedTools: placement.disallowedTools,
       projectSkills: placement.skills,
     });
@@ -544,7 +556,7 @@ if (cronScheduler.list().length > 0) {
 
 // ── 15b. Cron MCP server ─────────────────────────────────────────
 
-const cronMcpServer = createCronMcpServer({ scheduler: cronScheduler, config });
+const cronMcpServer = createCronMcpServer({ scheduler: cronScheduler, config, roles, projects, bots });
 mcpServers.cron = cronMcpServer;
 
 // ── 16. Register inbound handler ────────────────────────────────

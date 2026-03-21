@@ -94,7 +94,7 @@ export class BotSessionManager {
     channelId?: string;
     responseSink: (text: string) => Promise<void>;
     registry?: CommunicationRegistry;
-    mcpServer?: McpSdkServerConfigWithInstance;
+    mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
     onCompaction?: (event: { trigger: string; preTokens: number }) => void;
     disallowedTools?: string[];
     projectSkills?: VirtualProjectSkill[];
@@ -251,7 +251,7 @@ export class BotSessionManager {
           abortController: controller,
           pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE_PATH,
           env: buildChildEnv(this.config.mcp.streamTimeout),
-          ...(opts.mcpServer ? { mcpServers: { harness: opts.mcpServer } } : {}),
+          ...(opts.mcpServers ? { mcpServers: opts.mcpServers } : {}),
           ...(disallowedTools && disallowedTools.length > 0 ? { disallowedTools } : {}),
           ...sessionOpts,
           stderr: (data: string) => {
