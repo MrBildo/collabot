@@ -31,6 +31,8 @@ type ResolvedSchedule =
   | { type: 'interval'; ms: number }
   | { type: 'once'; at: Date };
 
+const MIN_INTERVAL_MS = 60_000; // 1 minute minimum
+
 function resolveSchedule(schedule: string): ResolvedSchedule {
   // "every Xm" / "every Xh" / "every Xd"
   const intervalMatch = schedule.match(/^every\s+(\d+)(m|h|d)$/i);
@@ -40,6 +42,9 @@ function resolveSchedule(schedule: string): ResolvedSchedule {
     const ms = unit === 'm' ? val * 60000
       : unit === 'h' ? val * 3600000
       : val * 86400000;
+    if (ms < MIN_INTERVAL_MS) {
+      throw new Error(`Interval too short: ${schedule} (minimum 1 minute)`);
+    }
     return { type: 'interval', ms };
   }
 
@@ -306,13 +311,12 @@ export class CronScheduler {
       // Fire!
       this.runJob(name);
 
-      // Calculate next fire time
-      const next = getNextFireTime(job.schedule);
-      job.state.nextRunAt = next?.toISOString() ?? null;
-
-      // One-shot jobs disable after firing
+      // Calculate next fire time (one-shot jobs get null — disable happens in runJob completion)
       if (job.schedule.type === 'once') {
-        job.state.status = 'disabled';
+        job.state.nextRunAt = null;
+      } else {
+        const next = getNextFireTime(job.schedule);
+        job.state.nextRunAt = next?.toISOString() ?? null;
       }
     }
   }
@@ -329,9 +333,7 @@ export class CronScheduler {
         job.state.runCount++;
         job.state.lastError = null;
         job.state.consecutiveFailures = 0;
-        if (job.state.status === 'running') {
-          job.state.status = 'idle';
-        }
+        job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
         this.persistState();
       })
       .catch((err: unknown) => {
@@ -339,9 +341,7 @@ export class CronScheduler {
         job.state.runCount++;
         job.state.lastError = message;
         job.state.consecutiveFailures++;
-        if (job.state.status === 'running') {
-          job.state.status = 'idle';
-        }
+        job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
         logger.error({ jobName: name, error: message }, 'cron job error');
         this.persistState();
       });

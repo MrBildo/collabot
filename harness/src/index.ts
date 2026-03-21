@@ -133,6 +133,18 @@ registry.register(new CliAdapter());
 // Initialize MCP servers — shared tracker and draftFn for lifecycle tools
 const tracker = new DispatchTracker();
 const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
+  // Resolve role for permission-based MCP injection
+  const role = roles.get(roleName);
+  const isFullAccess = role?.permissions?.includes('agent-draft') ?? false;
+  const mcpServer = isFullAccess && opts?.taskSlug && opts?.taskDir
+    ? createHarnessServer({
+        pool, projects, projectsDir: PROJECTS_DIR, roles, tools: 'full',
+        tracker, draftFn,
+        parentTaskSlug: opts.taskSlug, parentTaskDir: opts.taskDir,
+        parentDispatchId: opts.parentDispatchId,
+      })
+    : undefined;
+
   return draftAgent(roleName, taskContext, registry, roles, config, {
     taskSlug: opts?.taskSlug,
     taskDir: opts?.taskDir,
@@ -141,6 +153,8 @@ const draftFn: DraftAgentFn = async (roleName, taskContext, opts) => {
     pool,
     projects,
     projectsDir: PROJECTS_DIR,
+    mcpServer,
+    cronMcpServer: isFullAccess ? mcpServers.cron : undefined,
   });
 };
 const mcpServers: McpServers = {
@@ -471,7 +485,12 @@ const cronDispatchCtx: CollabDispatchContext = {
 // Load v2 cron jobs from job files
 const cronJobs = loadCronJobs(config);
 for (const job of cronJobs) {
-  const handler = buildJobHandler(job, { ctx: cronDispatchCtx, runsDir: cronRunsDir, projectsDir: PROJECTS_DIR });
+  const handler = buildJobHandler(job, {
+    ctx: cronDispatchCtx,
+    runsDir: cronRunsDir,
+    projectsDir: PROJECTS_DIR,
+    getLastRunAt: (name) => cronScheduler.getState(name)?.lastRunAt ?? null,
+  });
   cronScheduler.registerDefinition(job, handler);
 }
 

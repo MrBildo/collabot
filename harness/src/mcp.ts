@@ -94,6 +94,8 @@ export function createHarnessServer(options: HarnessServerOptions): McpSdkServer
         const agents = pool.list().map((a) => ({
           id: a.id,
           role: a.role,
+          botId: a.botId ?? null,
+          botName: a.botName ?? null,
           taskSlug: a.taskSlug ?? null,
           startedAt: a.startedAt.toISOString(),
         }));

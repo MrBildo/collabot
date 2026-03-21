@@ -96,7 +96,7 @@ export type WsMethodDeps = {
     registry: CommunicationRegistry,
     roles: Map<string, RoleDefinition>,
     config: Config,
-    pool: AgentPool | undefined,
+    pool: AgentPool,
     mcpServers: McpServers | undefined,
     projects: Map<string, Project>,
     projectsDir: string,
@@ -648,6 +648,8 @@ export function registerWsMethods(deps: WsMethodDeps): void {
     const agents = deps.pool.list().map(a => ({
       id: a.id,
       role: a.role,
+      botId: a.botId ?? null,
+      botName: a.botName ?? null,
       taskSlug: a.taskSlug,
       startedAt: a.startedAt.toISOString(),
     }));

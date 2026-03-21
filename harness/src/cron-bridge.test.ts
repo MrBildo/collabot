@@ -79,3 +79,51 @@ describe('Run log persistence', () => {
     assert.equal(entries.length, 2, 'should skip malformed lines');
   });
 });
+
+describe('CronBridgeOptions.getLastRunAt', () => {
+  test('buildJobHandler accepts getLastRunAt callback', async () => {
+    // Verify the bridge options type accepts the callback.
+    // The actual invocation happens inside the handler closure (which calls collabDispatch),
+    // so we verify the contract at the type/wiring level.
+    const { buildJobHandler } = await import('./cron-bridge.js');
+    const { AgentPool } = await import('./pool.js');
+
+    let getLastRunAtCalled = false;
+    const options = {
+      ctx: {
+        config: {} as any,
+        roles: new Map(),
+        bots: new Map(),
+        projects: new Map(),
+        projectsDir: '/tmp',
+        pool: new AgentPool(),
+      },
+      runsDir: '/tmp/runs',
+      projectsDir: '/tmp/.projects',
+      getLastRunAt: (name: string) => {
+        getLastRunAtCalled = true;
+        return '2026-03-18T10:00:00.000Z';
+      },
+    };
+
+    // Building the handler should succeed (the callback is stored, not called yet)
+    const handler = buildJobHandler({
+      type: 'agent',
+      id: '01TEST00000000000000000000',
+      name: 'test',
+      slug: 'test',
+      schedule: 'every 60m',
+      enabled: true,
+      singleton: true,
+      role: 'researcher',
+      project: 'lobby',
+      prompt: 'Test.',
+      jobDir: '/tmp/test',
+    }, options);
+
+    assert.equal(typeof handler, 'function', 'buildJobHandler should return a function');
+    // getLastRunAt is only called when the handler fires (which requires collabDispatch),
+    // so we just verify the callback was accepted without error.
+    assert.equal(getLastRunAtCalled, false, 'callback should not be called at build time');
+  });
+});

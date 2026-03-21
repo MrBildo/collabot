@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { query, AbortError } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKResultMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ulid } from 'ulid';
 import { logger } from './logger.js';
 import { resolveModelId, type Config } from './config.js';
@@ -29,6 +29,22 @@ import type {
 import type { AgentPool } from './pool.js';
 
 const AUTH_FAILURE_MSG = 'Authentication failed — Claude Code CLI is not logged in. Run `claude` in a terminal to authenticate. See https://code.claude.com/docs/en/authentication';
+
+// SDK system messages include fields the SDK types don't fully describe.
+// This helper extracts them with a single cast rather than scattering `as any` everywhere.
+type SdkSystemExtras = {
+  subtype?: string;
+  status?: string;
+  files?: unknown;
+  hook_name?: string;
+  output?: string;
+  retry_after_ms?: number;
+  compact_metadata?: { trigger?: string; pre_tokens?: number };
+};
+
+function getSystemExtras(msg: Record<string, unknown>): SdkSystemExtras {
+  return msg as SdkSystemExtras;
+}
 
 // JSON Schema for structured agent output — mirrors AgentResultSchema
 const AGENT_RESULT_JSON_SCHEMA: Record<string, unknown> = {
@@ -81,8 +97,8 @@ export function draftBot(
     if (!bot) {
       return { status: 'unavailable', reason: `Bot "${botName}" not found` };
     }
-    // Check if bot is already in use (has an active agent in pool)
-    const isActive = pool.list().some(a => a.id.startsWith(`bot-${botName}-`));
+    // Check if bot is already in use (match by stable bot ID)
+    const isActive = pool.list().some(a => a.botId === bot.id);
     if (isActive) {
       return { status: 'unavailable', reason: `Bot "${botName}" is busy` };
     }
@@ -91,7 +107,7 @@ export function draftBot(
 
   // No bot specified — pick first available
   for (const bot of bots.values()) {
-    const isActive = pool.list().some(a => a.id.startsWith(`bot-${bot.name}-`));
+    const isActive = pool.list().some(a => a.botId === bot.id);
     if (!isActive) {
       return { status: 'available', bot };
     }
@@ -520,34 +536,35 @@ export async function collabDispatch(
           }
         }
       } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+        const extras = getSystemExtras(msg as Record<string, unknown>);
         emitEvent('session:compaction', {
-          trigger: (msg as any).compact_metadata?.trigger ?? 'auto',
-          preTokens: (msg as any).compact_metadata?.pre_tokens ?? 0,
+          trigger: extras.compact_metadata?.trigger ?? 'auto',
+          preTokens: extras.compact_metadata?.pre_tokens ?? 0,
         });
         options.onCompaction?.({
-          trigger: (msg as any).compact_metadata?.trigger ?? 'auto',
-          preTokens: (msg as any).compact_metadata?.pre_tokens ?? 0,
+          trigger: extras.compact_metadata?.trigger ?? 'auto',
+          preTokens: extras.compact_metadata?.pre_tokens ?? 0,
         });
       } else if (msg.type === 'system') {
-        const subtype = (msg as any).subtype as string | undefined;
-        switch (subtype) {
+        const extras = getSystemExtras(msg as Record<string, unknown>);
+        switch (extras.subtype) {
           case 'status':
-            emitEvent('session:status', { status: (msg as any).status });
+            emitEvent('session:status', { status: extras.status });
             break;
           case 'files_persisted':
-            emitEvent('system:files_persisted', { files: (msg as any).files });
+            emitEvent('system:files_persisted', { files: extras.files });
             break;
           case 'hook_started':
-            emitEvent('system:hook_started', { hookName: (msg as any).hook_name });
+            emitEvent('system:hook_started', { hookName: extras.hook_name });
             break;
           case 'hook_progress':
-            emitEvent('system:hook_progress', { output: typeof (msg as any).output === 'string' ? ((msg as any).output as string).slice(0, 500) : undefined });
+            emitEvent('system:hook_progress', { output: typeof extras.output === 'string' ? extras.output.slice(0, 500) : undefined });
             break;
           case 'hook_response':
             emitEvent('system:hook_response', {});
             break;
           case 'rate_limit':
-            emitEvent('session:rate_limit', { retryAfterMs: (msg as any).retry_after_ms });
+            emitEvent('session:rate_limit', { retryAfterMs: extras.retry_after_ms });
             break;
         }
       } else if (msg.type === 'result') {

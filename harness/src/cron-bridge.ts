@@ -49,6 +49,7 @@ export type CronBridgeOptions = {
   ctx: CollabDispatchContext;
   runsDir: string;           // COLLABOT_HOME/cron/runs/
   projectsDir: string;       // COLLABOT_HOME/.projects/
+  getLastRunAt?: (jobName: string) => string | null;
 };
 
 /**
@@ -122,7 +123,7 @@ function buildAgentJobHandler(
 
 function buildHandlerJobHandler(
   def: HandlerJobDefinition,
-  { ctx, runsDir, projectsDir }: CronBridgeOptions,
+  { ctx, runsDir, projectsDir, getLastRunAt }: CronBridgeOptions,
 ): () => Promise<void> {
   return async () => {
     const startTime = Date.now();
@@ -149,17 +150,21 @@ function buildHandlerJobHandler(
             env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
           }
           return env;
-        } catch {
+        } catch { /* .agent.env read is best-effort */
           return {};
         }
       },
     };
 
+    // Resolve lastRunAt from scheduler state
+    const lastRunAtStr = getLastRunAt?.(def.name) ?? null;
+    const lastRunAt = lastRunAtStr ? new Date(lastRunAtStr) : null;
+
     // Build CronHandlerContext
     const handlerCtx: CronHandlerContext = {
       config: configResolver,
       job: def,
-      lastRunAt: null, // Populated by scheduler state
+      lastRunAt,
       async dispatch(opts) {
         const result = await collabDispatch({
           project: opts.project,
@@ -169,6 +174,7 @@ function buildHandlerJobHandler(
           tokenBudget: def.tokenBudget,
           maxTurns: def.maxTurns,
           maxBudgetUsd: def.maxBudgetUsd,
+          abortController,
         }, ctx);
         dispatchResults.push(result);
         return result;

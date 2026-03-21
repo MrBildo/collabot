@@ -106,7 +106,7 @@ export async function handleTask(
   registry: CommunicationRegistry,
   roles: Map<string, RoleDefinition>,
   config: Config,
-  pool: AgentPool | undefined,
+  pool: AgentPool,
   mcpServers: McpServers | undefined,
   projects: Map<string, Project>,
   projectsDir: string,
@@ -208,15 +208,13 @@ export async function handleTask(
   // Pool management
   const agentController = new AbortController();
   const agentId = `${roleName}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  if (pool) {
-    pool.register({
-      id: agentId,
-      role: roleName,
-      taskSlug,
-      startedAt: new Date(),
-      controller: agentController,
-    });
-  }
+  pool.register({
+    id: agentId,
+    role: roleName,
+    taskSlug,
+    startedAt: new Date(),
+    controller: agentController,
+  });
 
   // Wire callbacks for adapter broadcasting
   const onLoopWarning = (pattern: string, count: number) => {
@@ -243,7 +241,7 @@ export async function handleTask(
       bots: new Map(), // handleTask doesn't use bots — that's BSM territory
       projects,
       projectsDir,
-      pool: pool!,
+      pool,
     };
 
     const result = await collabDispatch({
@@ -271,9 +269,7 @@ export async function handleTask(
 
     return result;
   } finally {
-    if (pool) {
-      pool.release(agentId);
-    }
+    pool.release(agentId);
   }
 }
 
@@ -296,14 +292,15 @@ export async function draftAgent(
     channelId?: string;
     cwd?: string;
     parentDispatchId?: string;
-    pool?: AgentPool;
+    pool: AgentPool;
     mcpServer?: McpSdkServerConfigWithInstance;
+    cronMcpServer?: McpSdkServerConfigWithInstance;
     projects?: Map<string, Project>;
     projectsDir?: string;
   },
 ): Promise<CollabDispatchResult> {
   const taskSlug = options?.taskSlug ?? `task-${Date.now()}`;
-  const pool = options?.pool;
+  const pool = options!.pool;
 
   if (!options?.project && !options?.cwd) {
     throw new Error(`No project or cwd provided for draftAgent (role: ${roleName}).`);
@@ -312,15 +309,13 @@ export async function draftAgent(
   // Pool management
   const agentController = new AbortController();
   const agentId = `${roleName}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  if (pool) {
-    pool.register({
-      id: agentId,
-      role: roleName,
-      taskSlug,
-      startedAt: new Date(),
-      controller: agentController,
-    });
-  }
+  pool.register({
+    id: agentId,
+    role: roleName,
+    taskSlug,
+    startedAt: new Date(),
+    controller: agentController,
+  });
 
   // Wire callbacks for registry broadcasting
   const onLoopWarning = options?.channelId
@@ -347,7 +342,7 @@ export async function draftAgent(
       bots: new Map(),
       projects: options?.projects ?? new Map(),
       projectsDir: options?.projectsDir ?? '',
-      pool: pool!,
+      pool,
     };
 
     return await collabDispatch({
@@ -360,12 +355,15 @@ export async function draftAgent(
       abortController: agentController,
       onLoopWarning,
       onEvent,
-      ...(options?.mcpServer ? { mcpServers: { harness: options.mcpServer } } : {}),
+      ...(options?.mcpServer ? {
+        mcpServers: {
+          harness: options.mcpServer,
+          ...(options.cronMcpServer ? { cron: options.cronMcpServer } : {}),
+        },
+      } : {}),
     }, ctx);
   } finally {
-    if (pool) {
-      pool.release(agentId);
-    }
+    pool.release(agentId);
   }
 }
 

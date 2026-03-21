@@ -7,6 +7,7 @@ import type { Project } from './project.js';
 import { JsonFileDispatchStore } from './dispatch-store.js';
 import { CommunicationRegistry } from './registry.js';
 import type { CommunicationProvider } from './comms.js';
+import { AgentPool } from './pool.js';
 
 // --- Test helpers ---
 function makeTempTaskDir(slug: string, manifest: Record<string, unknown>): string {
@@ -175,7 +176,7 @@ test('follow-up dispatch with prior results — prompt includes task history', a
     metadata: { taskSlug: 'test-task' },
   };
 
-  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
+  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, new AgentPool(), undefined, makeProjects(), '/tmp');
 
   // collabDispatch receives the raw prompt from handleTask.
   // Context reconstruction now happens inside collabDispatch (mocked),
@@ -207,7 +208,7 @@ test('handleTask passes project and role correctly', async () => {
     metadata: { taskSlug: 'test-task-new' },
   };
 
-  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, undefined, undefined, makeProjects(), '/tmp');
+  await handleTask(message, makeRegistry(), makeRoles(), makeConfig() as any, new AgentPool(), undefined, makeProjects(), '/tmp');
 
   const prompt = getCaptured();
   assert.equal(prompt, 'Do something new', 'prompt should be the raw message content');

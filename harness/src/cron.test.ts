@@ -288,4 +288,86 @@ describe('CronScheduler v2', () => {
     assert.equal(job.lastError, null);
     scheduler.stopAll();
   });
+
+  test('rejects zero interval — every 0m', () => {
+    const scheduler = new CronScheduler();
+    assert.throws(
+      () => scheduler.registerDefinition(makeAgentDef({ schedule: 'every 0m' }), async () => {}),
+      /Interval too short/,
+    );
+  });
+
+  test('rejects zero interval — every 0h', () => {
+    const scheduler = new CronScheduler();
+    assert.throws(
+      () => scheduler.registerDefinition(makeAgentDef({ schedule: 'every 0h' }), async () => {}),
+      /Interval too short/,
+    );
+  });
+
+  test('rejects zero interval — every 0d', () => {
+    const scheduler = new CronScheduler();
+    assert.throws(
+      () => scheduler.registerDefinition(makeAgentDef({ schedule: 'every 0d' }), async () => {}),
+      /Interval too short/,
+    );
+  });
+
+  test('one-shot job transitions to disabled after handler completes', async () => {
+    const scheduler = new CronScheduler();
+    let handlerRan = false;
+
+    // Schedule 1 second in the future
+    const futureDate = new Date(Date.now() + 1000);
+    const def = makeAgentDef({
+      name: 'one-shot',
+      slug: 'one-shot',
+      schedule: `at ${futureDate.toISOString()}`,
+      singleton: true,
+    });
+
+    scheduler.registerDefinition(def, async () => {
+      handlerRan = true;
+      // Simulate async work
+      await new Promise(r => setTimeout(r, 50));
+    });
+
+    scheduler.startAll();
+
+    // Before fire time — should be idle
+    assert.equal(scheduler.getState('one-shot')?.status, 'idle');
+
+    // Wait for fire time + handler completion
+    await new Promise(r => setTimeout(r, 1200));
+
+    assert.equal(handlerRan, true, 'handler should have run');
+    assert.equal(scheduler.getState('one-shot')?.status, 'disabled', 'status should be disabled after completion');
+    assert.equal(scheduler.getState('one-shot')?.nextRunAt, null, 'nextRunAt should be null for one-shot');
+    scheduler.stopAll();
+  });
+
+  test('one-shot job transitions to disabled even after handler error', async () => {
+    const scheduler = new CronScheduler();
+
+    const futureDate = new Date(Date.now() + 1000);
+    const def = makeAgentDef({
+      name: 'one-shot-err',
+      slug: 'one-shot-err',
+      schedule: `at ${futureDate.toISOString()}`,
+      singleton: true,
+    });
+
+    scheduler.registerDefinition(def, async () => {
+      throw new Error('deliberate one-shot error');
+    });
+
+    scheduler.startAll();
+    await new Promise(r => setTimeout(r, 1200));
+
+    const state = scheduler.getState('one-shot-err');
+    assert.equal(state?.status, 'disabled', 'one-shot should disable even on error');
+    assert.equal(state?.lastError, 'deliberate one-shot error');
+    assert.equal(state?.consecutiveFailures, 1);
+    scheduler.stopAll();
+  });
 });
