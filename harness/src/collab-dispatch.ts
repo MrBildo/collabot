@@ -9,7 +9,7 @@ import { buildChildEnv, extractUsageMetrics } from './dispatch.js';
 import { extractToolTarget } from './util.js';
 import { detectErrorLoop, detectNonRetryable } from './monitor.js';
 import { getDispatchStore, makeCapturedEvent } from './dispatch-store.js';
-import { getProject, getProjectTasksDir, projectHasPaths } from './project.js';
+import { getProject, getProjectTasksDir, projectHasPaths, isVirtualProject } from './project.js';
 import type { Project } from './project.js';
 import { createTask, getTask } from './task.js';
 import { buildTaskContext } from './context.js';
@@ -175,6 +175,13 @@ export async function collabDispatch(
 
   // ── 1. Resolve project ─────────────────────────────────────
   const project = getProject(ctx.projects, options.project);
+  if (isVirtualProject(project)) {
+    return crashResult(
+      `Cannot dispatch to virtual project "${options.project}" — virtual projects are for bot sessions only`,
+      startTime,
+      options,
+    );
+  }
   if (!projectHasPaths(project)) {
     return crashResult(
       `Project "${options.project}" has no paths configured`,
@@ -731,6 +738,7 @@ function crashResult(
   logger.error({ error }, 'collabDispatch: entity resolution failed');
   return {
     status: 'crashed',
+    result: error,
     taskSlug: options.taskSlug ?? 'unknown',
     dispatchId: 'none',
     cost: buildCostFromResult(undefined, null),

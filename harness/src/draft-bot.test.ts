@@ -1,8 +1,10 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { draftBot } from './collab-dispatch.js';
+import { draftBot, collabDispatch, type CollabDispatchContext } from './collab-dispatch.js';
 import { AgentPool } from './pool.js';
-import type { BotDefinition } from './types.js';
+import type { BotDefinition, RoleDefinition } from './types.js';
+import type { Project } from './project.js';
+import type { Config } from './config.js';
 
 function makeBot(name: string, id = `01TESTBOT${name.toUpperCase().padEnd(16, '0')}`): BotDefinition {
   return {
@@ -118,5 +120,83 @@ describe('draftBot — botId matching', () => {
     if (result.status === 'unavailable') {
       assert.match(result.reason, /not found/);
     }
+  });
+});
+
+// ── Virtual project guard ───────────────────────────────────
+
+describe('collabDispatch — virtual project guard', () => {
+  function makeCtx(projects: Map<string, Project>): CollabDispatchContext {
+    const roles = new Map<string, RoleDefinition>();
+    roles.set('researcher', {
+      id: '01TESTROLE00000000000000000',
+      version: '1.0.0',
+      name: 'researcher',
+      description: 'Test role',
+      createdOn: '2026-01-01T00:00:00Z',
+      createdBy: 'test',
+      prompt: 'You are a researcher.',
+      modelHint: 'sonnet-latest',
+    } as RoleDefinition);
+
+    return {
+      config: {
+        models: { default: 'claude-sonnet-4-6', aliases: {} },
+        defaults: { stallTimeoutSeconds: 300, dispatchTimeoutMs: 0, tokenBudget: 0, maxBudgetUsd: 0 },
+        agent: { maxTurns: 0, maxBudgetUsd: 0 },
+        logging: { level: 'debug' },
+        pool: { maxConcurrent: 0 },
+        mcp: { streamTimeout: 600000 },
+        cron: { enabled: false, jobsDirectory: 'cron' },
+      } as Config,
+      roles,
+      bots: new Map(),
+      projects,
+      projectsDir: '/tmp',
+      pool: new AgentPool(),
+    };
+  }
+
+  test('rejects dispatch to virtual project', async () => {
+    const projects = new Map<string, Project>();
+    projects.set('lobby', {
+      name: 'lobby',
+      description: 'Virtual project',
+      paths: ['/tmp/instance'],
+      roles: ['researcher'],
+      virtual: true,
+    });
+
+    const result = await collabDispatch({
+      project: 'lobby',
+      role: 'researcher',
+      prompt: 'This should be rejected',
+    }, makeCtx(projects));
+
+    assert.equal(result.status, 'crashed');
+    assert.match(result.result ?? '', /virtual project/i);
+    assert.match(result.result ?? '', /bot sessions only/i);
+  });
+
+  test('allows dispatch to non-virtual project', async () => {
+    const projects = new Map<string, Project>();
+    projects.set('real-project', {
+      name: 'real-project',
+      description: 'A real project',
+      paths: ['/tmp/real-project'],
+      roles: ['researcher'],
+      virtual: false,
+    });
+
+    // This will crash later (no SDK available) but it should NOT crash with "virtual project"
+    const result = await collabDispatch({
+      project: 'real-project',
+      role: 'researcher',
+      prompt: 'This should pass the virtual check',
+    }, makeCtx(projects));
+
+    // It won't be 'completed' (no SDK), but it should NOT say "virtual project"
+    const errorText = result.result ?? '';
+    assert.equal(errorText.includes('virtual project'), false, 'should not reject non-virtual project');
   });
 });
