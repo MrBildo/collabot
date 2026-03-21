@@ -1,12 +1,22 @@
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { parseJobFolder } from './cron-loader.js';
 
+// Track temp dirs for cleanup
+const tempDirs: string[] = [];
+
+after(() => {
+  for (const dir of tempDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function makeTempJobDir(slug: string, files: Record<string, string>): string {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-loader-test-'));
+  tempDirs.push(base);
   const jobDir = path.join(base, slug);
   fs.mkdirSync(jobDir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
@@ -203,6 +213,87 @@ describe('parseJobFolder', () => {
 
     const job = parseJobFolder(jobDir, 'disabled');
     assert.equal(job.enabled, false);
+  });
+
+  test('parses job with timezone field', () => {
+    const jobDir = makeTempJobDir('tz-job', {
+      'job.md': [
+        '---',
+        'name: tz-job',
+        'schedule: "0 9 * * MON-FRI"',
+        'role: researcher',
+        'project: lobby',
+        'timezone: America/New_York',
+        '---',
+        '',
+        'Run in Eastern time.',
+      ].join('\n'),
+    });
+
+    const job = parseJobFolder(jobDir, 'tz-job');
+
+    assert.equal(job.timezone, 'America/New_York');
+  });
+
+  test('parses job with maxConsecutiveFailures field', () => {
+    const jobDir = makeTempJobDir('mcf-job', {
+      'job.md': [
+        '---',
+        'name: mcf-job',
+        'schedule: "0 9 * * MON-FRI"',
+        'role: researcher',
+        'project: lobby',
+        'maxConsecutiveFailures: 3',
+        '---',
+        '',
+        'Custom failure threshold.',
+      ].join('\n'),
+    });
+
+    const job = parseJobFolder(jobDir, 'mcf-job');
+
+    assert.equal(job.maxConsecutiveFailures, 3);
+  });
+
+  test('timezone and maxConsecutiveFailures default to undefined', () => {
+    const jobDir = makeTempJobDir('no-extras', {
+      'job.md': [
+        '---',
+        'name: no-extras',
+        'schedule: "0 * * * *"',
+        'role: researcher',
+        'project: lobby',
+        '---',
+        '',
+        'No extra fields.',
+      ].join('\n'),
+    });
+
+    const job = parseJobFolder(jobDir, 'no-extras');
+
+    assert.equal(job.timezone, undefined);
+    assert.equal(job.maxConsecutiveFailures, undefined);
+  });
+
+  test('parses handler job with timezone and maxConsecutiveFailures', () => {
+    const jobDir = makeTempJobDir('handler-tz-mcf', {
+      'job.md': [
+        '---',
+        'name: handler-tz-mcf',
+        'schedule: "0 9 * * MON-FRI"',
+        'handler: true',
+        'timezone: Europe/London',
+        'maxConsecutiveFailures: 2',
+        '---',
+      ].join('\n'),
+      'handler.ts': 'export default async function(ctx: any) { /* noop */ }',
+    });
+
+    const job = parseJobFolder(jobDir, 'handler-tz-mcf');
+
+    assert.equal(job.type, 'handler');
+    assert.equal(job.timezone, 'Europe/London');
+    assert.equal(job.maxConsecutiveFailures, 2);
   });
 
   test('rejects invalid settings.toml', () => {

@@ -27,13 +27,13 @@ export type CronJobState = {
 // ── Schedule types ──────────────────────────────────────────
 
 type ResolvedSchedule =
-  | { type: 'cron'; expression: string }
+  | { type: 'cron'; expression: string; tz?: string }
   | { type: 'interval'; ms: number }
   | { type: 'once'; at: Date };
 
 const MIN_INTERVAL_MS = 60_000; // 1 minute minimum
 
-function resolveSchedule(schedule: string): ResolvedSchedule {
+function resolveSchedule(schedule: string, timezone?: string): ResolvedSchedule {
   // "every Xm" / "every Xh" / "every Xd"
   const intervalMatch = schedule.match(/^every\s+(\d+)(m|h|d)$/i);
   if (intervalMatch) {
@@ -59,8 +59,9 @@ function resolveSchedule(schedule: string): ResolvedSchedule {
 
   // Standard 5-field cron expression
   try {
-    CronExpressionParser.parse(schedule);
-    return { type: 'cron', expression: schedule };
+    const opts = timezone ? { tz: timezone } : undefined;
+    CronExpressionParser.parse(schedule, opts);
+    return { type: 'cron', expression: schedule, tz: timezone };
   } catch {
     throw new Error(`Invalid cron schedule: "${schedule}"`);
   }
@@ -68,7 +69,8 @@ function resolveSchedule(schedule: string): ResolvedSchedule {
 
 function getNextFireTime(schedule: ResolvedSchedule): Date | null {
   if (schedule.type === 'cron') {
-    const interval = CronExpressionParser.parse(schedule.expression);
+    const opts = schedule.tz ? { tz: schedule.tz } : undefined;
+    const interval = CronExpressionParser.parse(schedule.expression, opts);
     return interval.next().toDate();
   }
   if (schedule.type === 'interval') {
@@ -104,9 +106,11 @@ export class CronScheduler {
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private legacyTimers = new Map<string, ReturnType<typeof setInterval>>();
   private statePath: string | undefined;
+  private defaultMaxConsecutiveFailures: number;
 
-  constructor(statePath?: string) {
+  constructor(statePath?: string, defaultMaxConsecutiveFailures = 5) {
     this.statePath = statePath;
+    this.defaultMaxConsecutiveFailures = defaultMaxConsecutiveFailures;
   }
 
   /**
@@ -147,7 +151,7 @@ export class CronScheduler {
       throw new Error(`Cron job "${def.name}" already registered`);
     }
 
-    const schedule = resolveSchedule(def.schedule);
+    const schedule = resolveSchedule(def.schedule, def.timezone);
 
     this.jobs.set(def.name, {
       definition: def,
@@ -241,8 +245,9 @@ export class CronScheduler {
   resume(name: string): void {
     const job = this.jobs.get(name);
     if (!job) throw new Error(`Job "${name}" not found`);
-    if (job.state.status === 'paused') {
+    if (job.state.status === 'paused' || job.state.status === 'disabled') {
       job.state.status = 'idle';
+      job.state.consecutiveFailures = 0; // reset on manual resume
       const next = getNextFireTime(job.schedule);
       job.state.nextRunAt = next?.toISOString() ?? null;
       this.persistState();
@@ -285,12 +290,48 @@ export class CronScheduler {
         job.state.runCount = saved.runCount;
         job.state.lastError = saved.lastError;
         job.state.consecutiveFailures = saved.consecutiveFailures;
+
+        // Restore status for durable states only — 'running' is transient and can't survive restart
+        if (saved.status === 'disabled' || saved.status === 'paused') {
+          job.state.status = saved.status;
+        }
       }
       logger.info({ jobCount: Object.keys(raw).length }, 'cron state hydrated');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn({ error: msg }, 'failed to hydrate cron state');
     }
+  }
+
+  // ── Test helper ──────────────────────────────────────────
+
+  /**
+   * Manually fire one iteration of the tick loop and await all triggered jobs.
+   * Can be called without startAll() — designed for deterministic testing.
+   */
+  async triggerTick(): Promise<void> {
+    const now = new Date();
+    const promises: Promise<void>[] = [];
+
+    for (const [name, job] of this.jobs) {
+      if (job.state.status === 'disabled' || job.state.status === 'paused') continue;
+      if (job.state.status === 'running' && job.singleton) continue;
+
+      if (!job.state.nextRunAt) continue;
+      const nextRun = new Date(job.state.nextRunAt);
+      if (now < nextRun) continue;
+
+      promises.push(this.runJobAsync(name));
+
+      if (job.schedule.type === 'once') {
+        job.state.nextRunAt = null;
+      } else {
+        const next = getNextFireTime(job.schedule);
+        job.state.nextRunAt = next?.toISOString() ?? null;
+      }
+    }
+
+    await Promise.all(promises);
   }
 
   // ── Private ───────────────────────────────────────────────
@@ -322,29 +363,48 @@ export class CronScheduler {
   }
 
   private runJob(name: string): void {
+    this.runJobAsync(name).catch(() => { /* errors handled inside runJobAsync */ });
+  }
+
+  private async runJobAsync(name: string): Promise<void> {
     const job = this.jobs.get(name);
     if (!job) return;
 
     job.state.status = 'running';
     job.state.lastRunAt = new Date().toISOString();
 
-    job.handler()
-      .then(() => {
-        job.state.runCount++;
-        job.state.lastError = null;
-        job.state.consecutiveFailures = 0;
-        job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
-        this.persistState();
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        job.state.runCount++;
-        job.state.lastError = message;
-        job.state.consecutiveFailures++;
-        job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
-        logger.error({ jobName: name, error: message }, 'cron job error');
-        this.persistState();
-      });
+    try {
+      await job.handler();
+      job.state.runCount++;
+      job.state.lastError = null;
+      job.state.consecutiveFailures = 0;
+      job.state.status = job.schedule.type === 'once' ? 'disabled' : 'idle';
+      this.persistState();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      job.state.runCount++;
+      job.state.lastError = message;
+      job.state.consecutiveFailures++;
+      logger.error({ jobName: name, error: message }, 'cron job error');
+
+      if (job.schedule.type === 'once') {
+        job.state.status = 'disabled';
+      } else {
+        const threshold = job.definition?.maxConsecutiveFailures
+          ?? this.defaultMaxConsecutiveFailures;
+        if (job.state.consecutiveFailures >= threshold) {
+          job.state.status = 'disabled';
+          logger.warn(
+            { jobName: name, consecutiveFailures: job.state.consecutiveFailures, threshold },
+            'cron job auto-disabled after exceeding consecutive failure threshold',
+          );
+        } else {
+          job.state.status = 'idle';
+        }
+      }
+
+      this.persistState();
+    }
   }
 
   private persistState(): void {

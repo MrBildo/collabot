@@ -375,6 +375,44 @@ test('resolveModelId resolves default through aliases when default is alias name
   assert.strictEqual(resolveModelId('unknown-hint', config), 'claude-sonnet-4-6');
 });
 
+// ============================================================
+// Cron config tests
+// ============================================================
+
+test('config without cron section uses defaults (enabled: true, jobsDirectory: "cron")', () => {
+  const raw = validConfig();
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.cron.enabled, true);
+  assert.strictEqual(result.data.cron.jobsDirectory, 'cron');
+});
+
+test('config with cron.enabled = false parses correctly', () => {
+  const raw = validConfig({ cron: { enabled: false } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.cron.enabled, false);
+  assert.strictEqual(result.data.cron.jobsDirectory, 'cron');
+});
+
+test('config with custom cron.jobsDirectory parses correctly', () => {
+  const raw = validConfig({ cron: { jobsDirectory: 'scheduled-jobs' } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(result.success);
+  assert.strictEqual(result.data.cron.enabled, true);
+  assert.strictEqual(result.data.cron.jobsDirectory, 'scheduled-jobs');
+});
+
+test('cron section rejects invalid types', () => {
+  const raw = validConfig({ cron: { enabled: 'yes' } });
+  const result = ConfigSchema.safeParse(raw);
+  assert.ok(!result.success);
+
+  const raw2 = validConfig({ cron: { jobsDirectory: 42 } });
+  const result2 = ConfigSchema.safeParse(raw2);
+  assert.ok(!result2.success);
+});
+
 test('slack config without role field is valid (credentials only)', () => {
   const raw = validConfig({
     slack: {

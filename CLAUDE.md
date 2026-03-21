@@ -179,6 +179,45 @@ claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 - Dispatch in parallel when independent, sequentially when dependent
 - **Locked DLL warning:** Build failure from locked DLLs (MSB3027) means compilation succeeded — running API holds the lock.
 
+### Sub-Agent Conventions
+
+When dispatching coding or evaluation sub-agents via the Agent tool:
+
+- **Model:** Always use `model: "opus"` (Opus High)
+- **Skills injection:** Manually inject the TypeScript dev skill (`~/.claude/skills/typescript-dev/SKILL.md`) into every sub-agent prompt. Include the .NET dev skill (`~/.claude/skills/dotnet-dev/SKILL.md`) when the task touches C# code.
+- **Report format:** Every sub-agent must return a standardized report. Include this template in the prompt:
+
+```
+Return your findings in this standardized format:
+
+## Report: <card or task title>
+
+### Summary
+<1-2 sentence verdict>
+
+### Deliverable Status
+| Deliverable | Status | Notes |
+|---|---|---|
+| <item> | Done / Partial / Missing | <detail> |
+
+### Verification
+- Typecheck: <pass/fail/not run>
+- Tests: <pass/fail/not run — include count>
+- Knip: <pass/fail/not run — include findings>
+
+### Files Touched
+- <path> — <created/modified/read> — <what changed>
+
+### Gaps & Issues
+1. <issue description>
+
+### Convention Violations
+<list or "None">
+
+### Recommendation
+<next steps, move to Review, stays in Ready, etc.>
+```
+
 ### Parallel Dispatch (Worktrees)
 
 When multiple agents need the same repo simultaneously, use **git worktrees** for physically separate working directories.

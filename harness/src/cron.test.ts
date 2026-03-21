@@ -265,28 +265,17 @@ describe('CronScheduler v2', () => {
     scheduler.stopAll();
   });
 
-  test('error tracking updates consecutive failures', async () => {
+  test('initial job state has zero consecutive failures and no last error', () => {
     const scheduler = new CronScheduler();
     scheduler.registerDefinition(
       makeAgentDef({ singleton: false }),
       async () => { throw new Error('deliberate'); },
     );
 
-    scheduler.register({
-      name: '_trigger',
-      intervalMs: 60000,
-      handler: async () => {},
-    });
-
-    // Manually trigger the job handler
     const job = scheduler.getState('test-agent-job');
     assert.ok(job);
-
-    // Use startAll and wait for tick to trigger via interval
-    // Instead, just verify state tracking works at the unit level
     assert.equal(job.consecutiveFailures, 0);
     assert.equal(job.lastError, null);
-    scheduler.stopAll();
   });
 
   test('rejects zero interval — every 0m', () => {
@@ -317,43 +306,187 @@ describe('CronScheduler v2', () => {
     const scheduler = new CronScheduler();
     let handlerRan = false;
 
-    // Schedule 1 second in the future
-    const futureDate = new Date(Date.now() + 1000);
+    // Schedule in the past so triggerTick() fires it immediately
+    const pastDate = new Date(Date.now() - 1000);
     const def = makeAgentDef({
       name: 'one-shot',
       slug: 'one-shot',
-      schedule: `at ${futureDate.toISOString()}`,
+      schedule: `at ${pastDate.toISOString()}`,
       singleton: true,
     });
 
     scheduler.registerDefinition(def, async () => {
       handlerRan = true;
-      // Simulate async work
-      await new Promise(r => setTimeout(r, 50));
     });
 
-    scheduler.startAll();
+    // Manually set nextRunAt to past (registerDefinition sets null for past one-shot)
+    scheduler.getState('one-shot')!.nextRunAt = pastDate.toISOString();
 
-    // Before fire time — should be idle
-    assert.equal(scheduler.getState('one-shot')?.status, 'idle');
-
-    // Wait for fire time + handler completion
-    await new Promise(r => setTimeout(r, 1200));
+    await scheduler.triggerTick();
 
     assert.equal(handlerRan, true, 'handler should have run');
     assert.equal(scheduler.getState('one-shot')?.status, 'disabled', 'status should be disabled after completion');
     assert.equal(scheduler.getState('one-shot')?.nextRunAt, null, 'nextRunAt should be null for one-shot');
+  });
+
+  test('job with timezone calculates next fire time correctly', () => {
+    const scheduler = new CronScheduler();
+    scheduler.registerDefinition(
+      makeAgentDef({
+        name: 'tz-job',
+        slug: 'tz-job',
+        schedule: '0 9 * * *',
+        timezone: 'America/New_York',
+      }),
+      async () => {},
+    );
+    scheduler.startAll();
+
+    const state = scheduler.getState('tz-job');
+    assert.ok(state?.nextRunAt, 'should have a next run time');
+
+    // Verify 9:00 AM ET = 13:00 or 14:00 UTC depending on DST
+    const nextRun = new Date(state.nextRunAt);
+    const hours = nextRun.getUTCHours();
+    assert.ok(hours === 13 || hours === 14, `Expected UTC hour 13 or 14, got ${hours}`);
+    assert.equal(nextRun.getUTCMinutes(), 0);
+
     scheduler.stopAll();
+  });
+
+  test('job without timezone uses system default', () => {
+    const scheduler = new CronScheduler();
+    scheduler.registerDefinition(
+      makeAgentDef({
+        name: 'no-tz-job',
+        slug: 'no-tz-job',
+        schedule: '0 12 * * *',
+      }),
+      async () => {},
+    );
+    scheduler.startAll();
+
+    const state = scheduler.getState('no-tz-job');
+    assert.ok(state?.nextRunAt, 'should have a next run time');
+    scheduler.stopAll();
+  });
+
+  test('job auto-disables after reaching consecutive failure threshold', async () => {
+    const scheduler = new CronScheduler(undefined, 3); // global threshold = 3
+    let callCount = 0;
+
+    const def = makeAgentDef({
+      name: 'fail-job',
+      slug: 'fail-job',
+      schedule: 'every 1m',
+      singleton: false,
+    });
+
+    scheduler.registerDefinition(def, async () => {
+      callCount++;
+      throw new Error(`fail #${callCount}`);
+    });
+
+    // Set nextRunAt to past so triggerTick fires it
+    scheduler.getState('fail-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+
+    // After first failure
+    assert.equal(scheduler.getState('fail-job')?.consecutiveFailures, 1);
+    assert.equal(scheduler.getState('fail-job')?.status, 'idle');
+
+    // Trigger second failure
+    scheduler.getState('fail-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('fail-job')?.consecutiveFailures, 2);
+    assert.equal(scheduler.getState('fail-job')?.status, 'idle');
+
+    // Trigger third failure — should auto-disable
+    scheduler.getState('fail-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('fail-job')?.consecutiveFailures, 3);
+    assert.equal(scheduler.getState('fail-job')?.status, 'disabled');
+  });
+
+  test('auto-disabled job is skipped by tick loop', async () => {
+    const scheduler = new CronScheduler(undefined, 1); // threshold = 1
+    let callCount = 0;
+
+    scheduler.registerDefinition(
+      makeAgentDef({ name: 'skip-job', slug: 'skip-job', schedule: 'every 1m', singleton: false }),
+      async () => { callCount++; throw new Error('fail'); },
+    );
+
+    // Trigger first failure — should auto-disable at threshold 1
+    scheduler.getState('skip-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('skip-job')?.status, 'disabled');
+    const countAfterDisable = callCount;
+
+    // Set nextRunAt again — triggerTick should skip because status is disabled
+    scheduler.getState('skip-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(callCount, countAfterDisable, 'handler should not have been called again');
+  });
+
+  test('per-job maxConsecutiveFailures overrides global default', async () => {
+    const scheduler = new CronScheduler(undefined, 10); // global = 10
+
+    scheduler.registerDefinition(
+      makeAgentDef({
+        name: 'custom-threshold',
+        slug: 'custom-threshold',
+        schedule: 'every 1m',
+        singleton: false,
+        maxConsecutiveFailures: 2,
+      }),
+      async () => { throw new Error('fail'); },
+    );
+
+    // First failure
+    scheduler.getState('custom-threshold')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('custom-threshold')?.status, 'idle');
+
+    // Second failure — should disable (per-job threshold = 2)
+    scheduler.getState('custom-threshold')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('custom-threshold')?.status, 'disabled');
+    assert.equal(scheduler.getState('custom-threshold')?.consecutiveFailures, 2);
+  });
+
+  test('successful run resets consecutiveFailures counter', async () => {
+    const scheduler = new CronScheduler(undefined, 5);
+    let shouldFail = true;
+
+    scheduler.registerDefinition(
+      makeAgentDef({ name: 'reset-job', slug: 'reset-job', schedule: 'every 1m', singleton: false }),
+      async () => { if (shouldFail) throw new Error('fail'); },
+    );
+
+    // Two failures
+    scheduler.getState('reset-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    scheduler.getState('reset-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('reset-job')?.consecutiveFailures, 2);
+
+    // Now succeed
+    shouldFail = false;
+    scheduler.getState('reset-job')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('reset-job')?.consecutiveFailures, 0);
+    assert.equal(scheduler.getState('reset-job')?.status, 'idle');
   });
 
   test('one-shot job transitions to disabled even after handler error', async () => {
     const scheduler = new CronScheduler();
 
-    const futureDate = new Date(Date.now() + 1000);
+    const pastDate = new Date(Date.now() - 1000);
     const def = makeAgentDef({
       name: 'one-shot-err',
       slug: 'one-shot-err',
-      schedule: `at ${futureDate.toISOString()}`,
+      schedule: `at ${pastDate.toISOString()}`,
       singleton: true,
     });
 
@@ -361,13 +494,116 @@ describe('CronScheduler v2', () => {
       throw new Error('deliberate one-shot error');
     });
 
-    scheduler.startAll();
-    await new Promise(r => setTimeout(r, 1200));
+    // Manually set nextRunAt to past (registerDefinition sets null for past one-shot)
+    scheduler.getState('one-shot-err')!.nextRunAt = pastDate.toISOString();
+
+    await scheduler.triggerTick();
 
     const state = scheduler.getState('one-shot-err');
     assert.equal(state?.status, 'disabled', 'one-shot should disable even on error');
     assert.equal(state?.lastError, 'deliberate one-shot error');
     assert.equal(state?.consecutiveFailures, 1);
-    scheduler.stopAll();
+  });
+
+  test('resume recovers an auto-disabled job and resets consecutiveFailures', async () => {
+    const scheduler = new CronScheduler(undefined, 1); // threshold = 1
+
+    scheduler.registerDefinition(
+      makeAgentDef({ name: 'resume-disabled', slug: 'resume-disabled', schedule: 'every 1m', singleton: false }),
+      async () => { throw new Error('fail'); },
+    );
+
+    // Trigger failure to auto-disable
+    scheduler.getState('resume-disabled')!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.triggerTick();
+    assert.equal(scheduler.getState('resume-disabled')?.status, 'disabled');
+    assert.equal(scheduler.getState('resume-disabled')?.consecutiveFailures, 1);
+
+    // Resume should recover
+    scheduler.resume('resume-disabled');
+    assert.equal(scheduler.getState('resume-disabled')?.status, 'idle');
+    assert.equal(scheduler.getState('resume-disabled')?.consecutiveFailures, 0);
+    assert.ok(scheduler.getState('resume-disabled')?.nextRunAt, 'should have a new nextRunAt');
+  });
+
+  test('hydrateState restores disabled status across restart', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-hydrate-'));
+    const statePath = path.join(tmpDir, 'cron-state.json');
+
+    // Write persisted state with disabled status
+    const persisted = {
+      'test-agent-job': {
+        name: 'test-agent-job',
+        status: 'disabled',
+        lastRunAt: '2026-03-20T12:00:00.000Z',
+        nextRunAt: null,
+        runCount: 5,
+        lastError: 'some error',
+        consecutiveFailures: 3,
+      },
+    };
+    fs.writeFileSync(statePath, JSON.stringify(persisted, null, 2), 'utf-8');
+
+    const scheduler = new CronScheduler(statePath);
+    scheduler.registerDefinition(makeAgentDef(), async () => {});
+    scheduler.hydrateState();
+
+    const state = scheduler.getState('test-agent-job');
+    assert.ok(state);
+    assert.equal(state.status, 'disabled');
+    assert.equal(state.consecutiveFailures, 3);
+    assert.equal(state.lastError, 'some error');
+  });
+
+  test('hydrateState restores paused status across restart', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-hydrate-'));
+    const statePath = path.join(tmpDir, 'cron-state.json');
+
+    const persisted = {
+      'test-agent-job': {
+        name: 'test-agent-job',
+        status: 'paused',
+        lastRunAt: '2026-03-20T12:00:00.000Z',
+        nextRunAt: null,
+        runCount: 2,
+        lastError: null,
+        consecutiveFailures: 0,
+      },
+    };
+    fs.writeFileSync(statePath, JSON.stringify(persisted, null, 2), 'utf-8');
+
+    const scheduler = new CronScheduler(statePath);
+    scheduler.registerDefinition(makeAgentDef(), async () => {});
+    scheduler.hydrateState();
+
+    const state = scheduler.getState('test-agent-job');
+    assert.ok(state);
+    assert.equal(state.status, 'paused');
+  });
+
+  test('hydrateState does not restore running status — resets to idle', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-hydrate-'));
+    const statePath = path.join(tmpDir, 'cron-state.json');
+
+    const persisted = {
+      'test-agent-job': {
+        name: 'test-agent-job',
+        status: 'running',
+        lastRunAt: '2026-03-20T12:00:00.000Z',
+        nextRunAt: null,
+        runCount: 1,
+        lastError: null,
+        consecutiveFailures: 0,
+      },
+    };
+    fs.writeFileSync(statePath, JSON.stringify(persisted, null, 2), 'utf-8');
+
+    const scheduler = new CronScheduler(statePath);
+    scheduler.registerDefinition(makeAgentDef(), async () => {});
+    scheduler.hydrateState();
+
+    const state = scheduler.getState('test-agent-job');
+    assert.ok(state);
+    assert.equal(state.status, 'idle', 'running is transient — should not be restored');
   });
 });

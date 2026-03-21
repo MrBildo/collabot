@@ -1,10 +1,12 @@
-import type { CronHandlerContext } from '../../src/cron-bridge.js';
-
 /**
  * Board watcher — checks Collaboard for new activity, dispatches agents
  * only for dirty boards. Clean boards = zero agent cost.
+ *
+ * The `ctx` parameter is a CronHandlerContext from cron-bridge.ts, injected
+ * by the cron bridge at runtime. Handlers are loaded dynamically so we type
+ * the parameter inline rather than importing from a path that won't resolve.
  */
-export default async function (ctx: CronHandlerContext) {
+export default async function (ctx: any) {
   const boards = ctx.config.job.boards as Array<{ slug: string; project: string }> | undefined;
   if (!boards || boards.length === 0) {
     ctx.log.warn('board-watcher: no boards configured in settings.toml');

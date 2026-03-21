@@ -470,7 +470,7 @@ if (slackAdapter) {
 const cronJobsDir = config.cron ? getInstancePath(config.cron.jobsDirectory) : '';
 const cronRunsDir = cronJobsDir ? `${cronJobsDir}/runs` : '';
 const cronStatePath = cronJobsDir ? `${cronJobsDir}/cron-state.json` : undefined;
-const cronScheduler = new CronScheduler(cronStatePath);
+const cronScheduler = new CronScheduler(cronStatePath, config.cron.maxConsecutiveFailures);
 
 // Build CollabDispatchContext for cron bridge
 const cronDispatchCtx: CollabDispatchContext = {

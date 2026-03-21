@@ -2,13 +2,13 @@
 name: collabot-standup
 schedule: "0 9 * * MON-FRI"
 role: researcher
-project: lobby
+# project: <your-project-name>  — set to a real project (not a virtual project like lobby)
 singleton: true
 tokenBudget: 100000
 maxTurns: 5
 ---
 
-Generate a daily standup report for the Collabot board (slug: collabot).
+Generate a daily standup report for the project's Collaboard board.
 
 Check:
 1. Cards in Review — anything waiting for merge?
