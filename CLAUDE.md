@@ -177,14 +177,14 @@ claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 - **Ask, don't guess:** Include: "If you get stuck or unsure, report back rather than guessing."
 - Max 3 follow-up rounds per task before escalating to user
 - Dispatch in parallel when independent, sequentially when dependent
-- **Locked DLL warning:** Build failure from locked DLLs (MSB3027) means compilation succeeded — running API holds the lock.
+- **When dispatching to .NET projects:** Build failure from locked DLLs (MSB3027) means compilation succeeded — running API holds the lock.
 
 ### Sub-Agent Conventions
 
 When dispatching coding or evaluation sub-agents via the Agent tool:
 
 - **Model:** Always use `model: "opus"` (Opus High)
-- **Skills injection:** Manually inject the TypeScript dev skill (`~/.claude/skills/typescript-dev/SKILL.md`) into every sub-agent prompt. Include the .NET dev skill (`~/.claude/skills/dotnet-dev/SKILL.md`) when the task touches C# code.
+- **Skills:** Instruct sub-agents to use skills appropriate to the task — e.g., dotnet-dev for C# tasks, typescript-dev for TypeScript. A research agent doesn't need coding skills.
 - **Report format:** Every sub-agent must return a standardized report. Include this template in the prompt:
 
 ```
@@ -218,7 +218,9 @@ Return your findings in this standardized format:
 <next steps, move to Review, stays in Ready, etc.>
 ```
 
-### Parallel Dispatch (Worktrees)
+### Parallel Dispatch
+
+**Partition by resource, not by task.** When dispatching parallel agents, group work by the files being touched — not by the card or task being worked on. Two cards that edit the same files must go to the same agent. Two cards that touch completely separate projects can go to separate agents. The rule: **if two agents could write to the same file, they must be the same agent.**
 
 When multiple agents need the same repo simultaneously, use **git worktrees** for physically separate working directories.
 
@@ -264,7 +266,7 @@ If the card adds functionality that requires startup wiring, this must be explic
 
 ## Skills
 
-Skills live in `.claude/skills/`. Each skill is self-documenting via its own `SKILL.md`.
+Use available skills proactively when the task matches — e.g., invoke dotnet-dev when writing C# or typescript-dev for TypeScript. Skills are declared in your session; no need to search directories.
 
 ## Knowledge Bases
 
@@ -307,10 +309,9 @@ See [[COLLABOARD]] for board conventions, lanes, labels, sizes, and workflow.
 
 ## Path Conventions
 
-- **Always use relative paths** in docs, specs, and CLAUDE.md. Never hardcode absolute paths.
-- Reference project repos as `../project-api/`, `../project-portal/`, etc.
-- Reference platform files as `./` (e.g., `./docs/architecture.md`)
-- Instance-local agent artifacts live in `.agents/` (gitignored)
+- **Relative paths in docs and specs.** Never hardcode absolute paths in committed files.
+- **Absolute paths in scripts only** when referencing the script's own location.
+- Reference other projects as `C:\Projects\<name>` only in CLAUDE.md and runtime configs.
 
 ## Context Window Management
 
