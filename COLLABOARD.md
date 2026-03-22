@@ -14,7 +14,7 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agents.env` (gitign
 | **In Progress** | Actively being worked on |
 | **Review** | PR open, awaiting user review |
 | **Done** | Merged to master |
-| **Archived** | Cleared periodically |
+| **Archived** | Shipped and closed. Archived cards are frozen — no edits, comments, labels, or attachment changes. |
 
 ## Labels
 
@@ -50,6 +50,8 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agents.env` (gitign
 
 ## Sizes
 
+Sizes represent effort, not urgency.
+
 | Size | Ordinal |
 |------|---------|
 | S | 0 |
@@ -67,10 +69,38 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agents.env` (gitign
 6. PR merged → **Done**
 7. Periodically sweep Done → **Archived**
 
-## Session Protocol
+## Card Conventions
 
-- **Start of session:** Call `get_cards` with the Collabot board slug to see current state
-- **Check for changes:** Use `get_cards` with the `since` parameter to see cards with recent activity
-- **During work:** Move cards between lanes, add comments logging progress, attach deliverables
-- **Auth key:** Use the key from THIS project's `.agents.env` for the Collabot board. If you need to touch the TUI board, use the key from the TUI project's `.agents.env`.
-- **Board slug:** `collabot`
+### Titles
+Action-oriented for features (e.g., "Add WebSocket reconnection logic"). Bug-report style for bugs. Keep under 80 characters.
+
+### Descriptions
+Include Goal, Background (if needed), and specific deliverables. Reference specs with wikilinks when applicable.
+
+### Comments
+Session journals — write assuming the reader has no prior context. Include what was done, what changed, and what's next.
+
+## Session Workflow
+
+When the user signals board work:
+
+1. **Check for updates** — `get_cards` with `since` filter for recent activity
+2. **Brief the user** — short summary of board state (what's ready, in progress, blockers)
+3. **Wait for direction** — don't auto-start work or grab cards
+
+During a session:
+- Move cards as their state changes
+- Comment on cards as work progresses (write for a reader with no prior context)
+- Create new cards when gaps or ideas surface — put them in Triage with minimal ceremony
+
+**Card addressing:** Use `cardNumber` + `boardSlug` (e.g., card #7 on `collabot`)
+**Auth key:** stored in `.agents.env` (gitignored). Use THIS project's key for the collabot board. If touching the TUI board, use the TUI project's `.agents.env`.
+**Board slug:** `collabot`
+
+## Archive
+
+- Use `archive_card` to archive (not `move_card`)
+- Archived cards are frozen: no edits, comments, labels, or attachment mutations (400)
+- Only `restore_card` (requires target laneId) and delete are allowed
+- `get_cards` excludes archived by default; pass `includeArchived: true` to include
+- Card responses include `isArchived` (bool)
