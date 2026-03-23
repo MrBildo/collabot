@@ -123,6 +123,65 @@ test('reload picks up TOML changes', () => {
   assert.deepStrictEqual(reloaded.get('evolving')!.paths, ['/some/repo']);
 });
 
+// --- Relative Path Resolution ---
+
+test('loadProjects resolves relative path relative to manifest directory', () => {
+  const projectDir = path.join(tmpDir, 'myproject');
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(path.join(projectDir, 'project.toml'), stringifyToml({
+    name: 'MyProject',
+    description: 'Project with relative path',
+    paths: ['../..'],
+    roles: ['api-dev'],
+  }));
+
+  const roles = makeRoles('api-dev');
+  const projects = loadProjects(tmpDir, roles);
+
+  const project = projects.get('myproject')!;
+  // "../.." from tmpDir/myproject/ resolves to the parent of tmpDir
+  const expected = path.resolve(projectDir, '../..');
+  assert.deepStrictEqual(project.paths, [expected]);
+});
+
+test('loadProjects passes absolute path through unchanged', () => {
+  const projectDir = path.join(tmpDir, 'abspath');
+  fs.mkdirSync(projectDir, { recursive: true });
+  const absPath = path.resolve('/some/absolute/path');
+  fs.writeFileSync(path.join(projectDir, 'project.toml'), stringifyToml({
+    name: 'AbsPath',
+    description: 'Project with absolute path',
+    paths: [absPath],
+    roles: ['api-dev'],
+  }));
+
+  const roles = makeRoles('api-dev');
+  const projects = loadProjects(tmpDir, roles);
+
+  const project = projects.get('abspath')!;
+  assert.deepStrictEqual(project.paths, [absPath]);
+});
+
+test('loadProjects handles mixed relative and absolute paths', () => {
+  const projectDir = path.join(tmpDir, 'mixed');
+  fs.mkdirSync(projectDir, { recursive: true });
+  const absPath = path.resolve('/absolute/path');
+  fs.writeFileSync(path.join(projectDir, 'project.toml'), stringifyToml({
+    name: 'Mixed',
+    description: 'Project with mixed paths',
+    paths: [absPath, '..', '.'],
+    roles: ['api-dev'],
+  }));
+
+  const roles = makeRoles('api-dev');
+  const projects = loadProjects(tmpDir, roles);
+
+  const project = projects.get('mixed')!;
+  assert.strictEqual(project.paths[0], absPath);
+  assert.strictEqual(project.paths[1], path.resolve(projectDir, '..'));
+  assert.strictEqual(project.paths[2], path.resolve(projectDir, '.'));
+});
+
 // --- Virtual Projects ---
 
 test('projectHasPaths handles virtual field gracefully', () => {

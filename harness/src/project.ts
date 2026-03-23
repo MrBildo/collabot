@@ -58,6 +58,13 @@ export function loadProjects(
 
     const project = result.data;
 
+    // Resolve relative paths against the manifest's directory
+    const manifestDir = path.dirname(manifestPath);
+    const resolvedPaths = project.paths.map(p =>
+      path.isAbsolute(p) ? p : path.resolve(manifestDir, p)
+    );
+    project.paths = resolvedPaths;
+
     // Validate: name uniqueness
     if (projects.has(project.name.toLowerCase())) {
       throw new Error(`Duplicate project name "${project.name}" in ${manifestPath}`);

@@ -311,7 +311,7 @@ See [[COLLABOARD]] for board conventions, lanes, labels, sizes, and workflow.
 
 - **Relative paths in docs and specs.** Never hardcode absolute paths in committed files.
 - **Absolute paths in scripts only** when referencing the script's own location.
-- Reference other projects as `C:\Projects\<name>` only in CLAUDE.md and runtime configs.
+- Reference other collab projects as `C:\Projects\collab\<name>` only in CLAUDE.md and runtime configs.
 
 ## Context Window Management
 
