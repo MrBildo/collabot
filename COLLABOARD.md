@@ -50,7 +50,7 @@ Work is tracked on Collaboard (MCP server). Auth key is in `.agents.env` (gitign
 
 ## Sizes
 
-Sizes represent effort, not urgency.
+Sizes represent effort-based sizing (S/M/L/XL) — how much work, not how urgent.
 
 | Size | Ordinal |
 |------|---------|
@@ -96,6 +96,20 @@ During a session:
 **Card addressing:** Use `cardNumber` + `boardSlug` (e.g., card #7 on `collabot`)
 **Auth key:** stored in `.agents.env` (gitignored). Use THIS project's key for the collabot board. If touching the TUI board, use the TUI project's `.agents.env`.
 **Board slug:** `collabot`
+
+## Tips
+
+- **Batch label assignment:** Pass `labelIds` in the `create_card` call instead of making a separate `add_label_to_card` call. More efficient for card creation.
+
+## Board History
+
+Card numbering context for reference:
+
+| Range | Source |
+|-------|--------|
+| #1-#70 | Migrated from roadmap INDEX.md (2026-03-16) |
+| #71-#78 | Gap analysis — daily driver blockers |
+| #79-#81 | Feature cards (TUI display, SDK audit, TUI board setup) |
 
 ## Archive
 
