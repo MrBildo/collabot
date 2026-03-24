@@ -75,6 +75,18 @@ Source is in `./harness/src/`.
 
 Every interactive conversation is with a bot. Draft = borrowing a bot from lobby. CLI one-shot dispatch is botless.
 
+**Bot identity model:** A bot having a Slack account does NOT make it a "Slack bot." A bot's soul + role dictates WHAT it does. The project determines WHERE it is. Provider accounts determine HOW it's reachable. Bot -> Role (WHAT) -> Project (WHERE) -> Provider account (HOW). Grand vision: bots will have limited agency — schedules, goals, ability to decide what to work on.
+
+**Bot configuration:** Bot default project and role are configured in `[bots.*]` in `config.toml`, not in provider-specific sections like `[slack.bots.*]`. Provider config sections hold credentials only.
+
+### Known Gaps
+
+Three architectural gaps that guide development priorities:
+
+1. **Tasks** — Data is captured but nothing is done with it yet. Future cron maintenance jobs will inspect closed tasks across projects, synthesize them into bot memory, then clean up. The data shape matters now; processing comes later.
+2. **Roles/Bots** — Only scratched the surface. These are the two key factors in how Collabot operates. The goal is to "gamify" agents — personality + memory leads to emergent behavior.
+3. **Session/Context Management** — Massive known gap. Minimal context management today. Will be addressed. When making assumptions, assume we will have an answer for this.
+
 ## Dev Directory
 
 `dev/` contains all instance-local files for development (gitignored). This is the dev equivalent of `~/.collabot/` in production.
@@ -178,6 +190,7 @@ claude -p "<task prompt>" --output-format text --dangerously-skip-permissions
 - Max 3 follow-up rounds per task before escalating to user
 - Dispatch in parallel when independent, sequentially when dependent
 - **When dispatching to .NET projects:** Build failure from locked DLLs (MSB3027) means compilation succeeded — running API holds the lock.
+- **Preserve context during design sessions:** Delegate ALL non-discussion tasks to sub-agents. Reading large files, scraping web pages, or exploring code pollutes the main context. The discussion thread and design decisions need to stay in context.
 
 ### Sub-Agent Conventions
 
@@ -237,9 +250,23 @@ Tasks are scoped to projects, tracked in `.projects/<project>/tasks/{task-slug}/
 - `task.json` — manifest (slug, name, project, status, timestamps)
 - `dispatches/{dispatchId}.json` — dispatch envelope + event stream
 
-Lifecycle: `open` → `closed`. Created via CLI, WS, or MCP tools.
+Lifecycle: `open` → `closed` → `synthesized`. Created via CLI, WS, or MCP tools.
 
-## Agent SDK — Windows Environment
+**Task != session.** A task has many bots, each with their own context (approximating an SDK session). When a task closes, a memory manager will process the context into bot memories. `TASK.md` is a living shared context document per task, managed via MCP tools. `PROJECT.md` is the project-level CLAUDE.md equivalent, injected by the harness.
+
+### Context Model
+
+Tiered context architecture for managing agent memory:
+
+- **Raw** — full transcript of all dispatches within a task
+- **Immediate** — trimmed, curated context injected into the current dispatch
+- **Archived** — filed context accessible via tools, not injected by default
+
+Bot memory is cross-task and cross-project, formed from task work, human interactions, bot interactions, and self-learning. The `countTokens` API (`POST /v1/messages/count_tokens`) is free and authoritative — use it for per-component token tracking before assembling context.
+
+## Agent SDK Integration
+
+### Windows Environment
 
 Two env vars in `buildChildEnv()` (`harness/src/dispatch.ts`):
 
@@ -247,6 +274,73 @@ Two env vars in `buildChildEnv()` (`harness/src/dispatch.ts`):
 2. **Set `CLAUDE_CODE_GIT_BASH_PATH`** — cli.js auto-detects bash incorrectly on Windows. Must use Windows backslashes.
 
 Configured in `.env`. See `.env.example`.
+
+### SDK Boundary Rule
+
+The Agent SDK is a **tool runtime only**. Collabot uses it for tool execution (Read, Write, Edit, Bash, etc.) and MCP. Never depend on SDK session resume, JSONL storage, or auto-compaction for memory. Context is injected via `query()` with `AsyncIterable<SDKUserMessage>` — Collabot constructs the full message history and feeds it to the SDK. `persistSession: false` disables the JSONL file. Tool execution, MCP, and permissions all work unchanged.
+
+**V2 Session API (`unstable_v2`) is NOT viable** — missing critical options (`systemPrompt`, `mcpServers`, `maxTurns`, etc.).
+
+Any "quick win" that uses SDK configuration (betas, effort, model hints) is fine — those don't create memory dependency. Hybrid approaches (SDK manages within-session, Collabot manages cross-dispatch) are transitional stepping stones, not design targets.
+
+### SDK Permissions Model
+
+- `permissionMode` — controls whether permission prompts happen (e.g., `bypassPermissions` skips all prompts)
+- `disallowedTools` — removes tools from model context entirely. Always enforced, cannot be overridden by user settings.
+- `tools` — defines the base tool set (explicit list or `claude_code` preset)
+- `allowedTools` — auto-approves tools without prompting (only relevant when prompting is enabled)
+- `settingSources` — controls which settings files the subprocess loads (`['user']`, `['project']`, or both)
+
+**Current usage:** `bypassPermissions` + `settingSources: ['project']` + no tool restrictions.
+
+**Important nuance:** `disallowedTools`/`tools` are tool AVAILABILITY, not permission checks. The harness enforces restrictions that user `settings.json` cannot override.
+
+### SDK Gotchas
+
+- **Prompt caching affects token counts.** Real context = `input_tokens + cache_read + cache_creation`.
+- **17+ message types.** The event system v2 now captures all 20 mapped event types (was 5).
+- **Draft sessions use unlimited loop detection thresholds** (all zeros).
+
+## Communication & Adapters
+
+### Virtual Projects
+
+Virtual projects are non-disk-based projects used for bot lifecycle management:
+
+- **`lobby`** — idle state, harness-owned. Where bots go when not assigned to a project. Should have zero disk presence (no `.projects/lobby/project.toml`, no task folders). The current disk-based implementation (`ensureVirtualProject()`) is technical debt.
+- **`slack-room`** — Slack surface, provider-injected via `getVirtualProjects()`. Where bots go when active on Slack. A bot in `slack-room` without a Slack account is parked (no-op); a bot WITH a Slack account shows as online.
+
+**Safety rule:** Virtual projects must NEVER be valid dispatch targets for `collabDispatch()`. No cron jobs, no `handleTask`, no `draftAgent`, no MCP `draft_agent` can dispatch into a virtual project. Virtual projects exist solely for BotSessionManager sessions, which have their own SDK query loop. An `isVirtualProject(project)` guard in `collabDispatch()` must reject these immediately after project resolution.
+
+### Provider Interface
+
+Providers implement optional methods the harness calls during startup:
+- `getVirtualProjects?()` — returns `VirtualProjectRequest[]` declaring virtual projects and their tool restrictions
+
+**Startup sequence:** load providers -> validate -> foreach provider: call `getVirtualProjects()` -> harness validates -> harness resolves/creates.
+
+Virtual projects carry tool restrictions via SDK `disallowedTools`/`tools`, passed to `query()` at draft time. Works even with `bypassPermissions`.
+
+### Slack
+
+**Bot presence limitation:** `always_active: true` is set on Slack apps, and the green dot is always on. `users.setPresence` calls are effectively overridden by `always_active`. The vision of "away when not in slack-room" can't work with current Slack APIs. Lowest priority — `setPresence()` code remains in place for future revisit.
+
+**Hazel app scopes:** Current: `chat:write`, `im:history`, `im:read`, `reactions:read`, `reactions:write`, `app_mentions:read`, `users:write`, `users:read`. Needed for channel participation: `channels:history`, `groups:history`.
+
+**Day-1 slack-etiquette:** Injected via `systemPrompt.append` when a bot is in `slack-room`. No discovery or activation mechanic — always-on for that project. Full skill pipeline is a separate initiative.
+
+### Bot Presence
+
+Bot presence is tied to project membership:
+- Bot in `slack-room` = Slack presence online
+- Bot NOT in `slack-room` = Slack presence away
+- Harness shutdown = presence away (automatic)
+
+### WS Protocol
+
+`ChannelMessage` types union: `lifecycle | chat | question | result | warning | error | tool_use | thinking`.
+
+`draft_status` notification fields: `SessionId`, `Role`, `Project`, `TurnCount`, `CostUsd`, `ContextPct`, `LastInputTokens`, `LastOutputTokens`, `LastActivity`. `LastOutputTokens` is per-turn (not cumulative). `LastInputTokens` is cumulative context size.
 
 ## Planning Workflow
 
@@ -267,6 +361,104 @@ If the card adds functionality that requires startup wiring, this must be explic
 ## Skills
 
 Use available skills proactively when the task matches — e.g., invoke dotnet-dev when writing C# or typescript-dev for TypeScript. Skills are declared in your session; no need to search directories.
+
+### Skills System Architecture
+
+**Standard:** Skills follow the [agentskills.io](https://agentskills.io) spec (Anthropic-maintained, 30+ adopters including Claude Code, Codex, Cursor, Windsurf). Format: `SKILL.md` with YAML frontmatter in a named directory. Required frontmatter: `name` (max 64 chars, lowercase+hyphens), `description` (max 1024 chars). Progressive disclosure: metadata (~100 tokens) at startup -> body (<5000 tokens) on activation -> resources on demand.
+
+**Provider skills replace provider-assigned roles.** Slack etiquette and behavior instructions are skills, not role concerns. Providers offer skills injected when a bot is in that provider's project. Skills are a property of the virtual project. Composition at draft time: soul prompt + role + project skills.
+
+**Discovery paths** are configurable in `[skills]` config. Harness project skills (`.projects/<name>/skills/`) are a fixed convention.
+
+### Claude Code Integration
+
+- **Discovery:** Scans `~/.claude/skills/` (personal), `.claude/skills/` (project), enterprise managed settings. At startup: reads only frontmatter. Skills only discovered when `settingSources` includes the relevant scope — `['project']` means no user skills.
+- **Presentation:** Skills are NOT in the system prompt. Embedded in the Skill tool's description as `<available_skills>` XML block. Character budget: ~15K chars.
+- **Activation:** Manual (user types `/skill-name`) or agent-driven (~20% reliability per community research).
+- **CC-specific extensions:** `$ARGUMENTS` substitutions, dynamic context injection via `` !`command` ``, `context: fork` for subagent execution, `model:` field, hooks.
+
+### Known Issues
+
+**Progressive disclosure bug** (GitHub issue #14882): full SKILL.md body loads at startup, not just frontmatter. The intended behavior is two-phase but Claude Code hasn't achieved it yet. Multiple duplicates, no official fix.
+
+### Implementation Strategy
+
+Two fundamentally different skill mechanisms exist across the ecosystem:
+1. **Claude Code approach:** Dedicated Skill tool with metadata in tool description. Body injected as hidden conversation message.
+2. **Codex approach:** Skill metadata in system prompt. Model reads SKILL.md via filesystem tools. No special tool.
+
+Three implementation scenarios for Collabot:
+- **A: SDK built-in** — Layers 1+3 work if `settingSources` includes `'user'`. Harness project skills need a hack. Locked to CC conventions.
+- **B: Own pipeline (preferred direction)** — Full control, all layers first-class, configurable paths. Codex approach (system prompt + file-read) is simpler. More work upfront.
+- **C: Model adapters** — Architecturally correct, future-proof. Most work, premature without multi-model timeline.
+
+### Prompt Assembly
+
+Prompt assembly order: `system` -> `role` -> `[skills]` -> `soul`. Later content = higher LLM priority. `tools.md` was killed (MCP tools are injected programmatically via SDK `mcpServers`). `system.md` contains only what makes Collabot work — not generic agent instructions, not user-editable.
+
+## CLI & Scaffolding
+
+### Research Summary
+
+Surveyed 13 Node.js tools (Astro, SvelteKit, Nuxt, Strapi, etc.). Three patterns: "configure up front" (interactive wizard), "start minimal" (bare minimum), "two-phase init" (CLI scaffolding + web/interactive config). CLI library: `@clack/prompts` (modern standard, used by SvelteKit, Payload, Nuxt).
+
+### Two-Command Split
+
+#### `collabot init` — Mechanical Scaffolding (non-interactive)
+
+Creates the skeleton. Does NOT create any entities (no roles, no bots). The harness won't boot after just `init`.
+
+| Step | Output |
+|------|--------|
+| Create instance root | `~/.collabot/` (or `$COLLABOT_HOME`) |
+| Create directory structure | `roles/`, `bots/`, `skills/`, `.projects/`, `docs/`, `prompts/` |
+| Copy config defaults | `config.toml` (from `templates/config.defaults.toml`) |
+| Write .env template | `.env` with empty placeholders |
+| Write system prompt | `prompts/system.md` |
+
+Flags: `--yes` / `-y` for CI/scripted use. `skills/` and `docs/` dirs are NOT created by init — created later if needed.
+
+#### `collabot setup` — Interactive Wizard
+
+Uses `@clack/prompts`. Walks the user through configuring a bootable instance. Runs `init` first if needed.
+
+Steps: API key -> platform checks (OS, prerequisites) -> role selection (from `templates/roles/`) -> bot selection (from `templates/bots/`) -> Slack config (optional) -> validation.
+
+### Principles
+
+- **No fake entities.** Bots and roles are curated — scaffolding doesn't stamp out templates pretending to be real entities.
+- **Init is scriptable.** Always non-interactive, always the same output.
+- **Setup is the bridge.** Until entity authoring lands, the wizard handles the hard parts.
+- **Every interactive tool needs a `--non-interactive` mode** for CI/scripted use.
+
+### Template Structure
+
+All default/template content lives under `harness/templates/`:
+
+```
+harness/templates/
+├── config.defaults.toml
+├── env.template
+├── prompts/
+│   └── system.md
+├── roles/
+│   ├── assistant.md, researcher.md, dotnet-dev.md, ts-dev.md
+└── bots/
+    ├── agent.md, cheerful.md, methodical.md, concise.md, cautious.md
+```
+
+Template frontmatter contains everything EXCEPT `id`, `version`, `createdOn`, `createdBy` — the wizard stamps those at copy time.
+
+### Config Defaults
+
+| Setting | Decision |
+|---------|----------|
+| `models.default` | Accepts alias names, not just raw model IDs |
+| `agent.maxTurns` | Default 0 (unlimited) |
+| `agent.maxBudgetUsd` | Default 0 (unlimited) |
+| `defaults.stallTimeoutSeconds` | 300s global default |
+| `pool.maxConcurrent` | Default 0 (unlimited) |
+| `mcp.streamTimeout` | Not in scaffolded config; Zod schema default 600000ms |
 
 ## Knowledge Bases
 
@@ -297,6 +489,20 @@ See [[COLLABOARD]] for board conventions, lanes, labels, sizes, and workflow.
 - **Tools over tokens.** Deterministic operations should be scripts/tools, not agent reasoning.
 - **Curated context > large context.** Structured, well-curated context beats raw window size.
 - **Project isolation via MCP.** Agents see only their own project's data. Cross-project dispatch available via `project` parameter on `draft_agent`.
+- **Collabot owns all context and memory.** No reliance on any vendor's session management, compaction, or conversation storage. The SDK is a tool runtime only — used for tool execution and MCP, not for memory or session state. This enables future model adapters (GPT, Gemini, etc.) without context management lock-in.
+
+## Agent Behavior Rules
+
+- **Never delete untracked files** unless the user explicitly says to. Untracked files often represent in-progress work, local config, or instance-specific content that can't be recovered.
+- **Never auto-fix lint errors.** Stop, summarize the errors, and wait for user instructions.
+- **Optimize for safety over speed.** When in doubt, ask rather than guess.
+- **During design discussions, delegate non-discussion tasks to sub-agents** to preserve working context. Handle directly: design doc editing, board management, conversation. Delegate: web scraping, file analysis, code exploration, research.
+
+## Known Issues
+
+- **Lobby disk presence is tech debt.** Lobby must have zero disk presence (no `.projects/lobby/project.toml`, no task folders). Current `ensureVirtualProject()` writing to disk is a shortcut. Removing lobby from disk requires refactoring code paths that assume uniform disk-based projects.
+- **Cron task naming.** The cron bridge doesn't pass `taskSlug` to `collabDispatch`, so tasks get named from `prompt.slice(0, 80)` slugified (e.g., `you-running-as-cron-job` instead of `e2e-agent`). Impacts observability for recurring jobs.
+- **Bot session CWD.** Bot session CWD is currently repo root. Should be project-specific or configurable. Affects which project-scoped skills the SDK discovers.
 
 ## Git Rules
 
