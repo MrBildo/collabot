@@ -513,11 +513,22 @@ See [[COLLABOARD]] for board conventions, lanes, labels, sizes, and workflow.
 - CI must pass before merge (typecheck, dead code check, build, test)
 - Releases: GitHub Release with tag `vX.Y.Z` — publish workflow sets `package.json` version from tag
 
+## Relationship to Other Projects
+
+| Project | Path | Relationship |
+|---------|------|-------------|
+| **Collaboard** | `../collaboard` | Kanban board. Collabot connects via MCP SSE for board operations. |
+| **Collabot TUI** | `../collabot-tui` | Terminal UI. Connects to harness via WebSocket. |
+| **Ecosystem** | `../ecosystem` | Shared tooling. Collabot consumes ecosystem scripts and protocols. |
+| **Research Lab** | `../lab` | Research workspace. Architecture decisions researched here. |
+| **Knowledge Base** | `../kb` | Conventions and patterns. Agents consume KB content. |
+| **Collabhost** | `../collabhost` | Self-hosted application platform. Will consume Collabot for service orchestration. |
+
 ## Path Conventions
 
 - **Relative paths in docs and specs.** Never hardcode absolute paths in committed files.
 - **Absolute paths in scripts only** when referencing the script's own location.
-- Reference other collab projects as `C:\Projects\collab\<name>` only in CLAUDE.md and runtime configs.
+- Reference other collab projects as `../<name>` relative paths in CLAUDE.md and runtime configs.
 
 ## Context Window Management
 
